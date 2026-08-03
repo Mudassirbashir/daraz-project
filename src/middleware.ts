@@ -6,63 +6,71 @@ import { AppRole } from "@/types/database.types";
 export async function middleware(request: NextRequest) {
   const { pathname } = request.nextUrl;
 
-  // 1. Refresh Supabase Auth session & extract current user
-  const { supabaseResponse, user, supabase } = await updateSession(request);
-
-  // Allow static files, _next internal routes, and public assets
+  // 1. Instantly bypass API routes, _next static assets, and public files
   if (
     pathname.startsWith("/_next") ||
     pathname.startsWith("/api") ||
     pathname.includes(".")
   ) {
-    return supabaseResponse;
+    return NextResponse.next();
   }
 
   const isAuthRoute = pathname === "/login" || pathname === "/unauthorized";
 
-  // 2. Redirect unauthenticated users trying to access protected pages
-  if (!user && !isAuthRoute) {
-    const loginUrl = request.nextUrl.clone();
-    loginUrl.pathname = "/login";
-    loginUrl.searchParams.set("redirectTo", pathname);
-    return NextResponse.redirect(loginUrl);
-  }
+  try {
+    // 2. Refresh Supabase Auth session & extract current user
+    const { supabaseResponse, user, supabase } = await updateSession(request);
 
-  // 3. Redirect authenticated users away from /login
-  if (user && pathname === "/login") {
-    const dashboardUrl = request.nextUrl.clone();
-    dashboardUrl.pathname = "/dashboard";
-    return NextResponse.redirect(dashboardUrl);
-  }
+    // Redirect unauthenticated users trying to access protected pages
+    if (!user && !isAuthRoute) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.searchParams.set("redirectTo", pathname);
+      return NextResponse.redirect(loginUrl);
+    }
 
-  // 4. Role-Based Access Control (RBAC) path protection
-  if (user && !isAuthRoute) {
-    const { data: profile } = await (supabase as any)
-      .from("profiles")
-      .select("role")
-      .eq("id", user.id)
-      .single();
+    // Redirect authenticated users away from /login
+    if (user && pathname === "/login") {
+      const dashboardUrl = request.nextUrl.clone();
+      dashboardUrl.pathname = "/dashboard";
+      return NextResponse.redirect(dashboardUrl);
+    }
 
-    const userRole: AppRole = (profile?.role as AppRole) || "ops_manager";
+    // Role-Based Access Control (RBAC) path protection
+    if (user && supabase && !isAuthRoute) {
+      try {
+        const { data: profile } = await (supabase as any)
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .single();
 
-    // Find matching route guard
-    const matchedGuard = PROTECTED_ROUTES.find((guard) =>
-      pathname.startsWith(guard.pathPrefix)
-    );
+        const userRole: AppRole = (profile?.role as AppRole) || "ops_manager";
 
-    if (matchedGuard) {
-      const hasAccess =
-        userRole === "super_admin" || matchedGuard.allowedRoles.includes(userRole);
+        const matchedGuard = PROTECTED_ROUTES.find((guard) =>
+          pathname.startsWith(guard.pathPrefix)
+        );
 
-      if (!hasAccess) {
-        const unauthorizedUrl = request.nextUrl.clone();
-        unauthorizedUrl.pathname = "/unauthorized";
-        return NextResponse.redirect(unauthorizedUrl);
+        if (matchedGuard) {
+          const hasAccess =
+            userRole === "super_admin" || matchedGuard.allowedRoles.includes(userRole);
+
+          if (!hasAccess) {
+            const unauthorizedUrl = request.nextUrl.clone();
+            unauthorizedUrl.pathname = "/unauthorized";
+            return NextResponse.redirect(unauthorizedUrl);
+          }
+        }
+      } catch (rbacErr) {
+        console.error("[Middleware RBAC Check Warning]:", rbacErr);
       }
     }
-  }
 
-  return supabaseResponse;
+    return supabaseResponse || NextResponse.next();
+  } catch (err: any) {
+    console.error("[Root Middleware Exception]:", err.message);
+    return NextResponse.next();
+  }
 }
 
 export const config = {

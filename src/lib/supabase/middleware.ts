@@ -7,32 +7,44 @@ export async function updateSession(request: NextRequest) {
     request,
   });
 
-  const supabase = createServerClient<Database>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY!,
-    {
-      cookies: {
-        getAll() {
-          return request.cookies.getAll();
-        },
-        setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
-          cookiesToSet.forEach(({ name, value, options }) =>
-            request.cookies.set(name, value)
-          );
-          supabaseResponse = NextResponse.next({
-            request,
-          });
-          cookiesToSet.forEach(({ name, value, options }) =>
-            supabaseResponse.cookies.set(name, value, options)
-          );
-        },
-      },
-    }
-  );
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
+  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  if (!url || !anonKey || url === "https://your-supabase-project.supabase.co") {
+    return { supabaseResponse, user: null, supabase: null };
+  }
 
-  return { supabaseResponse, user, supabase };
+  try {
+    const supabase = createServerClient<Database>(
+      url,
+      anonKey,
+      {
+        cookies: {
+          getAll() {
+            return request.cookies.getAll();
+          },
+          setAll(cookiesToSet: { name: string; value: string; options?: CookieOptions }[]) {
+            cookiesToSet.forEach(({ name, value }) =>
+              request.cookies.set(name, value)
+            );
+            supabaseResponse = NextResponse.next({
+              request,
+            });
+            cookiesToSet.forEach(({ name, value, options }) =>
+              supabaseResponse.cookies.set(name, value, options)
+            );
+          },
+        },
+      }
+    );
+
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+
+    return { supabaseResponse, user, supabase };
+  } catch (err: any) {
+    console.error("[Middleware UpdateSession Exception]:", err.message);
+    return { supabaseResponse, user: null, supabase: null };
+  }
 }
