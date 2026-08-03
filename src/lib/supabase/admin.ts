@@ -6,13 +6,15 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
  * Only use in secure server-side routes or actions requiring system-level access.
  */
 export function createAdminClient() {
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "";
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
+
   if (!serviceRoleKey) {
-    throw new Error("SUPABASE_SERVICE_ROLE_KEY environment variable is missing.");
+    console.error("[Supabase Admin Error] SUPABASE_SERVICE_ROLE_KEY is missing in environment variables.");
   }
 
   return createSupabaseClient<any>(
-    process.env.NEXT_PUBLIC_SUPABASE_URL!,
+    url,
     serviceRoleKey,
     {
       auth: {
