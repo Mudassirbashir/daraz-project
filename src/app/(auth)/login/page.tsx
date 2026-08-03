@@ -21,37 +21,46 @@ function LoginForm() {
     searchParams.get("oauth_success") ? "Daraz OAuth authorization completed successfully!" : null
   );
 
-  const handleLogin = async (e: React.FormEvent) => {
-    e.preventDefault();
+  const performLogin = async (targetEmail: string, targetPass: string) => {
     setLoading(true);
     setErrorMessage(null);
 
     try {
       const supabase = createClient();
-      const { error } = await supabase.auth.signInWithPassword({
-        email,
-        password,
+      const { data, error } = await supabase.auth.signInWithPassword({
+        email: targetEmail,
+        password: targetPass,
       });
 
       if (error) {
-        if (error.message.includes("Invalid login credentials") || error.message.includes("User not found")) {
-          router.push("/dashboard");
-          return;
-        }
+        console.error("Login Auth Error:", error.message);
         setErrorMessage(error.message);
+      } else if (data.session) {
+        setSuccessMessage("Login successful! Redirecting to hub...");
+        router.refresh();
+        setTimeout(() => {
+          router.push("/dashboard");
+        }, 300);
       } else {
         router.push("/dashboard");
       }
     } catch (err: any) {
-      router.push("/dashboard");
+      console.error("Login Exception:", err.message);
+      setErrorMessage(err.message || "Failed to sign in.");
     } finally {
       setLoading(false);
     }
   };
 
+  const handleLoginSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    performLogin(email, password);
+  };
+
   const handleQuickRoleSelect = (roleEmail: string) => {
     setEmail(roleEmail);
-    router.push("/dashboard");
+    setPassword("DarazOps2026!");
+    performLogin(roleEmail, "DarazOps2026!");
   };
 
   return (
@@ -64,7 +73,7 @@ function LoginForm() {
           Daraz Operations Portal
         </h2>
         <p className="mt-1 text-xs text-slate-500">
-          Sign in with employee credentials to manage store operations.
+          Sign in with employee credentials to access hub management.
         </p>
       </div>
 
@@ -82,7 +91,7 @@ function LoginForm() {
         </div>
       )}
 
-      <form onSubmit={handleLogin} className="space-y-4">
+      <form onSubmit={handleLoginSubmit} className="space-y-4">
         <div>
           <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
             Employee Email
@@ -131,24 +140,27 @@ function LoginForm() {
 
       <div className="grid grid-cols-3 gap-2 text-center">
         <button
+          type="button"
           onClick={() => handleQuickRoleSelect("mubashir@darazops.internal")}
-          className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 transition-all text-xs"
+          className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 transition-all text-xs active:scale-95"
         >
           <span className="block font-bold text-slate-800">Mubashir</span>
           <span className="text-[10px] text-slate-500">Super Admin</span>
         </button>
 
         <button
+          type="button"
           onClick={() => handleQuickRoleSelect("mudassir@darazops.internal")}
-          className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 transition-all text-xs"
+          className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 transition-all text-xs active:scale-95"
         >
           <span className="block font-bold text-slate-800">Mudassir</span>
           <span className="text-[10px] text-slate-500">Product Manager</span>
         </button>
 
         <button
+          type="button"
           onClick={() => handleQuickRoleSelect("zainab@darazops.internal")}
-          className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 transition-all text-xs"
+          className="p-2.5 rounded-xl border border-slate-200 hover:border-orange-400 hover:bg-orange-50/50 transition-all text-xs active:scale-95"
         >
           <span className="block font-bold text-slate-800">Zainab</span>
           <span className="text-[10px] text-slate-500">Ops Manager</span>
