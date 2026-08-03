@@ -1,0 +1,288 @@
+export type Json =
+  | string
+  | number
+  | boolean
+  | null
+  | { [key: string]: Json | undefined }
+  | Json[];
+
+export type AppRole = 'super_admin' | 'product_manager' | 'ops_manager';
+
+export type ProductDevStage =
+  | 'ideation'
+  | 'sourcing_samples'
+  | 'sample_testing'
+  | 'costing_approved'
+  | 'ready_for_listing'
+  | 'archived';
+
+export type TaskPriority = 'low' | 'medium' | 'high' | 'urgent';
+
+export type TaskStatus = 'todo' | 'in_progress' | 'review' | 'done';
+
+export type DarazOrderStatus =
+  | 'unpaid'
+  | 'pending'
+  | 'ready_to_ship'
+  | 'shipped'
+  | 'delivered'
+  | 'canceled'
+  | 'returned'
+  | 'failed';
+
+export type FinancialRecordType =
+  | 'vendor_payment'
+  | 'daraz_payout'
+  | 'ad_spend'
+  | 'shipping_cost'
+  | 'customs_tax'
+  | 'other_expense';
+
+export type SyncJobStatus = 'pending' | 'in_progress' | 'completed' | 'failed';
+
+export interface Database {
+  public: {
+    Tables: {
+      profiles: {
+        Row: {
+          id: string;
+          employee_id: string;
+          full_name: string;
+          email: string;
+          phone: string | null;
+          role: AppRole;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['profiles']['Row'], 'created_at' | 'updated_at'> & {
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['profiles']['Insert']>;
+      };
+      user_roles: {
+        Row: {
+          id: string;
+          user_id: string;
+          role: AppRole;
+          assigned_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['user_roles']['Row'], 'id' | 'assigned_at'> & {
+          id?: string;
+          assigned_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['user_roles']['Insert']>;
+      };
+      vendors: {
+        Row: {
+          id: string;
+          code: string;
+          name: string;
+          contact_name: string | null;
+          email: string | null;
+          phone: string | null;
+          country: string | null;
+          payment_terms: string | null;
+          moq: number;
+          lead_time_days: number;
+          rating: number;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['vendors']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['vendors']['Insert']>;
+      };
+      product_developments: {
+        Row: {
+          id: string;
+          code: string;
+          name: string;
+          category: string;
+          stage: ProductDevStage;
+          vendor_id: string | null;
+          target_cost_cents: number;
+          estimated_selling_price_cents: number;
+          sample_ordered_date: string | null;
+          sample_received_date: string | null;
+          assigned_to: string | null;
+          notes: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['product_developments']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['product_developments']['Insert']>;
+      };
+      daraz_stores: {
+        Row: {
+          id: string;
+          store_code: string;
+          store_name: string;
+          region: string;
+          seller_id: string;
+          api_app_key: string | null;
+          api_app_secret: string | null;
+          access_token: string | null;
+          refresh_token: string | null;
+          token_expires_at: string | null;
+          is_active: boolean;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_stores']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_stores']['Insert']>;
+      };
+      inventory: {
+        Row: {
+          id: string;
+          sku: string;
+          title: string;
+          category: string;
+          quantity_on_hand: number;
+          quantity_reserved: number;
+          reorder_point: number;
+          unit_cost_cents: number;
+          storage_location: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['inventory']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['inventory']['Insert']>;
+      };
+      listings: {
+        Row: {
+          id: string;
+          store_id: string;
+          product_dev_id: string | null;
+          inventory_id: string | null;
+          seller_sku: string;
+          daraz_item_id: string | null;
+          daraz_sku_id: string | null;
+          title: string;
+          price_cents: number;
+          special_price_cents: number | null;
+          stock_quantity: number;
+          is_synced: boolean;
+          last_synced_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['listings']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['listings']['Insert']>;
+      };
+      orders: {
+        Row: {
+          id: string;
+          store_id: string;
+          daraz_order_id: string;
+          tracking_number: string | null;
+          customer_name: string | null;
+          customer_city: string | null;
+          total_amount_cents: number;
+          status: DarazOrderStatus;
+          is_payout_settled: boolean;
+          order_date: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['orders']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['orders']['Insert']>;
+      };
+      tasks: {
+        Row: {
+          id: string;
+          title: string;
+          description: string | null;
+          priority: TaskPriority;
+          status: TaskStatus;
+          assigned_to: string;
+          created_by: string;
+          due_date: string | null;
+          related_entity_type: string | null;
+          related_entity_id: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['tasks']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['tasks']['Insert']>;
+      };
+      financial_records: {
+        Row: {
+          id: string;
+          record_type: FinancialRecordType;
+          amount_cents: number;
+          reference_code: string | null;
+          description: string | null;
+          record_date: string;
+          store_id: string | null;
+          vendor_id: string | null;
+          order_id: string | null;
+          recorded_by: string;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['financial_records']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['financial_records']['Insert']>;
+      };
+      daraz_api_logs: {
+        Row: {
+          id: string;
+          store_id: string;
+          sync_type: string;
+          status: SyncJobStatus;
+          records_synced: number;
+          error_message: string | null;
+          payload: Json;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_api_logs']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_api_logs']['Insert']>;
+      };
+    };
+    Views: {};
+    Functions: {
+      get_user_role: {
+        Args: { target_user_id: string };
+        Returns: AppRole;
+      };
+      is_super_admin: {
+        Args: { target_user_id: string };
+        Returns: boolean;
+      };
+    };
+  };
+}
