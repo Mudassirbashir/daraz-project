@@ -2,15 +2,10 @@ import { createBrowserClient } from "@supabase/ssr";
 import { Database } from "@/types/database.types";
 
 export function createClient() {
-  const url = process.env.NEXT_PUBLIC_SUPABASE_URL;
-  const anonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const url =
+    process.env.NEXT_PUBLIC_SUPABASE_URL || "https://wpmeihwfxahifdidgiac.supabase.co";
+  const key =
+    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || "sb_publishable_wj4PMqg5UvZ7mhsGQU6I1g_NbnJrWb2";
 
-  if (!url || !anonKey) {
-    console.error("[Supabase Client Error] Missing NEXT_PUBLIC_SUPABASE_URL or NEXT_PUBLIC_SUPABASE_ANON_KEY environment variables.");
-  }
-
-  return createBrowserClient<Database>(
-    url || "",
-    anonKey || ""
-  );
+  return createBrowserClient<Database>(url, key);
 }
