@@ -10,7 +10,8 @@ export async function GET(req: NextRequest) {
   const errorParam = searchParams.get("error");
   const errorDescription = searchParams.get("error_description");
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+  const requestUrl = new URL(req.url);
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
 
   if (errorParam) {
     console.error("[Daraz OAuth Callback Error]:", errorParam, errorDescription);
@@ -23,13 +24,9 @@ export async function GET(req: NextRequest) {
     return NextResponse.json({ error: "Missing authorization code in OAuth callback." }, { status: 400 });
   }
 
-  const appKey = process.env.DARAZ_APP_KEY;
-  const appSecret = process.env.DARAZ_APP_SECRET;
+  const appKey = process.env.DARAZ_APP_KEY || "504904";
+  const appSecret = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
-
-  if (!appKey || !appSecret) {
-    return NextResponse.json({ error: "DARAZ_APP_KEY or DARAZ_APP_SECRET is not configured in .env.local" }, { status: 500 });
-  }
 
   try {
     // 1. Exchange authorization code for access token via /auth/token/create

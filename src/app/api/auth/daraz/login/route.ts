@@ -1,16 +1,10 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 
-export async function GET() {
-  const appKey = process.env.DARAZ_APP_KEY;
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || "http://localhost:3000";
+export async function GET(req: NextRequest) {
+  const appKey = process.env.DARAZ_APP_KEY || "504904";
+  const requestUrl = new URL(req.url);
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
   const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
-
-  if (!appKey) {
-    return NextResponse.json(
-      { error: "DARAZ_APP_KEY environment variable is not configured." },
-      { status: 500 }
-    );
-  }
 
   // Official Daraz Open Platform OAuth Authorization URL for PK
   const authUrl = new URL("https://api.daraz.pk/oauth/authorize");
