@@ -171,7 +171,7 @@ export default function OperationsPage() {
       `"${o.tracking_number || ""}"`,
       `"${(o.customer_name || "").replace(/"/g, '""')}"`,
       `"${o.customer_city || ""}"`,
-      `"${o.shelf_location || "Not Available"}"`,
+      `"${o.shelf_location || "N/A"}"`,
       `"${o.daraz_stores?.store_code || ""}"`,
       `"${o.status || ""}"`,
       `"${new Date(o.order_date).toLocaleString()}"`,
@@ -192,8 +192,8 @@ export default function OperationsPage() {
       {/* Header & Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Warehouse Operations Center (WMS)</h1>
-          <p className="text-xs text-slate-500">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Warehouse Operations Center (WMS)</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
             Enterprise picking, packing, shipping dispatch, barcode scanner station, and printable slips.
           </p>
         </div>
@@ -201,7 +201,7 @@ export default function OperationsPage() {
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={exportToCSV}
-            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
+            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 transition-all apple-press"
           >
             <Download className="h-4 w-4 text-slate-500" />
             <span>Export WMS CSV {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}</span>
@@ -213,42 +213,42 @@ export default function OperationsPage() {
 
       {/* Warehouse Performance Dashboard Cards */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
-        <div className="rounded-xl border border-amber-200 bg-amber-50/50 p-3.5 shadow-sm">
-          <span className="text-[10px] font-bold uppercase text-amber-700">Orders Waiting</span>
-          <p className="mt-1 text-xl font-bold text-amber-900">{metrics.ordersWaiting}</p>
+        <div className="rounded-2xl border border-amber-200/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 p-3.5 shadow-apple">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">Orders Waiting</span>
+          <p className="mt-1 text-xl font-bold text-amber-900 dark:text-amber-200">{metrics.ordersWaiting}</p>
         </div>
 
-        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3.5 shadow-sm">
-          <span className="text-[10px] font-bold uppercase text-blue-700">Orders Picked</span>
-          <p className="mt-1 text-xl font-bold text-blue-900">{metrics.ordersPicked}</p>
+        <div className="rounded-2xl border border-blue-200/80 dark:border-blue-500/30 bg-blue-50/80 dark:bg-blue-500/10 p-3.5 shadow-apple">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">Orders Picked</span>
+          <p className="mt-1 text-xl font-bold text-blue-900 dark:text-blue-200">{metrics.ordersPicked}</p>
         </div>
 
-        <div className="rounded-xl border border-purple-200 bg-purple-50/50 p-3.5 shadow-sm">
-          <span className="text-[10px] font-bold uppercase text-purple-700">Orders Packed</span>
-          <p className="mt-1 text-xl font-bold text-purple-900">{metrics.ordersPacked}</p>
+        <div className="rounded-2xl border border-purple-200/80 dark:border-purple-500/30 bg-purple-50/80 dark:bg-purple-500/10 p-3.5 shadow-apple">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400">Orders Packed</span>
+          <p className="mt-1 text-xl font-bold text-purple-900 dark:text-purple-200">{metrics.ordersPacked}</p>
         </div>
 
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-3.5 shadow-sm">
-          <span className="text-[10px] font-bold uppercase text-emerald-700">Orders Shipped</span>
-          <p className="mt-1 text-xl font-bold text-emerald-900">{metrics.ordersShipped}</p>
+        <div className="rounded-2xl border border-emerald-200/80 dark:border-emerald-500/30 bg-emerald-50/80 dark:bg-emerald-500/10 p-3.5 shadow-apple">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Orders Shipped</span>
+          <p className="mt-1 text-xl font-bold text-emerald-900 dark:text-emerald-200">{metrics.ordersShipped}</p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
-          <span className="text-[10px] font-bold uppercase text-slate-500">Avg Processing</span>
-          <p className="mt-1 text-xl font-bold text-slate-900">{metrics.avgProcessingTimeMinutes} min</p>
+        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Avg Processing</span>
+          <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">{metrics.avgProcessingTimeMinutes} min</p>
         </div>
 
-        <div className="rounded-xl border border-slate-200 bg-white p-3.5 shadow-sm">
-          <span className="text-[10px] font-bold uppercase text-slate-500">Productivity</span>
-          <p className="mt-1 text-xl font-bold text-slate-900">{metrics.employeeProductivityScore}%</p>
+        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
+          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Productivity</span>
+          <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">{metrics.employeeProductivityScore}%</p>
         </div>
       </div>
 
       {/* Barcode Scanner Input Station */}
-      <div className="rounded-xl border-2 border-orange-400 bg-orange-50/40 p-4 shadow-sm space-y-2">
+      <div className="rounded-2xl border-2 border-orange-400/80 dark:border-orange-500/40 bg-orange-50/60 dark:bg-orange-500/10 p-4 shadow-apple space-y-2">
         <div className="flex items-center space-x-2">
-          <Barcode className="h-5 w-5 text-orange-600 animate-pulse" />
-          <h2 className="text-xs font-bold text-orange-900 uppercase tracking-wider">
+          <Barcode className="h-5 w-5 text-orange-600 dark:text-orange-400 animate-pulse" />
+          <h2 className="text-xs font-bold text-orange-900 dark:text-orange-300 uppercase tracking-wider">
             Automated Barcode Scanner Terminal
           </h2>
         </div>
@@ -259,11 +259,11 @@ export default function OperationsPage() {
             value={barcodeInput}
             onChange={(e) => setBarcodeInput(e.target.value)}
             placeholder="Scan order barcode, tracking number, or SKU to auto-locate package..."
-            className="flex-1 rounded-lg border border-slate-300 px-3.5 py-2 text-xs font-mono text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 bg-white"
+            className="flex-1 rounded-xl border border-slate-300 dark:border-slate-800 px-3.5 py-2 text-xs font-mono text-slate-900 dark:text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500 bg-white dark:bg-slate-950"
           />
           <button
             type="submit"
-            className="rounded-lg bg-orange-500 px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 transition-all shadow-sm shrink-0"
+            className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 transition-all apple-press shadow-2xs shrink-0"
           >
             Scan & Find
           </button>
@@ -271,14 +271,14 @@ export default function OperationsPage() {
       </div>
 
       {/* Pipeline Stage Tabs */}
-      <div className="flex items-center space-x-2 border-b border-slate-200 pb-2 overflow-x-auto text-xs">
+      <div className="flex items-center space-x-2 border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto text-xs">
         <button
           onClick={() => {
             setStageTab("all");
             setPage(1);
           }}
-          className={`px-3.5 py-1.5 font-bold rounded-lg transition-all ${
-            stageTab === "all" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
+            stageTab === "all" ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
           All Stages
@@ -289,8 +289,8 @@ export default function OperationsPage() {
             setStageTab("ready_to_pick");
             setPage(1);
           }}
-          className={`px-3.5 py-1.5 font-bold rounded-lg transition-all ${
-            stageTab === "ready_to_pick" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
+            stageTab === "ready_to_pick" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
           Ready to Pick ({metrics.ordersWaiting})
@@ -301,8 +301,8 @@ export default function OperationsPage() {
             setStageTab("ready_to_pack");
             setPage(1);
           }}
-          className={`px-3.5 py-1.5 font-bold rounded-lg transition-all ${
-            stageTab === "ready_to_pack" ? "bg-purple-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
+            stageTab === "ready_to_pack" ? "bg-purple-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
           Ready to Pack ({metrics.ordersPicked})
@@ -313,8 +313,8 @@ export default function OperationsPage() {
             setStageTab("ready_to_ship");
             setPage(1);
           }}
-          className={`px-3.5 py-1.5 font-bold rounded-lg transition-all ${
-            stageTab === "ready_to_ship" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
+            stageTab === "ready_to_ship" ? "bg-blue-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
           Ready to Ship ({metrics.ordersPacked})
@@ -325,8 +325,8 @@ export default function OperationsPage() {
             setStageTab("shipped");
             setPage(1);
           }}
-          className={`px-3.5 py-1.5 font-bold rounded-lg transition-all ${
-            stageTab === "shipped" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
+          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
+            stageTab === "shipped" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
           Shipped ({metrics.ordersShipped})
@@ -335,29 +335,29 @@ export default function OperationsPage() {
 
       {/* Bulk Action Toolbar */}
       {selectedIds.length > 0 && (
-        <div className="flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 p-3 shadow-md">
-          <span className="text-xs font-bold text-orange-900">
+        <div className="flex items-center justify-between rounded-2xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/90 dark:bg-orange-500/10 p-3 shadow-apple">
+          <span className="text-xs font-bold text-orange-900 dark:text-orange-300">
             {selectedIds.length} order(s) selected for WMS fulfillment
           </span>
 
           <div className="flex items-center space-x-2">
             <button
               onClick={() => handleExecuteBulkAction("pick", "pending")}
-              className="rounded-lg bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 transition-all shadow-sm"
+              className="rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 transition-all apple-press shadow-2xs"
             >
               Bulk Pick
             </button>
 
             <button
               onClick={() => handleExecuteBulkAction("pack", "ready_to_ship")}
-              className="rounded-lg bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 transition-all shadow-sm"
+              className="rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 transition-all apple-press shadow-2xs"
             >
               Bulk Pack
             </button>
 
             <button
               onClick={() => handleExecuteBulkAction("ship", "shipped")}
-              className="rounded-lg bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-all shadow-sm"
+              className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-all apple-press shadow-2xs"
             >
               Bulk Ship
             </button>
@@ -366,7 +366,7 @@ export default function OperationsPage() {
       )}
 
       {/* Operations Table */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-apple overflow-hidden">
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
@@ -375,7 +375,7 @@ export default function OperationsPage() {
         ) : orders.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+              <thead className="bg-slate-50/80 dark:bg-slate-950/80 text-slate-500 uppercase font-semibold border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   <th className="px-4 py-3 w-10">
                     <input
@@ -393,14 +393,14 @@ export default function OperationsPage() {
                   <th className="px-4 py-3 text-right">WMS Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                 {orders.map((ord) => {
                   const isSelected = selectedIds.includes(ord.id);
 
                   return (
                     <tr
                       key={ord.id}
-                      className={`hover:bg-slate-50/50 transition-colors ${isSelected ? "bg-orange-50/30" : ""}`}
+                      className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors ${isSelected ? "bg-orange-50/30 dark:bg-orange-500/10" : ""}`}
                     >
                       <td className="px-4 py-3">
                         <input
@@ -412,27 +412,27 @@ export default function OperationsPage() {
                       </td>
 
                       <td className="px-4 py-3 font-mono">
-                        <p className="font-bold text-slate-900">#{ord.daraz_order_id}</p>
+                        <p className="font-bold text-slate-900 dark:text-white">#{ord.daraz_order_id}</p>
                         <p className="text-[10px] text-slate-400">{ord.package_id || `PKG-${ord.daraz_order_id.slice(-6)}`}</p>
                       </td>
 
                       <td className="px-4 py-3">
-                        <p className="font-bold text-slate-800">{ord.customer_name || "Customer"}</p>
+                        <p className="font-bold text-slate-800 dark:text-slate-200">{ord.customer_name || "Customer"}</p>
                         <p className="text-[11px] text-slate-400">{ord.customer_city || "Pakistan"}</p>
                       </td>
 
-                      <td className="px-4 py-3 font-mono font-bold text-slate-700">
-                        {ord.shelf_location || "Not Available"}
+                      <td className="px-4 py-3 font-mono font-bold text-slate-700 dark:text-slate-300">
+                        {ord.shelf_location || "N/A"}
                       </td>
 
-                      <td className="px-4 py-3 font-mono text-slate-600">
-                        <p className="font-semibold text-slate-800 text-[11px]">{ord.shipping_provider || "Daraz Express (DEX)"}</p>
+                      <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-400">
+                        <p className="font-semibold text-slate-800 dark:text-slate-200 text-[11px]">{ord.shipping_provider || "DEX"}</p>
                         <p className="text-[10px] text-slate-500">{ord.tracking_number || "Pending"}</p>
                       </td>
 
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center space-x-1 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-bold text-blue-700 border border-blue-200 capitalize">
-                          <PackageCheck className="h-3 w-3 text-blue-600" />
+                        <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-0.5 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20 capitalize">
+                          <PackageCheck className="h-3 w-3 text-blue-600 dark:text-blue-400" />
                           <span>{ord.status || "Pending"}</span>
                         </span>
                       </td>
@@ -440,7 +440,7 @@ export default function OperationsPage() {
                       <td className="px-4 py-3 text-right space-x-1">
                         <button
                           onClick={() => setSelectedPrintOrder(ord)}
-                          className="inline-flex items-center space-x-1 rounded-lg border border-slate-200 bg-white px-2 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-all"
+                          className="inline-flex items-center space-x-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all apple-press shadow-2xs"
                           title="Print Packing Slip / Label"
                         >
                           <Printer className="h-3.5 w-3.5 text-slate-500" />
@@ -456,13 +456,13 @@ export default function OperationsPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700">No WMS operations found matching your current filter.</p>
+            <p className="font-medium text-slate-700 dark:text-slate-300">No WMS operations found matching your current filter.</p>
             <p>Click "Sync Now" above to pull live orders from Daraz Open Platform.</p>
           </div>
         )}
 
         {/* Pagination Footer */}
-        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 px-4 py-3 text-xs gap-3 bg-slate-50/50">
+        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 dark:border-slate-800 px-4 py-3 text-xs gap-3 bg-slate-50/50 dark:bg-slate-950/50">
           <div className="flex items-center space-x-2">
             <span className="text-slate-500">Rows per page:</span>
             <select
@@ -471,7 +471,7 @@ export default function OperationsPage() {
                 setLimit(parseInt(e.target.value, 10));
                 setPage(1);
               }}
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 focus:outline-none"
+              className="rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1 font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value={10}>10</option>
               <option value={25}>25</option>
@@ -490,20 +490,20 @@ export default function OperationsPage() {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition-all"
+              className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
             >
               <ChevronLeft className="h-4 w-4" />
               <span>Previous</span>
             </button>
 
-            <span className="font-bold text-slate-800 px-2">
+            <span className="font-bold text-slate-800 dark:text-white px-2">
               Page {page} of {totalPages || 1}
             </span>
 
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition-all"
+              className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
             >
               <span>Next</span>
               <ChevronRight className="h-4 w-4" />

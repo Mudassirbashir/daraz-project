@@ -81,7 +81,7 @@ export default function FinancePage() {
   const fetchStores = async () => {
     try {
       const supabase = createClient();
-      const { data } = await (supabase as any).from("daraz_stores").select("id, store_code, store_name");
+      const { data } = await supabase.from("daraz_stores").select("id, store_code, store_name");
       setStores(data || []);
     } catch (err) {
       console.error("[FetchStores Error]:", err);
@@ -188,8 +188,8 @@ export default function FinancePage() {
       {/* Header & Print/Export Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Finance & Profit Analytics ERP</h1>
-          <p className="text-xs text-slate-500">
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Finance & Profit Analytics ERP</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
             Real-time profit & loss margin calculations, marketplace commissions, logistics fees, and multi-store financial comparisons.
           </p>
         </div>
@@ -197,7 +197,7 @@ export default function FinancePage() {
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={handlePrintPDF}
-            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
+            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 transition-all apple-press"
           >
             <Printer className="h-4 w-4 text-slate-500" />
             <span>PDF Report</span>
@@ -205,7 +205,7 @@ export default function FinancePage() {
 
           <button
             onClick={exportToCSV}
-            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
+            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 transition-all apple-press"
           >
             <Download className="h-4 w-4 text-slate-500" />
             <span>Export CSV</span>
@@ -217,30 +217,30 @@ export default function FinancePage() {
 
       {/* Financial Summary Metrics Grid */}
       <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-        <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-[11px] font-bold uppercase text-slate-500">Gross Catalog Revenue</span>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{totalRevFormatted}</p>
+        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Gross Catalog Revenue</span>
+          <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{totalRevFormatted}</p>
         </div>
 
-        <div className="rounded-xl border border-emerald-200 bg-emerald-50/50 p-4 shadow-sm">
-          <span className="text-[11px] font-bold uppercase text-emerald-700">Net Settled Profit</span>
-          <p className="mt-1 text-2xl font-bold text-emerald-900">{totalProfitFormatted}</p>
+        <div className="rounded-2xl border border-emerald-200/80 dark:border-emerald-500/30 bg-emerald-50/80 dark:bg-emerald-500/10 p-4 shadow-apple">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Net Settled Profit</span>
+          <p className="mt-1 text-2xl font-bold text-emerald-900 dark:text-emerald-200">{totalProfitFormatted}</p>
         </div>
 
-        <div className="rounded-xl border border-red-200 bg-red-50/50 p-4 shadow-sm">
-          <span className="text-[11px] font-bold uppercase text-red-700">Total Operating Expenses</span>
-          <p className="mt-1 text-2xl font-bold text-red-900">{totalExpFormatted}</p>
+        <div className="rounded-2xl border border-red-200/80 dark:border-red-500/30 bg-red-50/80 dark:bg-red-500/10 p-4 shadow-apple">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-red-700 dark:text-red-400">Total Operating Expenses</span>
+          <p className="mt-1 text-2xl font-bold text-red-900 dark:text-red-200">{totalExpFormatted}</p>
         </div>
 
-        <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-4 shadow-sm">
-          <span className="text-[11px] font-bold uppercase text-blue-700">Settled Payout Estimate</span>
-          <p className="mt-1 text-2xl font-bold text-blue-900">{settledFormatted}</p>
+        <div className="rounded-2xl border border-blue-200/80 dark:border-blue-500/30 bg-blue-50/80 dark:bg-blue-500/10 p-4 shadow-apple">
+          <span className="text-[11px] font-bold uppercase tracking-wider text-blue-700 dark:text-blue-400">Settled Payout Estimate</span>
+          <p className="mt-1 text-2xl font-bold text-blue-900 dark:text-blue-200">{settledFormatted}</p>
         </div>
       </div>
 
       {/* Store Comparison Cards */}
       <div className="space-y-3">
-        <h2 className="text-base font-bold text-slate-900 flex items-center space-x-2">
+        <h2 className="text-base font-bold text-slate-900 dark:text-white flex items-center space-x-2">
           <Building2 className="h-4 w-4 text-orange-500" />
           <span>Multi-Store Financial Performance Comparison</span>
         </h2>
@@ -251,20 +251,20 @@ export default function FinancePage() {
             const prof = (st.profit_cents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
 
             return (
-              <div key={idx} className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm space-y-2">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                  <span className="font-bold text-slate-900 text-sm">{st.store_name}</span>
-                  <span className="rounded bg-slate-100 px-2 py-0.5 text-[10px] font-bold text-slate-700">{st.store_code}</span>
+              <div key={idx} className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple space-y-2">
+                <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-2">
+                  <span className="font-bold text-slate-900 dark:text-white text-sm">{st.store_name}</span>
+                  <span className="rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-[10px] font-bold text-slate-700 dark:text-slate-300">{st.store_code}</span>
                 </div>
 
                 <div className="grid grid-cols-2 gap-2 text-xs pt-1">
                   <div>
-                    <span className="text-slate-500 text-[11px]">Revenue:</span>
-                    <p className="font-bold text-slate-900">{rev}</p>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px]">Revenue:</span>
+                    <p className="font-bold text-slate-900 dark:text-white">{rev}</p>
                   </div>
                   <div>
-                    <span className="text-slate-500 text-[11px]">Net Profit:</span>
-                    <p className="font-bold text-emerald-600">{prof}</p>
+                    <span className="text-slate-500 dark:text-slate-400 text-[11px]">Net Profit:</span>
+                    <p className="font-bold text-emerald-600 dark:text-emerald-400">{prof}</p>
                   </div>
                 </div>
               </div>
@@ -274,7 +274,7 @@ export default function FinancePage() {
       </div>
 
       {/* Controls Bar: Search, Store, Sort, Columns */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
           <input
@@ -285,13 +285,13 @@ export default function FinancePage() {
               setPage(1);
             }}
             placeholder="Search financial records by Seller SKU, Product Name, or Daraz Item ID..."
-            className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+            className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950 pl-10 pr-4 py-2 text-xs text-slate-900 dark:text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
           />
         </div>
 
         <div className="flex items-center space-x-2">
           {/* Store Filter */}
-          <div className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+          <div className="flex items-center space-x-1.5 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 bg-white dark:bg-slate-950">
             <Filter className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={storeFilter}
@@ -299,7 +299,7 @@ export default function FinancePage() {
                 setStoreFilter(e.target.value);
                 setPage(1);
               }}
-              className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none"
+              className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value="all">All Stores Combined</option>
               {stores.map((s) => (
@@ -311,7 +311,7 @@ export default function FinancePage() {
           </div>
 
           {/* Sort By */}
-          <div className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-2.5 py-1.5 bg-white">
+          <div className="flex items-center space-x-1.5 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 bg-white dark:bg-slate-950">
             <ArrowUpDown className="h-3.5 w-3.5 text-slate-400" />
             <select
               value={`${sortBy}:${sortOrder}`}
@@ -320,7 +320,7 @@ export default function FinancePage() {
                 setSortBy(sb);
                 setSortOrder(so as "asc" | "desc");
               }}
-              className="bg-transparent text-xs font-semibold text-slate-700 focus:outline-none"
+              className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value="price_cents:desc">Revenue: High to Low</option>
               <option value="price_cents:asc">Revenue: Low to High</option>
@@ -333,17 +333,17 @@ export default function FinancePage() {
           <div className="relative">
             <button
               onClick={() => setShowColumnDropdown(!showColumnDropdown)}
-              className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+              className="flex items-center space-x-1.5 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 bg-white dark:bg-slate-950 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 shadow-2xs apple-press"
             >
               <Columns className="h-3.5 w-3.5 text-slate-500" />
               <span>Columns</span>
             </button>
 
             {showColumnDropdown && (
-              <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-xl z-30 space-y-2 text-xs">
-                <p className="font-bold text-slate-900 border-b border-slate-100 pb-1">Toggle Columns</p>
+              <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl p-3 shadow-apple-modal z-30 space-y-2 text-xs">
+                <p className="font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-1">Toggle Columns</p>
                 {Object.keys(columnVisibility).map((colKey) => (
-                  <label key={colKey} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-50 p-1 rounded-md">
+                  <label key={colKey} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 p-1 rounded-md">
                     <input
                       type="checkbox"
                       checked={(columnVisibility as any)[colKey]}
@@ -355,7 +355,7 @@ export default function FinancePage() {
                       }
                       className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                     />
-                    <span className="capitalize text-slate-700">{colKey.replace(/([A-Z])/g, " $1")}</span>
+                    <span className="capitalize text-slate-700 dark:text-slate-300">{colKey.replace(/([A-Z])/g, " $1")}</span>
                   </label>
                 ))}
               </div>
@@ -365,7 +365,7 @@ export default function FinancePage() {
       </div>
 
       {/* Financial Records Table */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-apple overflow-hidden">
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
@@ -374,7 +374,7 @@ export default function FinancePage() {
         ) : records.length > 0 ? (
           <div className="overflow-x-auto">
             <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
+              <thead className="bg-slate-50/80 dark:bg-slate-950/80 text-slate-500 uppercase font-semibold border-b border-slate-200 dark:border-slate-800">
                 <tr>
                   {columnVisibility.product && <th className="px-4 py-3">Product Name</th>}
                   {columnVisibility.sellerSku && <th className="px-4 py-3">Seller SKU</th>}
@@ -389,7 +389,7 @@ export default function FinancePage() {
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
                 {records.map((r) => {
                   const rev = (r.price_cents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
                   const cogs = (r.cogs_cents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
@@ -399,55 +399,55 @@ export default function FinancePage() {
                   const prof = (r.net_profit_cents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
 
                   return (
-                    <tr key={r.id} className="hover:bg-slate-50/50 transition-colors">
+                    <tr key={r.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
                       {columnVisibility.product && (
                         <td className="px-4 py-3">
-                          <p className="font-bold text-slate-900 line-clamp-1">{r.title}</p>
+                          <p className="font-bold text-slate-900 dark:text-white line-clamp-1">{r.title}</p>
                           <span className="text-[10px] text-slate-400 font-mono">Item ID: {r.item_id}</span>
                         </td>
                       )}
 
                       {columnVisibility.sellerSku && (
-                        <td className="px-4 py-3 font-mono font-bold text-slate-800">{r.seller_sku}</td>
+                        <td className="px-4 py-3 font-mono font-bold text-slate-800 dark:text-slate-200">{r.seller_sku}</td>
                       )}
 
                       {columnVisibility.store && (
                         <td className="px-4 py-3">
-                          <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-800">
+                          <span className="rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-0.5 text-[11px] font-bold text-slate-800 dark:text-slate-200">
                             {r.store_name}
                           </span>
                         </td>
                       )}
 
                       {columnVisibility.price && (
-                        <td className="px-4 py-3 font-bold text-slate-900">{rev}</td>
+                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{rev}</td>
                       )}
 
                       {columnVisibility.cogs && (
-                        <td className="px-4 py-3 text-slate-700 font-medium">{cogs}</td>
+                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300 font-medium">{cogs}</td>
                       )}
 
                       {columnVisibility.commission && (
-                        <td className="px-4 py-3 text-red-600 font-semibold">{comm}</td>
+                        <td className="px-4 py-3 text-red-600 dark:text-red-400 font-semibold">{comm}</td>
                       )}
 
                       {columnVisibility.shippingFee && (
-                        <td className="px-4 py-3 text-slate-600">{shp}</td>
+                        <td className="px-4 py-3 text-slate-600 dark:text-slate-400">{shp}</td>
                       )}
 
                       {columnVisibility.totalExpenses && (
-                        <td className="px-4 py-3 text-red-700 font-bold">{exp}</td>
+                        <td className="px-4 py-3 text-red-700 dark:text-red-400 font-bold">{exp}</td>
                       )}
 
                       {columnVisibility.netProfit && (
-                        <td className={`px-4 py-3 font-bold ${r.net_profit_cents > 0 ? "text-emerald-700" : "text-red-700"}`}>
+                        <td className={`px-4 py-3 font-bold ${r.net_profit_cents > 0 ? "text-emerald-700 dark:text-emerald-400" : "text-red-700 dark:text-red-400"}`}>
                           {prof}
                         </td>
                       )}
 
                       {columnVisibility.marginPercentage && (
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[11px] ${r.margin_percentage > 20 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-blue-50 text-blue-700 border border-blue-200"}`}>
+                          <span className={`inline-flex items-center px-2.5 py-0.5 rounded-xl font-bold text-[11px] ${r.margin_percentage > 20 ? "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20" : "bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20"}`}>
                             {r.margin_percentage}%
                           </span>
                         </td>
@@ -456,7 +456,7 @@ export default function FinancePage() {
                       <td className="px-4 py-3 text-right">
                         <button
                           onClick={() => setSelectedProfitDetail(r)}
-                          className="inline-flex items-center space-x-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-all"
+                          className="inline-flex items-center space-x-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all apple-press shadow-2xs"
                         >
                           <Eye className="h-3.5 w-3.5 text-slate-500" />
                           <span>Breakdown</span>
@@ -471,13 +471,13 @@ export default function FinancePage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700">No financial records found matching your current filter.</p>
+            <p className="font-medium text-slate-700 dark:text-slate-300">No financial records found matching your current filter.</p>
             <p>Click "Sync Now" above to calculate live product margins from Daraz Open Platform.</p>
           </div>
         )}
 
         {/* Pagination Footer Controls */}
-        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 px-4 py-3 text-xs gap-3 bg-slate-50/50">
+        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 dark:border-slate-800 px-4 py-3 text-xs gap-3 bg-slate-50/50 dark:bg-slate-950/50">
           <div className="flex items-center space-x-2">
             <span className="text-slate-500">Rows per page:</span>
             <select
@@ -486,7 +486,7 @@ export default function FinancePage() {
                 setLimit(parseInt(e.target.value, 10));
                 setPage(1);
               }}
-              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 focus:outline-none"
+              className="rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1 font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value={10}>10</option>
               <option value={25}>25</option>
@@ -505,20 +505,20 @@ export default function FinancePage() {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition-all"
+              className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
             >
               <ChevronLeft className="h-4 w-4" />
               <span>Previous</span>
             </button>
 
-            <span className="font-bold text-slate-800 px-2">
+            <span className="font-bold text-slate-800 dark:text-white px-2">
               Page {page} of {totalPages || 1}
             </span>
 
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition-all"
+              className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
             >
               <span>Next</span>
               <ChevronRight className="h-4 w-4" />
