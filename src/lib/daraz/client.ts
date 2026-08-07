@@ -14,11 +14,15 @@ export interface DarazProductItem {
   seller_sku: string;
   daraz_sku_id?: string;
   title: string;
+  category: string;
+  brand: string;
   status: string;
   price_cents: number;
   special_price_cents?: number;
   quantity: number;
-  images?: string[];
+  reserved_quantity: number;
+  images: string[];
+  attributes: Record<string, any>;
 }
 
 export interface DarazOrderItem {
@@ -256,7 +260,7 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Products with Pagination (/products/get)
+   * Fetch Store Products with Pagination & Normalized Fields (/products/get)
    */
   async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
     const response = await this.request<{ data: { products?: any[]; total_products?: number } }>("/products/get", {
@@ -270,17 +274,24 @@ export class DarazApiClient {
 
     const products: DarazProductItem[] = rawProducts.map((p) => {
       const firstSku = p.skus?.[0] || {};
-      const imagesList = p.images || (firstSku.Images ? [firstSku.Images] : []);
+      const imagesList = p.images || (firstSku.Images ? (Array.isArray(firstSku.Images) ? firstSku.Images : [firstSku.Images]) : []);
+
+      const rawAttributes = p.attributes || {};
+
       return {
         item_id: String(p.item_id || firstSku.ShopSku || `ITEM_${Date.now()}`),
         seller_sku: firstSku.SellerSku || `SKU_${p.item_id}`,
         daraz_sku_id: String(firstSku.SkuId || firstSku.ShopSku || ""),
-        title: p.attributes?.name || firstSku.package_content || "Daraz Product",
-        status: (p.status || "active").toLowerCase(),
+        title: rawAttributes.name || firstSku.package_content || "Daraz Product",
+        category: String(p.primary_category || rawAttributes.category || "General"),
+        brand: String(rawAttributes.brand || "Generic"),
+        status: String(p.status || "active").toLowerCase(),
         price_cents: Math.round((firstSku.price || 0) * 100),
         special_price_cents: firstSku.special_price ? Math.round(firstSku.special_price * 100) : undefined,
         quantity: firstSku.quantity || 0,
+        reserved_quantity: firstSku.withholding_quantity || firstSku.reserved_stock || 0,
         images: Array.isArray(imagesList) ? imagesList : [imagesList],
+        attributes: rawAttributes,
       };
     });
 

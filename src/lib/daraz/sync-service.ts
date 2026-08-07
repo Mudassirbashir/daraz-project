@@ -7,6 +7,9 @@ export interface SyncResult {
   storesSynced: number;
   productsSynced: number;
   ordersSynced: number;
+  importedCount: number;
+  updatedCount: number;
+  failedCount: number;
   durationMs: number;
   errors: string[];
   timestamp: string;
@@ -17,17 +20,21 @@ export interface SyncResult {
  * 1. Queries active Daraz Stores from Supabase.
  * 2. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
  * 3. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id` to eliminate duplicates.
- * 4. Logs complete operational diagnostics into `daraz_api_logs`.
- * 5. Returns execution metrics (storesSynced, productsSynced, ordersSynced, durationMs, errors).
+ * 4. Logs complete operational diagnostics into `daraz_api_logs` (started_time, finished_time, imported, updated, failed, api_errors).
+ * 5. Returns execution metrics.
  */
 export async function executeDarazSync(): Promise<SyncResult> {
   const startTime = Date.now();
+  const startedTimeIso = new Date(startTime).toISOString();
   const supabase = createAdminClient();
   const errors: string[] = [];
 
   let storesSynced = 0;
   let productsSynced = 0;
   let ordersSynced = 0;
+  let importedCount = 0;
+  let updatedCount = 0;
+  let failedCount = 0;
 
   const timestamp = new Date().toISOString();
 
@@ -49,6 +56,9 @@ export async function executeDarazSync(): Promise<SyncResult> {
         storesSynced: 0,
         productsSynced: 0,
         ordersSynced: 0,
+        importedCount: 0,
+        updatedCount: 0,
+        failedCount: 0,
         durationMs: Date.now() - startTime,
         errors,
         timestamp,
@@ -78,7 +88,7 @@ export async function executeDarazSync(): Promise<SyncResult> {
             .eq("id", store.id);
           storesSynced++;
         } catch (profileErr: any) {
-          console.warn(`[SyncEngine] Store profile sync notice for ${store.store_code}:`, profileErr.message);
+          console.warn(`[SyncEngine] Store profile notice for ${store.store_code}:`, profileErr.message);
         }
 
         // B. Sync Products / Listings & Inventory (with Pagination & Images)
@@ -91,41 +101,61 @@ export async function executeDarazSync(): Promise<SyncResult> {
           totalProducts = total;
 
           for (const item of products) {
-            // Upsert inventory stock item first
-            const { data: invItem } = await supabase
-              .from("inventory")
-              .upsert(
+            try {
+              // Check existing listing to track imported vs updated count
+              const { data: existingListing } = await supabase
+                .from("listings")
+                .select("id")
+                .eq("store_id", store.id)
+                .eq("seller_sku", item.seller_sku)
+                .maybeSingle();
+
+              if (existingListing) {
+                updatedCount++;
+              } else {
+                importedCount++;
+              }
+
+              // Upsert inventory stock item
+              const { data: invItem } = await supabase
+                .from("inventory")
+                .upsert(
+                  {
+                    sku: item.seller_sku,
+                    title: item.title,
+                    category: item.category || "General",
+                    quantity_on_hand: item.quantity,
+                    quantity_reserved: item.reserved_quantity || 0,
+                    unit_cost_cents: Math.round(item.price_cents * 0.6),
+                  },
+                  { onConflict: "sku" }
+                )
+                .select("id")
+                .single();
+
+              // Upsert store listing with de-duplication on (store_id, seller_sku)
+              await supabase.from("listings").upsert(
                 {
-                  sku: item.seller_sku,
+                  store_id: store.id,
+                  inventory_id: invItem?.id || null,
+                  seller_sku: item.seller_sku,
+                  daraz_item_id: item.item_id,
+                  daraz_sku_id: item.daraz_sku_id || null,
                   title: item.title,
-                  category: "General",
-                  quantity_on_hand: item.quantity,
-                  unit_cost_cents: Math.round(item.price_cents * 0.6),
+                  price_cents: item.price_cents,
+                  special_price_cents: item.special_price_cents || null,
+                  stock_quantity: item.quantity,
+                  is_synced: true,
+                  last_synced_at: timestamp,
                 },
-                { onConflict: "sku" }
-              )
-              .select("id")
-              .single();
+                { onConflict: "store_id,seller_sku" }
+              );
 
-            // Upsert store listing with de-duplication on (store_id, seller_sku)
-            await supabase.from("listings").upsert(
-              {
-                store_id: store.id,
-                inventory_id: invItem?.id || null,
-                seller_sku: item.seller_sku,
-                daraz_item_id: item.item_id,
-                daraz_sku_id: item.daraz_sku_id || null,
-                title: item.title,
-                price_cents: item.price_cents,
-                special_price_cents: item.special_price_cents || null,
-                stock_quantity: item.quantity,
-                is_synced: true,
-                last_synced_at: timestamp,
-              },
-              { onConflict: "store_id,seller_sku" }
-            );
-
-            productsSynced++;
+              productsSynced++;
+            } catch (itemErr: any) {
+              failedCount++;
+              console.error(`[SyncEngine] Item error for SKU ${item.seller_sku}:`, itemErr.message);
+            }
           }
 
           productOffset += limit;
@@ -140,49 +170,64 @@ export async function executeDarazSync(): Promise<SyncResult> {
           totalOrders = total;
 
           for (const ord of orders) {
-            let mappedStatus: DarazOrderStatus = "pending";
-            const validStatuses = ["unpaid", "pending", "ready_to_ship", "shipped", "delivered", "canceled", "returned", "failed"];
-            if (validStatuses.includes(ord.statuses)) {
-              mappedStatus = ord.statuses as DarazOrderStatus;
+            try {
+              let mappedStatus: DarazOrderStatus = "pending";
+              const validStatuses = ["unpaid", "pending", "ready_to_ship", "shipped", "delivered", "canceled", "returned", "failed"];
+              if (validStatuses.includes(ord.statuses)) {
+                mappedStatus = ord.statuses as DarazOrderStatus;
+              }
+
+              await supabase.from("orders").upsert(
+                {
+                  store_id: store.id,
+                  daraz_order_id: ord.order_id,
+                  tracking_number: ord.tracking_code,
+                  customer_name: ord.customer_first_name,
+                  customer_city: ord.customer_city,
+                  total_amount_cents: ord.price_cents,
+                  status: mappedStatus,
+                  order_date: ord.created_at,
+                },
+                { onConflict: "daraz_order_id" }
+              );
+
+              ordersSynced++;
+            } catch (ordErr: any) {
+              failedCount++;
+              console.error(`[SyncEngine] Order error for Order ID ${ord.order_id}:`, ordErr.message);
             }
-
-            await supabase.from("orders").upsert(
-              {
-                store_id: store.id,
-                daraz_order_id: ord.order_id,
-                tracking_number: ord.tracking_code,
-                customer_name: ord.customer_first_name,
-                customer_city: ord.customer_city,
-                total_amount_cents: ord.price_cents,
-                status: mappedStatus,
-                order_date: ord.created_at,
-              },
-              { onConflict: "daraz_order_id" }
-            );
-
-            ordersSynced++;
           }
 
           orderOffset += limit;
         } while (orderOffset < totalOrders && orderOffset < 500);
 
-        // D. Log Success in daraz_api_logs
+        const finishedTimeIso = new Date().toISOString();
+
+        // D. Log Detailed Diagnostics in daraz_api_logs
         await supabase.from("daraz_api_logs").insert({
           store_id: store.id,
           sync_type: "full_sync",
           status: "completed",
           records_synced: productsSynced + ordersSynced,
           payload: {
+            startedTime: startedTimeIso,
+            finishedTime: finishedTimeIso,
+            imported: importedCount,
+            updated: updatedCount,
+            failed: failedCount,
             productsSynced,
             ordersSynced,
             durationMs: Date.now() - startTime,
-            timestamp,
+            apiErrors: errors,
           },
         });
 
       } catch (storeErr: any) {
         const errorMsg = storeErr.message || String(storeErr);
         errors.push(`Store [${store.store_code}] Error: ${errorMsg}`);
+        failedCount++;
+
+        const finishedTimeIso = new Date().toISOString();
 
         // Log Failure in daraz_api_logs
         await supabase.from("daraz_api_logs").insert({
@@ -190,7 +235,15 @@ export async function executeDarazSync(): Promise<SyncResult> {
           sync_type: "full_sync",
           status: "failed",
           error_message: errorMsg,
-          payload: { durationMs: Date.now() - startTime, timestamp },
+          payload: {
+            startedTime: startedTimeIso,
+            finishedTime: finishedTimeIso,
+            imported: importedCount,
+            updated: updatedCount,
+            failed: failedCount,
+            durationMs: Date.now() - startTime,
+            apiErrors: [errorMsg],
+          },
         });
       }
     }
@@ -200,6 +253,9 @@ export async function executeDarazSync(): Promise<SyncResult> {
       storesSynced,
       productsSynced,
       ordersSynced,
+      importedCount,
+      updatedCount,
+      failedCount,
       durationMs: Date.now() - startTime,
       errors,
       timestamp,
@@ -212,6 +268,9 @@ export async function executeDarazSync(): Promise<SyncResult> {
       storesSynced,
       productsSynced,
       ordersSynced,
+      importedCount,
+      updatedCount,
+      failedCount,
       durationMs: Date.now() - startTime,
       errors,
       timestamp,

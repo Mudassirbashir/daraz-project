@@ -17,10 +17,11 @@ import {
   ChevronRight,
   ArrowUpDown,
   Eye,
-  Edit3,
-  SlidersHorizontal,
+  Download,
+  Columns,
   Layers,
-  Power
+  CheckSquare,
+  Square
 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
 
@@ -39,8 +40,26 @@ export default function ListingsPage() {
   const [totalProducts, setTotalProducts] = useState(0);
   const [totalPages, setTotalPages] = useState(1);
 
-  // Stores filter list
+  // Stores list
   const [stores, setStores] = useState<any[]>([]);
+
+  // Column visibility state
+  const [columnVisibility, setColumnVisibility] = useState({
+    image: true,
+    title: true,
+    sellerSku: true,
+    darazSku: true,
+    itemId: true,
+    category: true,
+    brand: true,
+    price: true,
+    specialPrice: true,
+    stock: true,
+    reservedStock: true,
+    status: true,
+    lastUpdated: true,
+  });
+  const [showColumnDropdown, setShowColumnDropdown] = useState(false);
 
   // Selection & Bulk Action state
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -97,7 +116,7 @@ export default function ListingsPage() {
     fetchProducts();
   }, [page, limit, searchQuery, statusFilter, storeFilter, sortBy, sortOrder]);
 
-  // Handle Select All
+  // Select All Checkbox Handler
   const handleSelectAll = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.checked) {
       setSelectedIds(products.map((p) => p.id));
@@ -106,7 +125,7 @@ export default function ListingsPage() {
     }
   };
 
-  // Handle Individual Selection
+  // Select Single Checkbox Handler
   const handleSelectOne = (id: string) => {
     if (selectedIds.includes(id)) {
       setSelectedIds(selectedIds.filter((item) => item !== id));
@@ -129,10 +148,7 @@ export default function ListingsPage() {
       });
 
       const data = await res.json();
-
-      if (!data.success) {
-        throw new Error(data.error || "Bulk action failed.");
-      }
+      if (!data.success) throw new Error(data.error || "Bulk action failed.");
 
       setSelectedIds([]);
       fetchProducts();
@@ -141,20 +157,80 @@ export default function ListingsPage() {
     }
   };
 
+  // Export CSV Handler
+  const exportToCSV = () => {
+    const itemsToExport = selectedIds.length > 0
+      ? products.filter((p) => selectedIds.includes(p.id))
+      : products;
+
+    if (itemsToExport.length === 0) {
+      alert("No products available to export.");
+      return;
+    }
+
+    const headers = [
+      "Store Code",
+      "Store Name",
+      "Title",
+      "Seller SKU",
+      "Daraz SKU ID",
+      "Daraz Item ID",
+      "Price (PKR)",
+      "Special Price (PKR)",
+      "Stock Quantity",
+      "Synced Status",
+      "Last Synced At",
+    ];
+
+    const rows = itemsToExport.map((p) => [
+      `"${p.daraz_stores?.store_code || ""}"`,
+      `"${p.daraz_stores?.store_name || ""}"`,
+      `"${(p.title || "").replace(/"/g, '""')}"`,
+      `"${p.seller_sku || ""}"`,
+      `"${p.daraz_sku_id || ""}"`,
+      `"${p.daraz_item_id || ""}"`,
+      (p.price_cents / 100).toFixed(2),
+      p.special_price_cents ? (p.special_price_cents / 100).toFixed(2) : "",
+      p.stock_quantity,
+      p.is_synced ? "Synced" : "Pending",
+      `"${p.last_synced_at ? new Date(p.last_synced_at).toLocaleString() : ""}"`,
+    ]);
+
+    const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
+    const encodedUri = encodeURI(csvContent);
+    const link = document.createElement("a");
+    link.setAttribute("href", encodedUri);
+    link.setAttribute("download", `Daraz_Products_Export_${Date.now()}.csv`);
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+  };
+
   return (
     <div className="space-y-6">
-      {/* Header & Sync */}
+      {/* Header & Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Daraz Seller Center — Products Management</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Daraz Seller Center — Enterprise Products ERP</h1>
           <p className="text-xs text-slate-500">
-            Real-time catalog, SKU variants, prices, inventory levels, and bulk operational controls synchronized with Daraz.
+            Normalized product catalog, SKU variants, prices, inventory levels, column customization, and CSV export.
           </p>
         </div>
-        <SyncNowButton />
+
+        <div className="flex items-center space-x-2 shrink-0">
+          <button
+            onClick={exportToCSV}
+            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
+          >
+            <Download className="h-4 w-4 text-slate-500" />
+            <span>Export CSV {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}</span>
+          </button>
+
+          <SyncNowButton />
+        </div>
       </div>
 
-      {/* Metrics Header Summary */}
+      {/* Metrics Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="text-[11px] font-bold uppercase text-slate-500">Total Products</span>
@@ -162,9 +238,9 @@ export default function ListingsPage() {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-[11px] font-bold uppercase text-slate-500">In Stock</span>
+          <span className="text-[11px] font-bold uppercase text-slate-500">Available Stock</span>
           <p className="mt-1 text-2xl font-bold text-emerald-600">
-            {products.filter((p) => p.stock_quantity > 0).length} Available
+            {products.filter((p) => p.stock_quantity > 0).length} In Stock
           </p>
         </div>
 
@@ -176,12 +252,12 @@ export default function ListingsPage() {
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="text-[11px] font-bold uppercase text-slate-500">Selected for Bulk Action</span>
+          <span className="text-[11px] font-bold uppercase text-slate-500">Selected SKUs</span>
           <p className="mt-1 text-2xl font-bold text-orange-600">{selectedIds.length} Selected</p>
         </div>
       </div>
 
-      {/* Status Filter Tabs (Daraz Seller Center Style) */}
+      {/* Status Filter Tabs */}
       <div className="flex items-center space-x-2 border-b border-slate-200 pb-2 overflow-x-auto text-xs">
         <button
           onClick={() => {
@@ -192,7 +268,7 @@ export default function ListingsPage() {
             statusFilter === "all" ? "bg-slate-900 text-white shadow-sm" : "text-slate-600 hover:bg-slate-100"
           }`}
         >
-          All Products
+          All Products ({totalProducts})
         </button>
 
         <button
@@ -232,7 +308,7 @@ export default function ListingsPage() {
         </button>
       </div>
 
-      {/* Controls Bar: Search, Store Filter, Sorting */}
+      {/* Controls Bar: Search, Store, Sort, Column Visibility */}
       <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
@@ -289,14 +365,47 @@ export default function ListingsPage() {
               <option value="stock_quantity:asc">Stock: Low to High</option>
             </select>
           </div>
+
+          {/* Column Visibility Selector Dropdown */}
+          <div className="relative">
+            <button
+              onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+              className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-3 py-1.5 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
+            >
+              <Columns className="h-3.5 w-3.5 text-slate-500" />
+              <span>Columns</span>
+            </button>
+
+            {showColumnDropdown && (
+              <div className="absolute right-0 mt-2 w-56 rounded-xl border border-slate-200 bg-white p-3 shadow-xl z-30 space-y-2 text-xs">
+                <p className="font-bold text-slate-900 border-b border-slate-100 pb-1">Toggle Visibility</p>
+                {Object.keys(columnVisibility).map((colKey) => (
+                  <label key={colKey} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-50 p-1 rounded-md">
+                    <input
+                      type="checkbox"
+                      checked={(columnVisibility as any)[colKey]}
+                      onChange={(e) =>
+                        setColumnVisibility({
+                          ...columnVisibility,
+                          [colKey]: e.target.checked,
+                        })
+                      }
+                      className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
+                    />
+                    <span className="capitalize text-slate-700">{colKey.replace(/([A-Z])/g, " $1")}</span>
+                  </label>
+                ))}
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Bulk Actions Toolbar (Sticky when items selected) */}
+      {/* Bulk Action Bar */}
       {selectedIds.length > 0 && (
         <div className="flex items-center justify-between rounded-xl border border-orange-200 bg-orange-50 p-3 shadow-md">
           <span className="text-xs font-bold text-orange-900">
-            {selectedIds.length} product(s) selected for bulk operations
+            {selectedIds.length} product(s) selected for bulk action
           </span>
 
           <div className="flex items-center space-x-2">
@@ -336,7 +445,7 @@ export default function ListingsPage() {
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Querying Daraz product catalog...</span>
+            <span>Fetching Daraz product catalog...</span>
           </div>
         ) : products.length > 0 ? (
           <div className="overflow-x-auto">
@@ -351,12 +460,14 @@ export default function ListingsPage() {
                       className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                     />
                   </th>
-                  <th className="px-4 py-3">Product Title & SKU</th>
-                  <th className="px-4 py-3">Store</th>
-                  <th className="px-4 py-3">Daraz Item ID</th>
-                  <th className="px-4 py-3">Price (PKR)</th>
-                  <th className="px-4 py-3">Stock Level</th>
-                  <th className="px-4 py-3">Sync Status</th>
+                  {columnVisibility.title && <th className="px-4 py-3">Product Name & SKU</th>}
+                  {columnVisibility.sellerSku && <th className="px-4 py-3">Seller SKU</th>}
+                  {columnVisibility.darazSku && <th className="px-4 py-3">Daraz SKU ID</th>}
+                  {columnVisibility.itemId && <th className="px-4 py-3">Daraz Item ID</th>}
+                  {columnVisibility.price && <th className="px-4 py-3">Price (PKR)</th>}
+                  {columnVisibility.stock && <th className="px-4 py-3">Available Stock</th>}
+                  {columnVisibility.status && <th className="px-4 py-3">Sync Status</th>}
+                  {columnVisibility.lastUpdated && <th className="px-4 py-3">Last Synced</th>}
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -390,59 +501,79 @@ export default function ListingsPage() {
                         />
                       </td>
 
-                      <td className="px-4 py-3">
-                        <div className="flex items-center space-x-3">
-                          <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 overflow-hidden">
-                            {item.images && item.images.length > 0 ? (
-                              <img src={item.images[0]} alt={item.title} className="h-full w-full object-cover" />
-                            ) : (
-                              <Package className="h-5 w-5" />
+                      {columnVisibility.title && (
+                        <td className="px-4 py-3">
+                          <div className="flex items-center space-x-3">
+                            {columnVisibility.image && (
+                              <div className="h-10 w-10 flex-shrink-0 rounded-lg bg-slate-100 border border-slate-200 flex items-center justify-center text-slate-400 overflow-hidden">
+                                {item.images && item.images.length > 0 ? (
+                                  <img src={item.images[0]} alt={item.title} className="h-full w-full object-cover" />
+                                ) : (
+                                  <Package className="h-5 w-5" />
+                                )}
+                              </div>
                             )}
+                            <div>
+                              <p className="font-bold text-slate-900 line-clamp-1">{item.title}</p>
+                              <p className="text-[11px] text-slate-500 font-mono">
+                                Store: {item.daraz_stores?.store_name || "Daraz Store"}
+                              </p>
+                            </div>
                           </div>
-                          <div>
-                            <p className="font-bold text-slate-900 line-clamp-1">{item.title}</p>
-                            <p className="font-mono text-[11px] text-slate-500">SKU: {item.seller_sku}</p>
-                          </div>
-                        </div>
-                      </td>
+                        </td>
+                      )}
 
-                      <td className="px-4 py-3 font-semibold text-slate-700">
-                        <span className="rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-800">
-                          {item.daraz_stores?.store_name || "Daraz Store"}
-                        </span>
-                      </td>
+                      {columnVisibility.sellerSku && (
+                        <td className="px-4 py-3 font-mono text-slate-800 font-bold">{item.seller_sku}</td>
+                      )}
 
-                      <td className="px-4 py-3 font-mono text-slate-600">
-                        {item.daraz_item_id || item.daraz_sku_id || "N/A"}
-                      </td>
+                      {columnVisibility.darazSku && (
+                        <td className="px-4 py-3 font-mono text-slate-600">{item.daraz_sku_id || "N/A"}</td>
+                      )}
 
-                      <td className="px-4 py-3">
-                        <p className="font-bold text-slate-900">{priceFormatted}</p>
-                        {specialPriceFormatted && (
-                          <p className="text-[10px] font-semibold text-emerald-600">Special: {specialPriceFormatted}</p>
-                        )}
-                      </td>
+                      {columnVisibility.itemId && (
+                        <td className="px-4 py-3 font-mono text-slate-600">{item.daraz_item_id || "N/A"}</td>
+                      )}
 
-                      <td className="px-4 py-3">
-                        <span
-                          className={`inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[11px] ${
-                            item.stock_quantity > 10
-                              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-                              : item.stock_quantity > 0
-                              ? "bg-amber-50 text-amber-700 border border-amber-200"
-                              : "bg-red-50 text-red-700 border border-red-200"
-                          }`}
-                        >
-                          {item.stock_quantity} Units
-                        </span>
-                      </td>
+                      {columnVisibility.price && (
+                        <td className="px-4 py-3">
+                          <p className="font-bold text-slate-900">{priceFormatted}</p>
+                          {columnVisibility.specialPrice && specialPriceFormatted && (
+                            <p className="text-[10px] font-semibold text-emerald-600">Special: {specialPriceFormatted}</p>
+                          )}
+                        </td>
+                      )}
 
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center space-x-1 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-200">
-                          <CheckCircle2 className="h-3 w-3 text-blue-600" />
-                          <span>Synced</span>
-                        </span>
-                      </td>
+                      {columnVisibility.stock && (
+                        <td className="px-4 py-3">
+                          <span
+                            className={`inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[11px] ${
+                              item.stock_quantity > 10
+                                ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                                : item.stock_quantity > 0
+                                ? "bg-amber-50 text-amber-700 border border-amber-200"
+                                : "bg-red-50 text-red-700 border border-red-200"
+                            }`}
+                          >
+                            {item.stock_quantity} Units
+                          </span>
+                        </td>
+                      )}
+
+                      {columnVisibility.status && (
+                        <td className="px-4 py-3">
+                          <span className="inline-flex items-center space-x-1 rounded-md bg-blue-50 px-2 py-0.5 text-[11px] font-semibold text-blue-700 border border-blue-200">
+                            <CheckCircle2 className="h-3 w-3 text-blue-600" />
+                            <span>Synced</span>
+                          </span>
+                        </td>
+                      )}
+
+                      {columnVisibility.lastUpdated && (
+                        <td className="px-4 py-3 text-[11px] text-slate-500">
+                          {item.last_synced_at ? new Date(item.last_synced_at).toLocaleString() : "Recently"}
+                        </td>
+                      )}
 
                       <td className="px-4 py-3 text-right">
                         <button
@@ -450,7 +581,7 @@ export default function ListingsPage() {
                           className="inline-flex items-center space-x-1 rounded-lg border border-slate-200 bg-white px-2.5 py-1 text-xs font-semibold text-slate-700 hover:bg-slate-50 transition-all"
                         >
                           <Eye className="h-3.5 w-3.5 text-slate-500" />
-                          <span>View</span>
+                          <span>Details</span>
                         </button>
                       </td>
                     </tr>
@@ -483,6 +614,7 @@ export default function ListingsPage() {
               <option value={25}>25</option>
               <option value={50}>50</option>
               <option value={100}>100</option>
+              <option value={250}>250</option>
             </select>
 
             <span className="text-slate-500 ml-2">
