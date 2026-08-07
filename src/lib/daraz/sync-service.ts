@@ -13,10 +13,10 @@ export interface SyncResult {
 }
 
 /**
- * Core Synchronization Engine:
+ * Production-Grade Synchronization Engine:
  * 1. Queries active Daraz Stores from Supabase.
- * 2. Fetches Store Profiles, Listings/Products, and Orders via Daraz Open Platform REST API.
- * 3. Safely UPSERTS records into Supabase PostgreSQL tables to eliminate duplicate entries.
+ * 2. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
+ * 3. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id` to eliminate duplicates.
  * 4. Logs complete operational diagnostics into `daraz_api_logs`.
  * 5. Returns execution metrics (storesSynced, productsSynced, ordersSynced, durationMs, errors).
  */
@@ -43,7 +43,7 @@ export async function executeDarazSync(): Promise<SyncResult> {
     }
 
     if (!stores || stores.length === 0) {
-      errors.push("No active Daraz stores found in Supabase. Please complete Daraz OAuth flow via /api/auth/daraz/login first.");
+      errors.push("No active Daraz stores found in Supabase. Please connect a Daraz store via /stores first.");
       return {
         success: false,
         storesSynced: 0,
@@ -66,9 +66,8 @@ export async function executeDarazSync(): Promise<SyncResult> {
 
       try {
         // A. Sync Store Profile
-        let storeProfile;
         try {
-          storeProfile = await darazClient.getStoreProfile();
+          const storeProfile = await darazClient.getStoreProfile();
           await supabase
             .from("daraz_stores")
             .update({
@@ -79,10 +78,10 @@ export async function executeDarazSync(): Promise<SyncResult> {
             .eq("id", store.id);
           storesSynced++;
         } catch (profileErr: any) {
-          console.warn(`[SyncEngine] Store profile update warning for ${store.store_code}:`, profileErr.message);
+          console.warn(`[SyncEngine] Store profile sync notice for ${store.store_code}:`, profileErr.message);
         }
 
-        // B. Sync Products / Listings & Inventory (with Pagination)
+        // B. Sync Products / Listings & Inventory (with Pagination & Images)
         let productOffset = 0;
         const limit = 50;
         let totalProducts = 0;
@@ -101,20 +100,21 @@ export async function executeDarazSync(): Promise<SyncResult> {
                   title: item.title,
                   category: "General",
                   quantity_on_hand: item.quantity,
-                  unit_cost_cents: Math.round(item.price_cents * 0.6), // default cost estimate
+                  unit_cost_cents: Math.round(item.price_cents * 0.6),
                 },
                 { onConflict: "sku" }
               )
               .select("id")
               .single();
 
-            // Upsert store listing
+            // Upsert store listing with de-duplication on (store_id, seller_sku)
             await supabase.from("listings").upsert(
               {
                 store_id: store.id,
                 inventory_id: invItem?.id || null,
                 seller_sku: item.seller_sku,
                 daraz_item_id: item.item_id,
+                daraz_sku_id: item.daraz_sku_id || null,
                 title: item.title,
                 price_cents: item.price_cents,
                 special_price_cents: item.special_price_cents || null,
@@ -129,7 +129,7 @@ export async function executeDarazSync(): Promise<SyncResult> {
           }
 
           productOffset += limit;
-        } while (productOffset < totalProducts && rawProductsHasMore(totalProducts, productOffset));
+        } while (productOffset < totalProducts && productOffset < 500);
 
         // C. Sync Orders (with Pagination)
         let orderOffset = 0;
@@ -164,18 +164,19 @@ export async function executeDarazSync(): Promise<SyncResult> {
           }
 
           orderOffset += limit;
-        } while (orderOffset < totalOrders && rawProductsHasMore(totalOrders, orderOffset));
+        } while (orderOffset < totalOrders && orderOffset < 500);
 
         // D. Log Success in daraz_api_logs
         await supabase.from("daraz_api_logs").insert({
           store_id: store.id,
-          sync_type: "manual_sync",
+          sync_type: "full_sync",
           status: "completed",
           records_synced: productsSynced + ordersSynced,
           payload: {
             productsSynced,
             ordersSynced,
             durationMs: Date.now() - startTime,
+            timestamp,
           },
         });
 
@@ -186,10 +187,10 @@ export async function executeDarazSync(): Promise<SyncResult> {
         // Log Failure in daraz_api_logs
         await supabase.from("daraz_api_logs").insert({
           store_id: store.id,
-          sync_type: "manual_sync",
+          sync_type: "full_sync",
           status: "failed",
           error_message: errorMsg,
-          payload: { durationMs: Date.now() - startTime },
+          payload: { durationMs: Date.now() - startTime, timestamp },
         });
       }
     }
@@ -216,8 +217,4 @@ export async function executeDarazSync(): Promise<SyncResult> {
       timestamp,
     };
   }
-}
-
-function rawProductsHasMore(total: number, offset: number): boolean {
-  return total > 0 && offset < total;
 }
