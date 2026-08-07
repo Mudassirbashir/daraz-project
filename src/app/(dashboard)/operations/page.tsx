@@ -325,57 +325,62 @@ export default function OperationsPage() {
             setStageTab("shipped");
             setPage(1);
           }}
-          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
-            stageTab === "shipped" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+          title="Filter handed to delivery"
+          className={`rounded-2xl border p-4 text-left shadow-sm transition-all ${
+            stageTab === "shipped" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"
           }`}
         >
-          Shipped ({metrics.ordersShipped})
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">4. Handed to Delivery</span>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">
+            {metrics.ordersShipped} orders
+          </p>
         </button>
       </div>
 
-      {/* Bulk Action Toolbar */}
+      {/* Bulk Action Controls */}
       {selectedIds.length > 0 && (
-        <div className="flex items-center justify-between rounded-2xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/90 dark:bg-orange-500/10 p-3 shadow-apple">
-          <span className="text-xs font-bold text-orange-900 dark:text-orange-300">
-            {selectedIds.length} order(s) selected for WMS fulfillment
-          </span>
+        <div className="flex items-center justify-between rounded-2xl border border-orange-200 bg-orange-50/90 p-3 shadow-sm text-xs">
+          <span className="font-bold text-orange-900">{selectedIds.length} order(s) chosen</span>
 
           <div className="flex items-center space-x-2">
             <button
               onClick={() => handleExecuteBulkAction("pick", "pending")}
-              className="rounded-xl bg-amber-500 px-3 py-1.5 text-xs font-bold text-white hover:bg-amber-600 transition-all apple-press shadow-2xs"
+              title="Mark selected orders as collected"
+              className="rounded-xl bg-amber-600 px-3 py-1.5 font-bold text-white hover:bg-amber-700 transition-all"
             >
-              Bulk Pick
+              Mark Collected
             </button>
 
             <button
               onClick={() => handleExecuteBulkAction("pack", "ready_to_ship")}
-              className="rounded-xl bg-purple-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-purple-700 transition-all apple-press shadow-2xs"
+              title="Mark selected orders as packed"
+              className="rounded-xl bg-blue-600 px-3 py-1.5 font-bold text-white hover:bg-blue-700 transition-all"
             >
-              Bulk Pack
+              Mark Packed
             </button>
 
             <button
               onClick={() => handleExecuteBulkAction("ship", "shipped")}
-              className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-all apple-press shadow-2xs"
+              title="Mark selected orders as handed to delivery"
+              className="rounded-xl bg-emerald-600 px-3 py-1.5 font-bold text-white hover:bg-emerald-700 transition-all"
             >
-              Bulk Ship
+              Mark Sent
             </button>
           </div>
         </div>
       )}
 
-      {/* Operations Table */}
-      <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-apple overflow-hidden">
+      {/* Warehouse Pipeline Table */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden text-xs">
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Loading WMS pipeline status...</span>
+            <span>Loading warehouse orders...</span>
           </div>
         ) : orders.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50/80 dark:bg-slate-950/80 text-slate-500 uppercase font-semibold border-b border-slate-200 dark:border-slate-800">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
                   <th className="px-4 py-3 w-10">
                     <input
@@ -385,23 +390,18 @@ export default function OperationsPage() {
                       className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                     />
                   </th>
-                  <th className="px-4 py-3">Order ID & Package</th>
+                  <th className="px-4 py-3">Order Number</th>
                   <th className="px-4 py-3">Customer</th>
-                  <th className="px-4 py-3">Shelf / Bay</th>
-                  <th className="px-4 py-3">Carrier & Tracking</th>
-                  <th className="px-4 py-3">Pipeline Stage</th>
-                  <th className="px-4 py-3 text-right">WMS Actions</th>
+                  <th className="px-4 py-3">Shelf Location</th>
+                  <th className="px-4 py-3">Warehouse Stage</th>
+                  <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+              <tbody className="divide-y divide-slate-100 font-sans">
                 {orders.map((ord) => {
                   const isSelected = selectedIds.includes(ord.id);
-
                   return (
-                    <tr
-                      key={ord.id}
-                      className={`hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors ${isSelected ? "bg-orange-50/30 dark:bg-orange-500/10" : ""}`}
-                    >
+                    <tr key={ord.id} className={`hover:bg-slate-50/50 transition-colors ${isSelected ? "bg-orange-50/40" : ""}`}>
                       <td className="px-4 py-3">
                         <input
                           type="checkbox"
@@ -410,41 +410,22 @@ export default function OperationsPage() {
                           className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                         />
                       </td>
-
-                      <td className="px-4 py-3 font-mono">
-                        <p className="font-bold text-slate-900 dark:text-white">#{ord.daraz_order_id}</p>
-                        <p className="text-[10px] text-slate-400">{ord.package_id || `PKG-${ord.daraz_order_id.slice(-6)}`}</p>
-                      </td>
-
+                      <td className="px-4 py-3 font-mono font-bold text-slate-900">#{ord.daraz_order_id}</td>
+                      <td className="px-4 py-3 font-bold text-slate-800">{ord.customer_name || "Customer"}</td>
+                      <td className="px-4 py-3 font-mono font-bold text-orange-600">{ord.shelf_location || "N/A"}</td>
                       <td className="px-4 py-3">
-                        <p className="font-bold text-slate-800 dark:text-slate-200">{ord.customer_name || "Customer"}</p>
-                        <p className="text-[11px] text-slate-400">{ord.customer_city || "Pakistan"}</p>
-                      </td>
-
-                      <td className="px-4 py-3 font-mono font-bold text-slate-700 dark:text-slate-300">
-                        {ord.shelf_location || "N/A"}
-                      </td>
-
-                      <td className="px-4 py-3 font-mono text-slate-600 dark:text-slate-400">
-                        <p className="font-semibold text-slate-800 dark:text-slate-200 text-[11px]">{ord.shipping_provider || "DEX"}</p>
-                        <p className="text-[10px] text-slate-500">{ord.tracking_number || "Pending"}</p>
-                      </td>
-
-                      <td className="px-4 py-3">
-                        <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-0.5 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20 capitalize">
-                          <PackageCheck className="h-3 w-3 text-blue-600 dark:text-blue-400" />
-                          <span>{ord.status || "Pending"}</span>
+                        <span className="inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[10px] capitalize bg-slate-100 text-slate-800">
+                          {ord.status?.replace(/_/g, " ") || "Pending"}
                         </span>
                       </td>
-
                       <td className="px-4 py-3 text-right space-x-1">
                         <button
                           onClick={() => setSelectedPrintOrder(ord)}
-                          className="inline-flex items-center space-x-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all apple-press shadow-2xs"
-                          title="Print Packing Slip / Label"
+                          title="Print shipping label or packing slip"
+                          className="inline-flex items-center space-x-1 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-700 hover:bg-slate-50 font-bold"
                         >
                           <Printer className="h-3.5 w-3.5 text-slate-500" />
-                          <span>Print</span>
+                          <span>Print Slip</span>
                         </button>
                       </td>
                     </tr>
@@ -456,13 +437,13 @@ export default function OperationsPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700 dark:text-slate-300">No WMS operations found matching your current filter.</p>
-            <p>Click "Sync Now" above to pull live orders from Daraz Open Platform.</p>
+            <p className="font-medium text-slate-700">No orders in the warehouse right now.</p>
+            <p>New orders will appear here for picking and packing.</p>
           </div>
         )}
 
         {/* Pagination Footer */}
-        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 dark:border-slate-800 px-4 py-3 text-xs gap-3 bg-slate-50/50 dark:bg-slate-950/50">
+        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 px-4 py-3 text-xs gap-3 bg-slate-50/50">
           <div className="flex items-center space-x-2">
             <span className="text-slate-500">Rows per page:</span>
             <select

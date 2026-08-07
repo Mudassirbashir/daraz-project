@@ -94,76 +94,26 @@ export default function AdminPage() {
       {/* Header & Status Badge */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">System & Team Administration</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Settings</h1>
           <p className="text-xs text-slate-500">
-            System settings, team member RBAC permissions (Mubashir, Mudassir, Zainab), and Daraz API credentials audit.
+            Manage team members, permissions, and app settings.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={exportToCSV}
+            title="Download team members list as a CSV file"
             className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
           >
             <Download className="h-4 w-4 text-slate-500" />
-            <span>Export CSV</span>
+            <span>Download User List</span>
           </button>
 
           <span className="inline-flex items-center space-x-1 px-3 py-2 rounded-xl text-xs font-bold bg-purple-100 text-purple-800 border border-purple-300 shadow-xs">
             <Lock className="h-3.5 w-3.5 text-purple-700" />
-            <span>Protected Admin Area</span>
+            <span>Admin Settings</span>
           </span>
-        </div>
-      </div>
-
-      {/* Daraz API Status Notice */}
-      <div className="rounded-xl border border-purple-200 bg-purple-50/50 p-3.5 text-xs text-purple-800 flex items-center space-x-2">
-        <ShieldCheck className="h-4 w-4 text-purple-600 shrink-0" />
-        <span>
-          <strong>Admin Control API Notice:</strong> Not exposed by Daraz Open Platform API. Global system security controls and RBAC roles are managed within your private ERP environment.
-        </span>
-      </div>
-
-      {/* API & System Integration Audit Cards */}
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-xs">
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-700">Daraz App Key</span>
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-          </div>
-          <p className="font-mono text-slate-500 text-[11px]">
-            {systemIntegrations.darazAppKeyConfigured ? "✓ Configured in Vercel" : "❌ Missing"}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-700">Daraz App Secret</span>
-            <CheckCircle2 className="h-4 w-4 text-emerald-500" />
-          </div>
-          <p className="font-mono text-slate-500 text-[11px]">
-            {systemIntegrations.darazAppSecretConfigured ? "✓ Protected Server-Side" : "❌ Missing"}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-700">Supabase RLS DB</span>
-            <Database className="h-4 w-4 text-blue-500" />
-          </div>
-          <p className="font-mono text-slate-500 text-[11px]">
-            {systemIntegrations.supabaseUrlConfigured ? "✓ Active Connection" : "❌ Missing"}
-          </p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm space-y-2">
-          <div className="flex items-center justify-between">
-            <span className="font-bold text-slate-700">Service Role Key</span>
-            <Key className="h-4 w-4 text-purple-500" />
-          </div>
-          <p className="font-mono text-slate-500 text-[11px]">
-            {systemIntegrations.supabaseServiceRoleKeyConfigured ? "✓ Service Role Enforced" : "❌ Missing"}
-          </p>
         </div>
       </div>
 
@@ -185,6 +135,7 @@ export default function AdminPage() {
           <div className="relative">
             <button
               onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+              title="Choose which columns to show"
               className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-3 py-2 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
             >
               <Columns className="h-3.5 w-3.5 text-slate-500" />
@@ -221,16 +172,16 @@ export default function AdminPage() {
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-purple-500" />
-            <span>Loading admin system roster...</span>
+            <span>Loading team members...</span>
           </div>
         ) : (
           <div className="overflow-x-auto">
             <table className="w-full text-left">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
-                  {columnVisibility.name && <th className="px-4 py-3">Team Member Name</th>}
+                  {columnVisibility.name && <th className="px-4 py-3">User Name</th>}
                   {columnVisibility.email && <th className="px-4 py-3">Email Address</th>}
-                  {columnVisibility.role && <th className="px-4 py-3">RBAC Role</th>}
+                  {columnVisibility.role && <th className="px-4 py-3">Access Level</th>}
                   {columnVisibility.status && <th className="px-4 py-3">Account Status</th>}
                   {columnVisibility.lastActive && <th className="px-4 py-3">Last Active</th>}
                 </tr>

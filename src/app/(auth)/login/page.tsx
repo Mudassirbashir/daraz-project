@@ -67,10 +67,10 @@ function LoginForm() {
           D
         </div>
         <h2 className="mt-4 text-2xl font-bold tracking-tight text-slate-900">
-          Daraz Operations Portal
+          Welcome to Daraz Operations
         </h2>
         <p className="mt-1 text-xs text-slate-500">
-          Sign in with employee credentials to access hub management.
+          Sign in to manage your stores, products, and orders.
         </p>
       </div>
 
@@ -91,7 +91,7 @@ function LoginForm() {
       <form onSubmit={handleLoginSubmit} className="space-y-4">
         <div>
           <label className="block text-[11px] font-bold text-slate-600 uppercase tracking-wider">
-            Employee Email
+            Email Address
           </label>
           <input
             type="email"
@@ -122,7 +122,7 @@ function LoginForm() {
           className="flex w-full items-center justify-center rounded-xl bg-orange-500 px-4 py-3 text-sm font-semibold text-white shadow-lg shadow-orange-500/25 hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-2 transition-all active:scale-[0.99]"
         >
           <Lock className="mr-2 h-4 w-4" />
-          <span>{loading ? "Authenticating..." : "Sign In to Operations Hub"}</span>
+          <span>{loading ? "Signing In..." : "Sign In"}</span>
         </button>
       </form>
 

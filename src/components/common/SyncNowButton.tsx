@@ -18,19 +18,19 @@ export function SyncNowButton() {
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.errors?.[0] || data.message || "Synchronization failed.");
+        throw new Error(data.errors?.[0] || data.message || "We couldn't update your data right now.");
       }
 
       setStatusMessage({
         type: "success",
-        text: `Sync complete! ${data.productsSynced || 0} Products, ${data.ordersSynced || 0} Orders updated.`,
+        text: `Done! Updated ${data.productsSynced || 0} products and ${data.ordersSynced || 0} orders.`,
       });
       router.refresh();
     } catch (err: any) {
       console.error("[SyncNowButton Error]:", err.message);
       setStatusMessage({
         type: "error",
-        text: err.message || "Failed to trigger Daraz API sync.",
+        text: "We couldn't update your data. Please try again.",
       });
     } finally {
       setLoading(false);
@@ -42,10 +42,11 @@ export function SyncNowButton() {
       <button
         onClick={handleSync}
         disabled={loading}
+        title="Fetch latest products and orders from your Daraz stores"
         className="inline-flex items-center space-x-2 rounded-xl bg-gradient-to-r from-orange-500 via-orange-500 to-amber-500 px-4 py-2 text-xs font-bold text-white shadow-md shadow-orange-500/25 hover:brightness-105 active:scale-95 transition-all apple-press border border-white/20 disabled:opacity-50"
       >
         <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
-        <span>{loading ? "Syncing Live Daraz API..." : "Sync Now"}</span>
+        <span>{loading ? "Updating Data..." : "Update Data"}</span>
       </button>
 
       {statusMessage && (

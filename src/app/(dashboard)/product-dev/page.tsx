@@ -193,27 +193,29 @@ export default function ProductDevPage() {
       {/* Header & Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Product Development (R&D Pipeline)</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Make New Product</h1>
           <p className="text-xs text-slate-500">
-            Track product ideation, laser sample prototyping, costing approvals, and listing readiness.
+            Design, sample, cost, and test new product ideas before selling them online.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={exportToCSV}
+            title="Download product ideas as a CSV file"
             className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
           >
             <Download className="h-4 w-4 text-slate-500" />
-            <span>Export CSV</span>
+            <span>Download Ideas List</span>
           </button>
 
           <button
             onClick={handleOpenCreateModal}
+            title="Start a new product idea"
             className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-orange-600 transition-all"
           >
             <Plus className="h-4 w-4" />
-            <span>New R&D Item</span>
+            <span>Start New Product Idea</span>
           </button>
         </div>
       </div>
@@ -237,7 +239,7 @@ export default function ProductDevPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search R&D items by Product Name, Code, or Category..."
+            placeholder="Search product ideas by name or code..."
             className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
           />
         </div>
@@ -252,12 +254,12 @@ export default function ProductDevPage() {
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none"
           >
-            <option value="all">All R&D Stages</option>
-            <option value="ideation">Ideation</option>
-            <option value="sourcing_samples">Sourcing Samples</option>
-            <option value="sample_testing">Sample Testing</option>
-            <option value="costing_approved">Costing Approved</option>
-            <option value="ready_for_listing">Ready for Listing</option>
+            <option value="all">All Stages</option>
+            <option value="ideation">1. Idea</option>
+            <option value="sourcing_samples">2. Getting Sample</option>
+            <option value="sample_testing">3. Testing Sample</option>
+            <option value="costing_approved">4. Price Approved</option>
+            <option value="ready_for_listing">5. Ready to Sell</option>
             <option value="archived">Archived</option>
           </select>
 
@@ -265,6 +267,7 @@ export default function ProductDevPage() {
           <div className="relative">
             <button
               onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+              title="Choose which columns to show"
               className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-3 py-2 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
             >
               <Columns className="h-3.5 w-3.5 text-slate-500" />
@@ -297,21 +300,21 @@ export default function ProductDevPage() {
       </div>
 
       {/* R&D Items Table */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden text-xs">
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Loading product development items...</span>
+            <span>Loading product ideas...</span>
           </div>
         ) : items.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
-                  {columnVisibility.code && <th className="px-4 py-3">Dev Code</th>}
+                  {columnVisibility.code && <th className="px-4 py-3">Product Code</th>}
                   {columnVisibility.name && <th className="px-4 py-3">Product Title</th>}
                   {columnVisibility.category && <th className="px-4 py-3">Category</th>}
-                  {columnVisibility.stage && <th className="px-4 py-3">R&D Stage</th>}
+                  {columnVisibility.stage && <th className="px-4 py-3">Stage</th>}
                   {columnVisibility.targetCost && <th className="px-4 py-3">Target Cost</th>}
                   {columnVisibility.estimatedPrice && <th className="px-4 py-3">Est. Price</th>}
                   {columnVisibility.assignedTo && <th className="px-4 py-3">Assigned To</th>}
@@ -319,7 +322,7 @@ export default function ProductDevPage() {
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 font-sans">
                 {items.map((i) => {
                   const targetCost = (i.target_cost_cents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
                   const estPrice = (i.estimated_selling_price_cents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
@@ -331,9 +334,7 @@ export default function ProductDevPage() {
                       )}
 
                       {columnVisibility.name && (
-                        <td className="px-4 py-3">
-                          <p className="font-bold text-slate-900">{i.name}</p>
-                        </td>
+                        <td className="px-4 py-3 font-bold text-slate-900">{i.name}</td>
                       )}
 
                       {columnVisibility.category && (
@@ -368,7 +369,7 @@ export default function ProductDevPage() {
                         <button
                           onClick={() => handleOpenEditModal(i)}
                           className="p-1 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                          title="Edit R&D Item"
+                          title="Edit Product Idea"
                         >
                           <Edit3 className="h-4 w-4" />
                         </button>
@@ -376,7 +377,7 @@ export default function ProductDevPage() {
                         <button
                           onClick={() => handleDeleteItem(i.id)}
                           className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
-                          title="Delete Item"
+                          title="Delete Product Idea"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -390,8 +391,8 @@ export default function ProductDevPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700">No R&D product development items found.</p>
-            <p>Click "New R&D Item" above to start tracking new product ideations.</p>
+            <p className="font-medium text-slate-700">No new product ideas yet.</p>
+            <p>Start your first product idea.</p>
           </div>
         )}
 

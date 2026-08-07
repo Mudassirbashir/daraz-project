@@ -200,37 +200,31 @@ export default function VendorsPage() {
       {/* Header & Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Vendors & Suppliers Management</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Suppliers</h1>
           <p className="text-xs text-slate-500">
-            Manage raw material manufacturers, laser cutting suppliers, lead times, MOQ requirements, and vendor ratings.
+            People and companies you buy raw materials or finished products from.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={exportToCSV}
+            title="Download suppliers list as a CSV file"
             className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
           >
             <Download className="h-4 w-4 text-slate-500" />
-            <span>Export CSV</span>
+            <span>Download Suppliers List</span>
           </button>
 
           <button
             onClick={handleOpenCreateModal}
+            title="Add a new supplier profile"
             className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-orange-600 transition-all"
           >
             <Plus className="h-4 w-4" />
             <span>Add Supplier</span>
           </button>
         </div>
-      </div>
-
-      {/* Daraz API Status Notice */}
-      <div className="rounded-xl border border-blue-200 bg-blue-50/50 p-3.5 text-xs text-blue-800 flex items-center space-x-2">
-        <Users className="h-4 w-4 text-blue-600 shrink-0" />
-        <span>
-          <strong>Vendor Management API Notice:</strong> Not exposed by Daraz Open Platform API. Manufacturer profiles are securely stored inside your private Supabase ERP database.
-        </span>
       </div>
 
       {/* Controls Bar: Search & Column Selector */}
@@ -244,31 +238,17 @@ export default function VendorsPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search vendors by Name, Code, Contact Person, or Email..."
+            placeholder="Search suppliers by Business Name, Code, or Contact Person..."
             className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
           />
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Rating Filter */}
-          <select
-            value={ratingFilter}
-            onChange={(e) => {
-              setRatingFilter(e.target.value);
-              setPage(1);
-            }}
-            className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none"
-          >
-            <option value="">All Ratings</option>
-            <option value="4.5">★ 4.5+ Top Rated</option>
-            <option value="4.0">★ 4.0+ Preferred</option>
-            <option value="3.0">★ 3.0+ Regular</option>
-          </select>
-
           {/* Column Dropdown */}
           <div className="relative">
             <button
               onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+              title="Choose which columns to show"
               className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-3 py-2 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
             >
               <Columns className="h-3.5 w-3.5 text-slate-500" />
@@ -301,29 +281,28 @@ export default function VendorsPage() {
       </div>
 
       {/* Vendors Table */}
-      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden">
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden text-xs">
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Loading vendor suppliers...</span>
+            <span>Loading suppliers...</span>
           </div>
         ) : vendors.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
+            <table className="w-full text-left">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
-                  {columnVisibility.code && <th className="px-4 py-3">Vendor Code</th>}
-                  {columnVisibility.name && <th className="px-4 py-3">Supplier Name</th>}
+                  {columnVisibility.code && <th className="px-4 py-3">Supplier Code</th>}
+                  {columnVisibility.name && <th className="px-4 py-3">Business Name</th>}
                   {columnVisibility.contactPerson && <th className="px-4 py-3">Contact Person</th>}
                   {columnVisibility.phone && <th className="px-4 py-3">Phone</th>}
-                  {columnVisibility.email && <th className="px-4 py-3">Email</th>}
+                  {columnVisibility.leadTime && <th className="px-4 py-3">Delivery Time</th>}
+                  {columnVisibility.moq && <th className="px-4 py-3">Minimum Order</th>}
                   {columnVisibility.rating && <th className="px-4 py-3">Rating</th>}
-                  {columnVisibility.leadTime && <th className="px-4 py-3">Lead Time</th>}
-                  {columnVisibility.moq && <th className="px-4 py-3">MOQ</th>}
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100">
+              <tbody className="divide-y divide-slate-100 font-sans">
                 {vendors.map((v) => (
                   <tr key={v.id} className="hover:bg-slate-50/50 transition-colors">
                     {columnVisibility.code && (
@@ -331,46 +310,39 @@ export default function VendorsPage() {
                     )}
 
                     {columnVisibility.name && (
-                      <td className="px-4 py-3">
-                        <p className="font-bold text-slate-900">{v.name}</p>
-                        {v.address && <p className="text-[10px] text-slate-400 truncate max-w-xs">{v.address}</p>}
-                      </td>
+                      <td className="px-4 py-3 font-bold text-slate-900">{v.name}</td>
                     )}
 
                     {columnVisibility.contactPerson && (
-                      <td className="px-4 py-3 font-medium text-slate-700">{v.contact_person || "N/A"}</td>
+                      <td className="px-4 py-3 text-slate-700">{v.contact_person || "N/A"}</td>
                     )}
 
                     {columnVisibility.phone && (
-                      <td className="px-4 py-3 font-mono text-slate-700">{v.phone || "N/A"}</td>
+                      <td className="px-4 py-3 font-mono text-slate-600">{v.phone || "N/A"}</td>
                     )}
 
-                    {columnVisibility.email && (
-                      <td className="px-4 py-3 font-mono text-slate-600">{v.email || "N/A"}</td>
+                    {columnVisibility.leadTime && (
+                      <td className="px-4 py-3 text-slate-700 font-semibold">{v.lead_time_days || 7} days</td>
+                    )}
+
+                    {columnVisibility.moq && (
+                      <td className="px-4 py-3 text-slate-700 font-semibold">{v.minimum_order_quantity || 50} units</td>
                     )}
 
                     {columnVisibility.rating && (
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center space-x-1 rounded bg-amber-50 px-2 py-0.5 font-bold text-amber-700">
-                          <Star className="h-3 w-3 fill-amber-400 text-amber-400" />
-                          <span>{v.rating ? v.rating.toFixed(1) : "5.0"}</span>
-                        </span>
+                        <div className="flex items-center space-x-1 text-amber-500">
+                          <Star className="h-3.5 w-3.5 fill-amber-400" />
+                          <span className="font-bold text-slate-800">{v.rating ? v.rating.toFixed(1) : "5.0"}</span>
+                        </div>
                       </td>
-                    )}
-
-                    {columnVisibility.leadTime && (
-                      <td className="px-4 py-3 text-slate-700 font-semibold">{v.lead_time_days || 7} Days</td>
-                    )}
-
-                    {columnVisibility.moq && (
-                      <td className="px-4 py-3 font-bold text-slate-900">{v.minimum_order_quantity || 100} Units</td>
                     )}
 
                     <td className="px-4 py-3 text-right space-x-1">
                       <button
                         onClick={() => handleOpenEditModal(v)}
                         className="p-1 rounded-lg text-slate-500 hover:text-slate-900 hover:bg-slate-100"
-                        title="Edit Vendor"
+                        title="Edit Supplier"
                       >
                         <Edit3 className="h-4 w-4" />
                       </button>
@@ -378,7 +350,7 @@ export default function VendorsPage() {
                       <button
                         onClick={() => handleDeleteVendor(v.id)}
                         className="p-1 rounded-lg text-slate-400 hover:text-red-600 hover:bg-red-50"
-                        title="Delete Vendor"
+                        title="Delete Supplier"
                       >
                         <Trash2 className="h-4 w-4" />
                       </button>
@@ -391,8 +363,8 @@ export default function VendorsPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700">No vendor suppliers found in database.</p>
-            <p>Click "Add Supplier" above to register manufacturer contacts and lead times.</p>
+            <p className="font-medium text-slate-700">No suppliers yet.</p>
+            <p>Add a supplier when you're ready.</p>
           </div>
         )}
 

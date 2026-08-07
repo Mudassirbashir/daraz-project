@@ -6,7 +6,6 @@ import { CustomerProfileModal } from "@/components/customers/CustomerProfileModa
 import {
   Users,
   Search,
-  Filter,
   RefreshCw,
   AlertCircle,
   Download,
@@ -15,14 +14,7 @@ import {
   Eye,
   ChevronLeft,
   ChevronRight,
-  ArrowUpDown,
-  Award,
-  RotateCcw,
-  XCircle,
-  CheckCircle2,
-  DollarSign,
-  Phone,
-  MapPin
+  CheckCircle2
 } from "lucide-react";
 
 export default function CustomersPage() {
@@ -32,14 +24,11 @@ export default function CustomersPage() {
   const [filterType, setFilterType] = useState("all");
 
   // Metrics
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState<any>({
     totalCustomers: 0,
-    newCustomers: 0,
-    returningCustomers: 0,
-    highValueCustomers: 0,
-    returnsCount: 0,
-    refundAmountCents: 0,
-    cancellationRatePercent: 0,
+    totalRevenueCents: 0,
+    avgOrderValueCents: 0,
+    repeatRate: "0%",
   });
 
   // Pagination State
@@ -50,15 +39,11 @@ export default function CustomersPage() {
 
   // Column Visibility State
   const [columnVisibility, setColumnVisibility] = useState({
-    customer: true,
+    name: true,
     phone: true,
-    city: true,
-    totalOrders: true,
+    ordersCount: true,
     totalSpend: true,
-    aov: true,
-    delivered: true,
-    returns: true,
-    lastOrder: true,
+    returnsCount: true,
   });
   const [showColumnDropdown, setShowColumnDropdown] = useState(false);
 
@@ -97,39 +82,19 @@ export default function CustomersPage() {
     fetchCustomers();
   }, [page, limit, searchQuery, filterType]);
 
-  // Export CSV Handler
   const exportToCSV = () => {
     if (customers.length === 0) {
       alert("No customer records available to export.");
       return;
     }
 
-    const headers = [
-      "Customer Name",
-      "Phone",
-      "City",
-      "Province",
-      "Total Orders",
-      "Total Spend (PKR)",
-      "AOV (PKR)",
-      "Delivered Orders",
-      "Returned Orders",
-      "First Order Date",
-      "Last Order Date",
-    ];
-
+    const headers = ["Customer Name", "Phone", "Total Orders", "Total Spend (PKR)", "Returns"];
     const rows = customers.map((c) => [
       `"${(c.name || "").replace(/"/g, '""')}"`,
       `"${c.phone || "N/A"}"`,
-      `"${c.city || "N/A"}"`,
-      `"${c.province || "Pakistan"}"`,
-      c.ordersCount,
-      (c.totalSpendCents / 100).toFixed(2),
-      (c.aovCents / 100).toFixed(2),
-      c.deliveredCount,
-      c.returnedCount,
-      `"${new Date(c.firstOrderDate).toLocaleString()}"`,
-      `"${new Date(c.lastOrderDate).toLocaleString()}"`,
+      c.ordersCount || 1,
+      ((c.totalSpendCents || 0) / 100).toFixed(2),
+      c.returnedCount || 0,
     ]);
 
     const csvContent = "data:text/csv;charset=utf-8," + [headers.join(","), ...rows.map((e) => e.join(","))].join("\n");
@@ -142,138 +107,60 @@ export default function CustomersPage() {
     document.body.removeChild(link);
   };
 
-  const handlePrintPDF = () => {
-    window.print();
-  };
-
-  const refundFormatted = (metrics.refundAmountCents / 100).toLocaleString("en-PK", {
-    style: "currency",
-    currency: "PKR",
-  });
-
   return (
     <div className="space-y-6">
-      {/* Header & Controls */}
+      {/* Header & Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Customer Service & Returns Center</h1>
-          <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-            Enterprise customer database, order histories, return tracking, and cancellation diagnostics.
+          <h1 className="text-2xl font-bold text-slate-900">Customers & Returns</h1>
+          <p className="text-xs text-slate-500">
+            See your buyers, repeat orders, and customer returns.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <button
-            onClick={handlePrintPDF}
-            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 transition-all apple-press"
-          >
-            <Printer className="h-4 w-4 text-slate-500" />
-            <span>PDF Report</span>
-          </button>
-
-          <button
             onClick={exportToCSV}
-            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 transition-all apple-press"
+            title="Download customer list as a CSV file"
+            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
           >
             <Download className="h-4 w-4 text-slate-500" />
-            <span>Export CSV</span>
+            <span>Download Customers List</span>
           </button>
 
           <SyncNowButton />
         </div>
       </div>
 
-      {/* Enterprise Dashboard Cards Grid */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-7">
-        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Customers</span>
-          <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">{metrics.totalCustomers}</p>
+      {/* Overview Cards */}
+      <div className="grid grid-cols-1 gap-4 sm:grid-cols-4 text-xs">
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Total Customers</span>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{metrics.totalCustomers || 0} buyers</p>
         </div>
 
-        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">New Customers</span>
-          <p className="mt-1 text-xl font-bold text-blue-600 dark:text-blue-400">{metrics.newCustomers}</p>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Total Sales</span>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">
+            {((metrics.totalRevenueCents || 0) / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" })}
+          </p>
         </div>
 
-        <div className="rounded-2xl border border-emerald-200/80 dark:border-emerald-500/30 bg-emerald-50/80 dark:bg-emerald-500/10 p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-700 dark:text-emerald-400">Repeat Buyers</span>
-          <p className="mt-1 text-xl font-bold text-emerald-900 dark:text-emerald-200">{metrics.returningCustomers}</p>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Average Order Amount</span>
+          <p className="mt-1 text-2xl font-bold text-blue-700">
+            {((metrics.avgOrderValueCents || 0) / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" })}
+          </p>
         </div>
 
-        <div className="rounded-2xl border border-purple-200/80 dark:border-purple-500/30 bg-purple-50/80 dark:bg-purple-500/10 p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-purple-700 dark:text-purple-400">High Value VIP</span>
-          <p className="mt-1 text-xl font-bold text-purple-900 dark:text-purple-200">{metrics.highValueCustomers}</p>
-        </div>
-
-        <div className="rounded-2xl border border-amber-200/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">Total Returns</span>
-          <p className="mt-1 text-xl font-bold text-amber-900 dark:text-amber-200">{metrics.returnsCount}</p>
-        </div>
-
-        <div className="rounded-2xl border border-red-200/80 dark:border-red-500/30 bg-red-50/80 dark:bg-red-500/10 p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-red-700 dark:text-red-400">Refund Amount</span>
-          <p className="mt-1 text-xl font-bold text-red-900 dark:text-red-200">{refundFormatted}</p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Cancellation Rate</span>
-          <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">{metrics.cancellationRatePercent}%</p>
+        <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Returning Customers</span>
+          <p className="mt-1 text-2xl font-bold text-purple-700">{metrics.repeatRate || "0%"} repeat</p>
         </div>
       </div>
 
-      {/* Filter Tabs Bar */}
-      <div className="flex items-center space-x-2 border-b border-slate-200 dark:border-slate-800 pb-2 overflow-x-auto text-xs">
-        <button
-          onClick={() => {
-            setFilterType("all");
-            setPage(1);
-          }}
-          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
-            filterType === "all" ? "bg-slate-950 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-          }`}
-        >
-          All Customers ({metrics.totalCustomers})
-        </button>
-
-        <button
-          onClick={() => {
-            setFilterType("repeat");
-            setPage(1);
-          }}
-          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
-            filterType === "repeat" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-          }`}
-        >
-          Repeat Customers ({metrics.returningCustomers})
-        </button>
-
-        <button
-          onClick={() => {
-            setFilterType("high_value");
-            setPage(1);
-          }}
-          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
-            filterType === "high_value" ? "bg-purple-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-          }`}
-        >
-          High Value VIP ({metrics.highValueCustomers})
-        </button>
-
-        <button
-          onClick={() => {
-            setFilterType("returned");
-            setPage(1);
-          }}
-          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
-            filterType === "returned" ? "bg-amber-500 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
-          }`}
-        >
-          Returned Orders ({metrics.returnsCount})
-        </button>
-      </div>
-
-      {/* Controls Bar: Search, Columns */}
-      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple">
+      {/* Controls Bar: Search & Column Selector */}
+      <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
         <div className="relative flex-1">
           <Search className="absolute left-3.5 top-2.5 h-4 w-4 text-slate-400" />
           <input
@@ -283,27 +170,28 @@ export default function CustomersPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search customers by Name, Phone Number, City, or Order ID..."
-            className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950 pl-10 pr-4 py-2 text-xs text-slate-900 dark:text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
+            placeholder="Search customers by name or phone..."
+            className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
           />
         </div>
 
         <div className="flex items-center space-x-2">
-          {/* Column Visibility Dropdown */}
+          {/* Column Selector */}
           <div className="relative">
             <button
               onClick={() => setShowColumnDropdown(!showColumnDropdown)}
-              className="flex items-center space-x-1.5 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 bg-white dark:bg-slate-950 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 shadow-2xs apple-press"
+              title="Choose which columns to show"
+              className="flex items-center space-x-1.5 border border-slate-300 rounded-lg px-3 py-2 bg-white text-xs font-semibold text-slate-700 hover:bg-slate-50 shadow-sm"
             >
               <Columns className="h-3.5 w-3.5 text-slate-500" />
               <span>Columns</span>
             </button>
 
             {showColumnDropdown && (
-              <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl p-3 shadow-apple-modal z-30 space-y-2 text-xs">
-                <p className="font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-1">Toggle Columns</p>
+              <div className="absolute right-0 mt-2 w-52 rounded-xl border border-slate-200 bg-white p-3 shadow-xl z-30 space-y-2 text-xs">
+                <p className="font-bold text-slate-900 border-b border-slate-100 pb-1">Toggle Columns</p>
                 {Object.keys(columnVisibility).map((colKey) => (
-                  <label key={colKey} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 p-1 rounded-md">
+                  <label key={colKey} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-50 p-1 rounded-md">
                     <input
                       type="checkbox"
                       checked={(columnVisibility as any)[colKey]}
@@ -315,7 +203,7 @@ export default function CustomersPage() {
                       }
                       className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                     />
-                    <span className="capitalize text-slate-700 dark:text-slate-300">{colKey.replace(/([A-Z])/g, " $1")}</span>
+                    <span className="capitalize text-slate-700">{colKey.replace(/([A-Z])/g, " $1")}</span>
                   </label>
                 ))}
               </div>
@@ -324,90 +212,63 @@ export default function CustomersPage() {
         </div>
       </div>
 
-      {/* Customer Table */}
-      <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl shadow-apple overflow-hidden">
+      {/* Customers Table */}
+      <div className="rounded-2xl border border-slate-200 bg-white shadow-sm overflow-hidden text-xs">
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Aggregating customer order database...</span>
+            <span>Loading customers...</span>
           </div>
         ) : customers.length > 0 ? (
           <div className="overflow-x-auto">
-            <table className="w-full text-left text-xs">
-              <thead className="bg-slate-50/80 dark:bg-slate-950/80 text-slate-500 uppercase font-semibold border-b border-slate-200 dark:border-slate-800">
+            <table className="w-full text-left">
+              <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
-                  {columnVisibility.customer && <th className="px-4 py-3">Customer Name</th>}
+                  {columnVisibility.name && <th className="px-4 py-3">Customer Name</th>}
                   {columnVisibility.phone && <th className="px-4 py-3">Phone</th>}
-                  {columnVisibility.city && <th className="px-4 py-3">City</th>}
-                  {columnVisibility.totalOrders && <th className="px-4 py-3">Total Orders</th>}
-                  {columnVisibility.totalSpend && <th className="px-4 py-3">Total Spend</th>}
-                  {columnVisibility.aov && <th className="px-4 py-3">AOV</th>}
-                  {columnVisibility.delivered && <th className="px-4 py-3">Delivered</th>}
-                  {columnVisibility.returns && <th className="px-4 py-3">Returns</th>}
-                  {columnVisibility.lastOrder && <th className="px-4 py-3">Last Order Date</th>}
+                  {columnVisibility.ordersCount && <th className="px-4 py-3">Orders Made</th>}
+                  {columnVisibility.totalSpend && <th className="px-4 py-3">Total Bought</th>}
+                  {columnVisibility.returnsCount && <th className="px-4 py-3">Returns</th>}
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
-              <tbody className="divide-y divide-slate-100 dark:divide-slate-800/60">
+              <tbody className="divide-y divide-slate-100 font-sans">
                 {customers.map((c) => {
-                  const totalSpend = (c.totalSpendCents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
-                  const aov = (c.aovCents / 100).toLocaleString("en-PK", { style: "currency", currency: "PKR" });
+                  const spendFormatted = ((c.totalSpendCents || 0) / 100).toLocaleString("en-PK", {
+                    style: "currency",
+                    currency: "PKR",
+                  });
 
                   return (
-                    <tr key={c.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40 transition-colors">
-                      {columnVisibility.customer && (
-                        <td className="px-4 py-3">
-                          <p className="font-bold text-slate-900 dark:text-white">{c.name}</p>
-                          {c.isHighValue && (
-                            <span className="inline-flex items-center space-x-1 rounded bg-purple-50 dark:bg-purple-500/10 px-1.5 py-0.2 text-[9px] font-bold text-purple-700 dark:text-purple-400 border border-purple-200/80 dark:border-purple-500/20">
-                              <Award className="h-2.5 w-2.5" />
-                              <span>VIP</span>
-                            </span>
-                          )}
-                        </td>
+                    <tr key={c.id} className="hover:bg-slate-50/50 transition-colors">
+                      {columnVisibility.name && (
+                        <td className="px-4 py-3 font-bold text-slate-900">{c.name}</td>
                       )}
 
                       {columnVisibility.phone && (
-                        <td className="px-4 py-3 font-mono text-slate-700 dark:text-slate-300">{c.phone}</td>
+                        <td className="px-4 py-3 font-mono text-slate-600">{c.phone || "N/A"}</td>
                       )}
 
-                      {columnVisibility.city && (
-                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300 font-semibold">{c.city}</td>
-                      )}
-
-                      {columnVisibility.totalOrders && (
-                        <td className="px-4 py-3 font-bold text-slate-900 dark:text-white">{c.ordersCount}</td>
+                      {columnVisibility.ordersCount && (
+                        <td className="px-4 py-3 font-bold text-slate-800">{c.ordersCount || 1} orders</td>
                       )}
 
                       {columnVisibility.totalSpend && (
-                        <td className="px-4 py-3 font-bold text-emerald-700 dark:text-emerald-400">{totalSpend}</td>
+                        <td className="px-4 py-3 font-bold text-emerald-700">{spendFormatted}</td>
                       )}
 
-                      {columnVisibility.aov && (
-                        <td className="px-4 py-3 text-blue-700 dark:text-blue-400 font-semibold">{aov}</td>
-                      )}
-
-                      {columnVisibility.delivered && (
-                        <td className="px-4 py-3 text-slate-700 dark:text-slate-300">{c.deliveredCount}</td>
-                      )}
-
-                      {columnVisibility.returns && (
-                        <td className="px-4 py-3 text-amber-700 dark:text-amber-400 font-bold">{c.returnedCount}</td>
-                      )}
-
-                      {columnVisibility.lastOrder && (
-                        <td className="px-4 py-3 text-slate-500 dark:text-slate-400 text-[11px]">
-                          {new Date(c.lastOrderDate).toLocaleString()}
-                        </td>
+                      {columnVisibility.returnsCount && (
+                        <td className="px-4 py-3 font-bold text-slate-600">{c.returnedCount || 0} returned</td>
                       )}
 
                       <td className="px-4 py-3 text-right">
                         <button
                           onClick={() => setSelectedCustomerProfile(c)}
-                          className="inline-flex items-center space-x-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all apple-press shadow-2xs"
+                          title="View customer purchase history"
+                          className="inline-flex items-center space-x-1 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-700 hover:bg-slate-50 font-bold"
                         >
                           <Eye className="h-3.5 w-3.5 text-slate-500" />
-                          <span>Profile</span>
+                          <span>See Buyer History</span>
                         </button>
                       </td>
                     </tr>
@@ -419,13 +280,12 @@ export default function CustomersPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700 dark:text-slate-300">No customers found matching your current filter.</p>
-            <p>Click "Sync Now" above to sync live customer orders from Daraz Open Platform.</p>
+            <p className="font-medium text-slate-700">No customers yet.</p>
           </div>
         )}
 
         {/* Pagination Footer */}
-        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 dark:border-slate-800 px-4 py-3 text-xs gap-3 bg-slate-50/50 dark:bg-slate-950/50">
+        <div className="flex flex-col sm:flex-row items-center justify-between border-t border-slate-200 px-4 py-3 text-xs gap-3 bg-slate-50/50">
           <div className="flex items-center space-x-2">
             <span className="text-slate-500">Rows per page:</span>
             <select
@@ -434,13 +294,11 @@ export default function CustomersPage() {
                 setLimit(parseInt(e.target.value, 10));
                 setPage(1);
               }}
-              className="rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-2.5 py-1 font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
+              className="rounded-lg border border-slate-300 bg-white px-2 py-1 font-semibold text-slate-700 focus:outline-none"
             >
               <option value={10}>10</option>
               <option value={25}>25</option>
               <option value={50}>50</option>
-              <option value={100}>100</option>
-              <option value={250}>250</option>
             </select>
 
             <span className="text-slate-500 ml-2">
@@ -453,20 +311,20 @@ export default function CustomersPage() {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
-              className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
+              className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition-all"
             >
               <ChevronLeft className="h-4 w-4" />
               <span>Previous</span>
             </button>
 
-            <span className="font-bold text-slate-800 dark:text-white px-2">
+            <span className="font-bold text-slate-800 px-2">
               Page {page} of {totalPages || 1}
             </span>
 
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
-              className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
+              className="flex items-center space-x-1 rounded-lg border border-slate-300 bg-white px-3 py-1.5 font-semibold text-slate-700 hover:bg-slate-100 disabled:opacity-40 transition-all"
             >
               <span>Next</span>
               <ChevronRight className="h-4 w-4" />

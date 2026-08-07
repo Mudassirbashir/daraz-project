@@ -33,9 +33,9 @@ export default async function SyncPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Daraz API Synchronization</h1>
+          <h1 className="text-2xl font-bold text-slate-900">Update Data</h1>
           <p className="text-sm text-slate-500">
-            Real-time synchronization for Daraz Open Platform stores, product listings, and orders.
+            Fetch the latest products and orders from your connected online stores.
           </p>
         </div>
       </div>
@@ -46,10 +46,10 @@ export default async function SyncPage() {
           <div className="space-y-1">
             <div className="flex items-center space-x-2 text-orange-600 font-semibold text-sm">
               <RefreshCw className="h-4 w-4" />
-              <span>Daraz Open Platform Manual & Automated Sync</span>
+              <span>Update Data from Daraz</span>
             </div>
             <p className="text-xs text-slate-600">
-              Clicking <strong>Sync Now</strong> will generate an HMAC-SHA256 authenticated request to fetch store profiles, catalog listings, and recent customer orders into Supabase.
+              Click <strong>Update Data</strong> to download your latest products, prices, and orders into your app.
             </p>
           </div>
           <SyncNowButton />
@@ -60,38 +60,38 @@ export default async function SyncPage() {
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Connected Stores</span>
+            <span className="text-xs font-semibold uppercase text-slate-500">Active Stores</span>
             <Store className="h-5 w-5 text-orange-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900">{storesCount || 0} Active</p>
-          <span className="text-xs text-slate-500 font-medium">Live PostgreSQL Records</span>
+          <p className="mt-2 text-2xl font-bold text-slate-900">{storesCount || 0} active</p>
+          <span className="text-xs text-slate-500 font-medium">Connected seller accounts</span>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Synced Listings</span>
+            <span className="text-xs font-semibold uppercase text-slate-500">Updated Products</span>
             <Tag className="h-5 w-5 text-emerald-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900">{listingsCount || 0} SKUs</p>
-          <span className="text-xs text-emerald-600 font-medium">Catalog synced to Supabase</span>
+          <p className="mt-2 text-2xl font-bold text-slate-900">{listingsCount || 0} products</p>
+          <span className="text-xs text-emerald-600 font-medium">Saved in database</span>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">Synced Orders</span>
+            <span className="text-xs font-semibold uppercase text-slate-500">Updated Orders</span>
             <ShoppingCart className="h-5 w-5 text-blue-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900">{ordersCount || 0} Orders</p>
-          <span className="text-xs text-blue-600 font-medium">Auto-upserted to DB</span>
+          <p className="mt-2 text-2xl font-bold text-slate-900">{ordersCount || 0} orders</p>
+          <span className="text-xs text-blue-600 font-medium">Saved in database</span>
         </div>
 
         <div className="rounded-xl border border-slate-200 bg-white p-5 shadow-sm">
           <div className="flex items-center justify-between">
-            <span className="text-xs font-semibold uppercase text-slate-500">HMAC Auth Security</span>
+            <span className="text-xs font-semibold uppercase text-slate-500">Connection Status</span>
             <ShieldCheck className="h-5 w-5 text-purple-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900">SHA256</p>
-          <span className="text-xs text-purple-600 font-medium">Daraz Open Platform Standard</span>
+          <p className="mt-2 text-2xl font-bold text-slate-900">Secure</p>
+          <span className="text-xs text-purple-600 font-medium">Daraz API connected</span>
         </div>
       </div>
 

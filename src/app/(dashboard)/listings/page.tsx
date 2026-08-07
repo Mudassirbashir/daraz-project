@@ -211,19 +211,20 @@ export default function ListingsPage() {
       {/* Header & Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Daraz Seller Center — Enterprise Products ERP</h1>
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">My Products</h1>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
-            Normalized product catalog, SKU variants, prices, inventory levels, column customization, and CSV export.
+            See and manage all your products across all connected stores.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
           <button
             onClick={exportToCSV}
+            title="Download your product list as a CSV file"
             className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-200 shadow-2xs hover:bg-slate-50 transition-all apple-press"
           >
             <Download className="h-4 w-4 text-slate-500" />
-            <span>Export CSV {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}</span>
+            <span>Download List {selectedIds.length > 0 ? `(${selectedIds.length})` : ""}</span>
           </button>
 
           <SyncNowButton />
@@ -233,27 +234,27 @@ export default function ListingsPage() {
       {/* Metrics Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4">
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Total Products</span>
-          <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{totalProducts} SKUs</p>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">All Products</span>
+          <p className="mt-1 text-2xl font-bold text-slate-900 dark:text-white">{totalProducts} products</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Available Stock</span>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">In Stock</span>
           <p className="mt-1 text-2xl font-bold text-emerald-600 dark:text-emerald-400">
-            {products.filter((p) => p.stock_quantity > 0).length} In Stock
+            {products.filter((p) => p.stock_quantity > 0).length} available
           </p>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Out of Stock</span>
           <p className="mt-1 text-2xl font-bold text-red-600 dark:text-red-400">
-            {products.filter((p) => p.stock_quantity === 0).length} Items
+            {products.filter((p) => p.stock_quantity === 0).length} empty
           </p>
         </div>
 
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-4 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
-          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Selected SKUs</span>
-          <p className="mt-1 text-2xl font-bold text-orange-600 dark:text-orange-400">{selectedIds.length} Selected</p>
+          <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Selected Products</span>
+          <p className="mt-1 text-2xl font-bold text-orange-600 dark:text-orange-400">{selectedIds.length} chosen</p>
         </div>
       </div>
 
@@ -280,7 +281,7 @@ export default function ListingsPage() {
             statusFilter === "active" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
-          Active / In Stock
+          In Stock
         </button>
 
         <button
@@ -304,7 +305,7 @@ export default function ListingsPage() {
             statusFilter === "out_of_stock" ? "bg-red-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
-          Out of Stock (0)
+          Out of Stock
         </button>
       </div>
 
@@ -319,7 +320,7 @@ export default function ListingsPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search products by Title, Seller SKU, or Daraz Item ID..."
+            placeholder="Search products by name or code..."
             className="w-full rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-950 pl-10 pr-4 py-2 text-xs text-slate-900 dark:text-white focus:border-orange-500 focus:outline-none focus:ring-1 focus:ring-orange-500"
           />
         </div>
@@ -334,6 +335,7 @@ export default function ListingsPage() {
                 setStoreFilter(e.target.value);
                 setPage(1);
               }}
+              title="Filter products by store"
               className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value="all">All Stores</option>
@@ -355,6 +357,7 @@ export default function ListingsPage() {
                 setSortBy(sb);
                 setSortOrder(so as "asc" | "desc");
               }}
+              title="Sort products list"
               className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value="created_at:desc">Newest First</option>
@@ -370,6 +373,7 @@ export default function ListingsPage() {
           <div className="relative">
             <button
               onClick={() => setShowColumnDropdown(!showColumnDropdown)}
+              title="Choose which columns to show"
               className="flex items-center space-x-1.5 border border-slate-300 dark:border-slate-800 rounded-xl px-3 py-2 bg-white dark:bg-slate-950 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 shadow-2xs apple-press"
             >
               <Columns className="h-3.5 w-3.5 text-slate-500" />
@@ -378,7 +382,7 @@ export default function ListingsPage() {
 
             {showColumnDropdown && (
               <div className="absolute right-0 mt-2 w-56 rounded-2xl border border-slate-200 dark:border-slate-800 bg-white/95 dark:bg-slate-900/95 backdrop-blur-xl p-3 shadow-apple-modal z-30 space-y-2 text-xs">
-                <p className="font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-1">Toggle Visibility</p>
+                <p className="font-bold text-slate-900 dark:text-white border-b border-slate-100 dark:border-slate-800 pb-1">Show or Hide Columns</p>
                 {Object.keys(columnVisibility).map((colKey) => (
                   <label key={colKey} className="flex items-center space-x-2 cursor-pointer hover:bg-slate-50 dark:hover:bg-slate-800 p-1 rounded-md">
                     <input
@@ -405,36 +409,40 @@ export default function ListingsPage() {
       {selectedIds.length > 0 && (
         <div className="flex items-center justify-between rounded-2xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/90 dark:bg-orange-500/10 p-3 shadow-apple">
           <span className="text-xs font-bold text-orange-900 dark:text-orange-300">
-            {selectedIds.length} product(s) selected for bulk action
+            {selectedIds.length} product(s) selected
           </span>
 
           <div className="flex items-center space-x-2">
             <button
               onClick={() => setBulkAction("price")}
+              title="Change price for all selected products"
               className="rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-white hover:bg-slate-50 transition-all apple-press shadow-2xs"
             >
-              Edit Bulk Price
+              Change Price
             </button>
 
             <button
               onClick={() => setBulkAction("stock")}
+              title="Update stock count for all selected products"
               className="rounded-xl bg-white dark:bg-slate-800 border border-slate-300 dark:border-slate-700 px-3 py-1.5 text-xs font-bold text-slate-800 dark:text-white hover:bg-slate-50 transition-all apple-press shadow-2xs"
             >
-              Edit Bulk Stock
+              Update Stock
             </button>
 
             <button
               onClick={() => handleExecuteBulkAction("activate")}
+              title="Mark selected products as active"
               className="rounded-xl bg-emerald-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-emerald-700 transition-all apple-press shadow-2xs"
             >
-              Activate
+              Turn On
             </button>
 
             <button
               onClick={() => handleExecuteBulkAction("deactivate")}
+              title="Turn off selected products"
               className="rounded-xl bg-slate-950 dark:bg-slate-800 px-3 py-1.5 text-xs font-bold text-white hover:bg-slate-800 transition-all apple-press shadow-2xs"
             >
-              Deactivate
+              Turn Off
             </button>
           </div>
         </div>
@@ -445,7 +453,7 @@ export default function ListingsPage() {
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Fetching Daraz product catalog...</span>
+            <span>Loading products...</span>
           </div>
         ) : products.length > 0 ? (
           <div className="overflow-x-auto">
@@ -460,14 +468,14 @@ export default function ListingsPage() {
                       className="rounded border-slate-300 text-orange-500 focus:ring-orange-500"
                     />
                   </th>
-                  {columnVisibility.title && <th className="px-4 py-3">Product Name & SKU</th>}
-                  {columnVisibility.sellerSku && <th className="px-4 py-3">Seller SKU</th>}
-                  {columnVisibility.darazSku && <th className="px-4 py-3">Daraz SKU ID</th>}
-                  {columnVisibility.itemId && <th className="px-4 py-3">Daraz Item ID</th>}
-                  {columnVisibility.price && <th className="px-4 py-3">Price (PKR)</th>}
-                  {columnVisibility.stock && <th className="px-4 py-3">Available Stock</th>}
-                  {columnVisibility.status && <th className="px-4 py-3">Sync Status</th>}
-                  {columnVisibility.lastUpdated && <th className="px-4 py-3">Last Synced</th>}
+                  {columnVisibility.title && <th className="px-4 py-3">Product Name</th>}
+                  {columnVisibility.sellerSku && <th className="px-4 py-3">Product Code</th>}
+                  {columnVisibility.darazSku && <th className="px-4 py-3">Store Variant ID</th>}
+                  {columnVisibility.itemId && <th className="px-4 py-3">Store Product ID</th>}
+                  {columnVisibility.price && <th className="px-4 py-3">Price</th>}
+                  {columnVisibility.stock && <th className="px-4 py-3">Stock Left</th>}
+                  {columnVisibility.status && <th className="px-4 py-3">Status</th>}
+                  {columnVisibility.lastUpdated && <th className="px-4 py-3">Last Updated</th>}
                   <th className="px-4 py-3 text-right">Actions</th>
                 </tr>
               </thead>
@@ -515,7 +523,7 @@ export default function ListingsPage() {
                             )}
                             <div>
                               <p className="font-bold text-slate-900 dark:text-white line-clamp-1">{item.title}</p>
-                              <p className="text-[11px] text-slate-500 font-mono">
+                              <p className="text-[11px] text-slate-500">
                                 Store: {item.daraz_stores?.store_name || "Daraz Store"}
                               </p>
                             </div>
@@ -539,7 +547,7 @@ export default function ListingsPage() {
                         <td className="px-4 py-3">
                           <p className="font-bold text-slate-900 dark:text-white">{priceFormatted}</p>
                           {columnVisibility.specialPrice && specialPriceFormatted && (
-                            <p className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Special: {specialPriceFormatted}</p>
+                            <p className="text-[10px] font-semibold text-emerald-600 dark:text-emerald-400">Sale: {specialPriceFormatted}</p>
                           )}
                         </td>
                       )}
@@ -555,7 +563,7 @@ export default function ListingsPage() {
                                 : "bg-red-50 dark:bg-red-500/10 text-red-700 dark:text-red-400 border border-red-200/80 dark:border-red-500/20"
                             }`}
                           >
-                            {item.stock_quantity} Units
+                            {item.stock_quantity} left
                           </span>
                         </td>
                       )}
@@ -564,7 +572,7 @@ export default function ListingsPage() {
                         <td className="px-4 py-3">
                           <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-0.5 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20">
                             <CheckCircle2 className="h-3 w-3 text-blue-600 dark:text-blue-400" />
-                            <span>Synced</span>
+                            <span>Active</span>
                           </span>
                         </td>
                       )}
@@ -578,10 +586,11 @@ export default function ListingsPage() {
                       <td className="px-4 py-3 text-right">
                         <button
                           onClick={() => setSelectedProductDetail(item)}
+                          title="View full details of this product"
                           className="inline-flex items-center space-x-1 rounded-xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1 text-xs font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-50 dark:hover:bg-slate-800 transition-all apple-press shadow-2xs"
                         >
                           <Eye className="h-3.5 w-3.5 text-slate-500" />
-                          <span>Details</span>
+                          <span>See Details</span>
                         </button>
                       </td>
                     </tr>
@@ -593,8 +602,8 @@ export default function ListingsPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700 dark:text-slate-300">No products found matching your current filter.</p>
-            <p>Click "Sync Now" above to pull live product catalog items from Daraz Open Platform.</p>
+            <p className="font-medium text-slate-700 dark:text-slate-300">No products yet.</p>
+            <p>Add your first product or click "Update Data" above to get started.</p>
           </div>
         )}
 
@@ -619,7 +628,7 @@ export default function ListingsPage() {
 
             <span className="text-slate-500 ml-2">
               Showing {products.length > 0 ? (page - 1) * limit + 1 : 0} to{" "}
-              {Math.min(page * limit, totalProducts)} of {totalProducts} items
+              {Math.min(page * limit, totalProducts)} of {totalProducts} products
             </span>
           </div>
 
@@ -627,6 +636,7 @@ export default function ListingsPage() {
             <button
               onClick={() => setPage((p) => Math.max(1, p - 1))}
               disabled={page === 1}
+              title="Previous page"
               className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
             >
               <ChevronLeft className="h-4 w-4" />
@@ -640,6 +650,7 @@ export default function ListingsPage() {
             <button
               onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
               disabled={page >= totalPages}
+              title="Next page"
               className="flex items-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-800 bg-white dark:bg-slate-900 px-3 py-1.5 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100 dark:hover:bg-slate-800 disabled:opacity-40 transition-all apple-press shadow-2xs"
             >
               <span>Next</span>

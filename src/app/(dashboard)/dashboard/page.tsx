@@ -9,6 +9,7 @@ import {
   DollarSign,
   AlertCircle,
   Clock,
+  CheckSquare
 } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
@@ -40,14 +41,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const hasAnyAccessToken = activeStoresList.some((s) => Boolean(s.access_token));
   const isSelectedStoreLinked = selectedStore ? Boolean(selectedStore.access_token) : hasAnyAccessToken;
 
-  // 2. Query Live Products / Listings
+  // 2. Query Products
   let listingsQuery = supabase.from("listings").select("*", { count: "exact", head: true });
   if (!isCombinedView && selectedStoreId) {
     listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
   }
   const { count: productsCount } = await listingsQuery;
 
-  // 3. Query Live Orders & Revenue
+  // 3. Query Orders & Sales
   let ordersQuery = supabase.from("orders").select("total_amount_cents, status");
   if (!isCombinedView && selectedStoreId) {
     ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
@@ -68,7 +69,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     currency: "PKR",
   });
 
-  // 4. Query Live Central Inventory & Low Stock Items
+  // 4. Query Central Stock & Low Stock Items
   const { data: inventoryItems } = await supabase
     .from("inventory")
     .select("quantity_on_hand, reorder_point");
@@ -81,31 +82,37 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     (item: any) => (item.quantity_on_hand || 0) <= (item.reorder_point || 10)
   ).length;
 
+  // 5. Query Pending Tasks
+  const { count: pendingTasksCount } = await supabase
+    .from("team_tasks")
+    .select("*", { count: "exact", head: true })
+    .neq("status", "completed");
+
   return (
     <div className="space-y-6">
-      {/* Top Bar with Dynamic Store Context & Live Refresh */}
+      {/* Top Bar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
           <div className="flex items-center space-x-2">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">
               {isCombinedView
-                ? "Combined Multi-Store Operations Center"
-                : `Store Portal: ${selectedStore?.store_name || "Selected Store"}`}
+                ? "Home"
+                : `${selectedStore?.store_name || "Store Overview"}`}
             </h1>
             <span className="rounded-xl bg-orange-50 dark:bg-orange-500/10 px-2.5 py-0.5 text-xs font-bold text-orange-600 dark:text-orange-400 border border-orange-200/80 dark:border-orange-500/20">
-              {isCombinedView ? `${activeStoresList.length} Stores Active` : selectedStore?.store_code}
+              {isCombinedView ? `${activeStoresList.length} Stores` : selectedStore?.store_code}
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-0.5 font-medium">
             {isCombinedView
-              ? "Showing aggregated performance data across all connected Daraz seller accounts."
-              : `Filtered operational metrics for ${selectedStore?.store_name} (Seller ID: ${selectedStore?.seller_id}).`}
+              ? "Here is how all your stores are doing."
+              : `Here is how ${selectedStore?.store_name} is doing.`}
           </p>
         </div>
         <SyncNowButton />
       </div>
 
-      {/* Connect Daraz Store Banner if Selected Store / System Lacks Access Token */}
+      {/* Connect Store Banner */}
       {!isSelectedStoreLinked && (
         <div className="rounded-2xl border border-amber-300/80 bg-amber-50/90 dark:bg-amber-500/10 p-6 shadow-apple">
           <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -116,122 +123,123 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               <div>
                 <h3 className="text-base font-bold text-amber-900 dark:text-amber-300">
                   {selectedStore
-                    ? `OAuth Token Missing for ${selectedStore.store_name}`
-                    : "No Daraz Stores Connected"}
+                    ? `Connect ${selectedStore.store_name}`
+                    : "No Stores Connected Yet"}
                 </h3>
                 <p className="mt-1 text-xs text-amber-800 dark:text-amber-400 font-medium">
-                  Authorize this Daraz seller account to enable live API catalog, order processing, and inventory synchronization.
+                  Connect your store to see your real products and orders.
                 </p>
               </div>
             </div>
 
             <a
               href="/api/auth/daraz/login"
+              title="Connect your live Daraz seller account"
               className="inline-flex items-center space-x-2 rounded-xl bg-gradient-to-r from-orange-500 via-orange-500 to-amber-500 px-5 py-3 text-xs font-bold text-white shadow-md shadow-orange-500/25 hover:brightness-105 transition-all apple-press shrink-0"
             >
               <Store className="h-4 w-4" />
-              <span>Connect Store OAuth</span>
+              <span>Connect Store</span>
               <ArrowRight className="h-4 w-4" />
             </a>
           </div>
         </div>
       )}
 
-      {/* 6 Core Multi-Store Dashboard Metrics */}
+      {/* 6 Core Simple Cards */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-3">
-        {/* 1. Total Products Metric */}
+        {/* 1. Products */}
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-5 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Total Products / SKUs
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              📦 Products
             </span>
             <Package className="h-5 w-5 text-blue-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {productsCount || 0} SKUs
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+            {productsCount || 0} products
           </p>
           <span className="text-xs font-semibold text-blue-600 dark:text-blue-400">
-            {isCombinedView ? "Across All Active Stores" : `Listings for ${selectedStore?.store_code}`}
+            {isCombinedView ? "Across all your stores" : `In ${selectedStore?.store_name}`}
           </span>
         </div>
 
-        {/* 2. Total Orders Metric */}
+        {/* 2. Orders */}
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-5 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Total Orders
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              🛒 Orders
             </span>
             <ShoppingCart className="h-5 w-5 text-emerald-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {totalOrdersCount} Orders
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+            {totalOrdersCount} orders
           </p>
           <span className="text-xs font-semibold text-emerald-600 dark:text-emerald-400">
-            Live Order Tracking
+            Received from customers
           </span>
         </div>
 
-        {/* 3. Total Revenue Metric */}
+        {/* 3. Sales */}
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-5 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Total Revenue
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              💰 Sales
             </span>
             <DollarSign className="h-5 w-5 text-emerald-600" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
             {totalRevenueFormatted}
           </p>
           <span className="text-xs font-semibold text-emerald-700 dark:text-emerald-400">
-            Gross Order Sales Volume
+            Total money made
           </span>
         </div>
 
-        {/* 4. Total Inventory Stock Metric */}
+        {/* 4. Total Stock */}
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-5 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Total Inventory Stock
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              📦 Total Stock
             </span>
             <ShieldCheck className="h-5 w-5 text-purple-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {totalInventoryUnits} Units
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+            {totalInventoryUnits} items
           </p>
           <span className="text-xs font-semibold text-purple-600 dark:text-purple-400">
-            Central Warehouse Quantity
+            In warehouse ready to sell
           </span>
         </div>
 
-        {/* 5. Low Stock Alert Metric */}
+        {/* 5. Low Stock */}
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-5 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Low Stock Items
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              ⚠️ Low Stock
             </span>
             <AlertCircle className="h-5 w-5 text-red-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {lowStockCount} Items
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+            {lowStockCount} products
           </p>
           <span className="text-xs font-semibold text-red-600 dark:text-red-400">
-            Reorder Threshold (&le; 10)
+            Running low (10 or fewer left)
           </span>
         </div>
 
-        {/* 6. Pending Orders Metric */}
+        {/* 6. Tasks / Orders to Ship */}
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-5 shadow-apple transition-all duration-200 hover:shadow-apple-hover">
           <div className="flex items-center justify-between">
-            <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
-              Pending Fulfillment
+            <span className="text-xs font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
+              ✅ Tasks
             </span>
             <Clock className="h-5 w-5 text-amber-500" />
           </div>
-          <p className="mt-2 text-2xl font-bold text-slate-900 dark:text-white">
-            {pendingOrdersCount} Pending
+          <p className="mt-2 text-3xl font-bold text-slate-900 dark:text-white">
+            {pendingOrdersCount + (pendingTasksCount || 0)} things to do
           </p>
           <span className="text-xs font-semibold text-amber-600 dark:text-amber-400">
-            Awaiting Dispatch / Processing
+            {pendingOrdersCount} orders to pack & ship
           </span>
         </div>
       </div>
