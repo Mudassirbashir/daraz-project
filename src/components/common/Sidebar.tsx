@@ -18,12 +18,15 @@ import {
   Truck,
   RefreshCw,
   Settings,
-  LogOut
+  LogOut,
+  X
 } from "lucide-react";
 import { AppRole } from "@/types/database.types";
 
 interface SidebarProps {
   userRole?: AppRole;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 }
 
 interface NavItem {
@@ -167,13 +170,13 @@ const NAV_SECTIONS: NavSection[] = [
   },
 ];
 
-export function Sidebar({ userRole = "super_admin" }: SidebarProps) {
+export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseMobile }: SidebarProps) {
   const pathname = usePathname();
 
-  return (
-    <aside className="flex h-screen w-64 flex-col bg-slate-950/95 text-slate-100 border-r border-slate-800/80 backdrop-blur-2xl select-none z-30 shrink-0">
+  const sidebarContent = (
+    <aside className="flex h-full w-64 flex-col bg-slate-950/95 text-slate-100 border-r border-slate-800/80 backdrop-blur-2xl select-none shrink-0">
       {/* Brand Header */}
-      <div className="flex h-16 items-center border-b border-slate-800/60 px-5">
+      <div className="flex h-16 items-center justify-between border-b border-slate-800/60 px-5">
         <div className="flex items-center space-x-3">
           <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-orange-600 via-orange-500 to-amber-400 font-bold text-white text-lg shadow-lg shadow-orange-500/25 border border-white/20">
             D
@@ -185,6 +188,16 @@ export function Sidebar({ userRole = "super_admin" }: SidebarProps) {
             </span>
           </div>
         </div>
+
+        {/* Mobile Close Button */}
+        {onCloseMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="md:hidden p-1.5 rounded-xl text-slate-400 hover:text-white hover:bg-slate-800/60 transition-colors"
+          >
+            <X className="h-5 w-5" />
+          </button>
+        )}
       </div>
 
       {/* Navigation Menu */}
@@ -209,6 +222,9 @@ export function Sidebar({ userRole = "super_admin" }: SidebarProps) {
                   <Link
                     key={item.href}
                     href={item.href}
+                    onClick={() => {
+                      if (onCloseMobile) onCloseMobile();
+                    }}
                     title={`${item.title} — ${item.subtitle}`}
                     className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-xs transition-all duration-200 apple-press ${
                       isActive
@@ -252,5 +268,25 @@ export function Sidebar({ userRole = "super_admin" }: SidebarProps) {
         </button>
       </div>
     </aside>
+  );
+
+  return (
+    <>
+      {/* Desktop Sidebar (persistent) */}
+      <div className="hidden md:flex h-screen shrink-0">{sidebarContent}</div>
+
+      {/* Mobile Sidebar Overlay Drawer */}
+      {mobileOpen && (
+        <div className="fixed inset-0 z-50 md:hidden flex">
+          <div
+            className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm transition-opacity"
+            onClick={onCloseMobile}
+          />
+          <div className="relative z-10 h-full w-64 shadow-2xl animate-in slide-in-from-left duration-200">
+            {sidebarContent}
+          </div>
+        </div>
+      )}
+    </>
   );
 }

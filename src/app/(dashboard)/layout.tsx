@@ -1,6 +1,5 @@
 import React from "react";
-import { Sidebar } from "@/components/common/Sidebar";
-import { Header } from "@/components/common/Header";
+import { DashboardShell } from "@/components/common/DashboardShell";
 import { StoreOption } from "@/components/common/StoreSwitcher";
 import { createClient } from "@/lib/supabase/server";
 import { AppRole } from "@/types/database.types";
@@ -53,17 +52,13 @@ export default async function DashboardLayout({
   const region = rawStores && rawStores.length > 0 ? rawStores[0].region || "PK" : "PK";
 
   return (
-    <div className="flex h-screen overflow-hidden bg-slate-50">
-      <Sidebar userRole={userRole} />
-      <div className="flex flex-1 flex-col overflow-hidden">
-        <Header
-          userRole={userRole}
-          userName={userName}
-          stores={stores}
-          region={region}
-        />
-        <main className="flex-1 overflow-y-auto p-6">{children}</main>
-      </div>
-    </div>
+    <DashboardShell
+      userRole={userRole}
+      userName={userName}
+      stores={stores}
+      region={region}
+    >
+      {children}
+    </DashboardShell>
   );
 }
