@@ -4,6 +4,7 @@ import React, { useState, useEffect } from "react";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { ProductDetailModal } from "@/components/products/ProductDetailModal";
 import { BulkEditModal } from "@/components/products/BulkEditModal";
+import { ProductImage } from "@/components/products/ProductImage";
 import {
   Package,
   Search,
@@ -513,12 +514,12 @@ export default function ListingsPage() {
                         <td className="px-4 py-3">
                           <div className="flex items-center space-x-3">
                             {columnVisibility.image && (
-                              <div className="h-10 w-10 flex-shrink-0 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center text-slate-400 overflow-hidden">
-                                {item.images && item.images.length > 0 ? (
-                                  <img src={item.images[0]} alt={item.title} className="h-full w-full object-cover" />
-                                ) : (
-                                  <Package className="h-5 w-5" />
-                                )}
+                              <div className="h-10 w-10 flex-shrink-0 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden">
+                                <ProductImage
+                                  src={Array.isArray(item.images) && item.images.length > 0 ? item.images[0] : null}
+                                  alt={item.title}
+                                  className="h-full w-full object-cover"
+                                />
                               </div>
                             )}
                             <div>
@@ -665,6 +666,7 @@ export default function ListingsPage() {
         <ProductDetailModal
           product={selectedProductDetail}
           onClose={() => setSelectedProductDetail(null)}
+          onProductUpdated={() => fetchProducts()}
         />
       )}
 

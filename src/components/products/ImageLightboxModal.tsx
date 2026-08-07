@@ -2,6 +2,7 @@
 
 import React, { useState } from "react";
 import { X, ChevronLeft, ChevronRight, ZoomIn, ZoomOut, Image as ImageIcon } from "lucide-react";
+import { ProductImage } from "./ProductImage";
 
 interface ImageLightboxModalProps {
   images: string[];
@@ -86,12 +87,14 @@ export function ImageLightboxModal({ images, initialIndex = 0, onClose }: ImageL
           )}
 
           <div className="h-full w-full flex items-center justify-center p-2 overflow-auto">
-            <img
-              src={images[currentIndex]}
-              alt="High Resolution Preview"
-              style={{ transform: `scale(${zoomLevel})` }}
-              className="max-h-full max-w-full object-contain transition-transform duration-200"
-            />
+            <div style={{ transform: `scale(${zoomLevel})` }} className="max-h-full max-w-full flex items-center justify-center transition-transform duration-200">
+              <ProductImage
+                src={images[currentIndex]}
+                alt="High Resolution Preview"
+                className="max-h-full max-w-full object-contain rounded-xl shadow-2xl"
+                fallbackIconClassName="h-16 w-16 text-slate-500"
+              />
+            </div>
           </div>
 
           {images.length > 1 && (
@@ -120,7 +123,7 @@ export function ImageLightboxModal({ images, initialIndex = 0, onClose }: ImageL
                     : "border-slate-700 opacity-50 hover:opacity-100"
                 }`}
               >
-                <img src={imgUrl} alt="Thumbnail" className="h-full w-full object-cover" />
+                <ProductImage src={imgUrl} alt="Thumbnail" className="h-full w-full object-cover" />
               </button>
             ))}
           </div>

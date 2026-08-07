@@ -17,12 +17,15 @@ export interface DarazProductItem {
   category: string;
   brand: string;
   status: string;
+  description?: string;
   price_cents: number;
   special_price_cents?: number;
   quantity: number;
   reserved_quantity: number;
   images: string[];
   attributes: Record<string, any>;
+  variations: any[];
+  product_url?: string;
 }
 
 export interface DarazOrderItemDetail {
@@ -302,6 +305,21 @@ export class DarazApiClient {
   }
 
   /**
+  /**
+   * Helper to normalize Daraz image URLs into clean HTTPS strings
+   */
+  private normalizeImageUrl(rawUrl: string): string {
+    if (!rawUrl || typeof rawUrl !== "string") return "";
+    let trimmed = rawUrl.trim();
+    if (trimmed.startsWith("//")) {
+      trimmed = `https:${trimmed}`;
+    } else if (trimmed.startsWith("http://")) {
+      trimmed = trimmed.replace("http://", "https://");
+    }
+    return trimmed;
+  }
+
+  /**
    * Fetch Store Products with Pagination & Normalized Fields (/products/get)
    */
   async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
@@ -316,28 +334,169 @@ export class DarazApiClient {
 
     const products: DarazProductItem[] = rawProducts.map((p) => {
       const firstSku = p.skus?.[0] || {};
-      const imagesList = p.images || (firstSku.Images ? (Array.isArray(firstSku.Images) ? firstSku.Images : [firstSku.Images]) : []);
-
       const rawAttributes = p.attributes || {};
+
+      // Normalize images from all possible Daraz API response locations
+      const imageCandidates: string[] = [];
+
+      if (Array.isArray(p.images)) {
+        p.images.forEach((img: any) => {
+          if (typeof img === "string") imageCandidates.push(img);
+        });
+      }
+
+      if (Array.isArray(p.skus)) {
+        p.skus.forEach((sku: any) => {
+          if (Array.isArray(sku.Images)) {
+            sku.Images.forEach((img: any) => {
+              if (typeof img === "string") imageCandidates.push(img);
+            });
+          } else if (typeof sku.Images === "string") {
+            imageCandidates.push(sku.Images);
+          }
+          if (Array.isArray(sku.images)) {
+            sku.images.forEach((img: any) => {
+              if (typeof img === "string") imageCandidates.push(img);
+            });
+          }
+        });
+      }
+
+      if (Array.isArray(rawAttributes.images)) {
+        rawAttributes.images.forEach((img: any) => {
+          if (typeof img === "string") imageCandidates.push(img);
+        });
+      } else if (typeof rawAttributes.image === "string") {
+        imageCandidates.push(rawAttributes.image);
+      }
+
+      // Deduplicate and convert to HTTPS
+      const normalizedImages = Array.from(
+        new Set(imageCandidates.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
+      );
+
+      const description =
+        rawAttributes.description ||
+        rawAttributes.short_description ||
+        p.description ||
+        "No description provided.";
+
+      const variations = Array.isArray(p.skus)
+        ? p.skus.map((sku: any) => ({
+            seller_sku: sku.SellerSku || "",
+            shop_sku: sku.ShopSku || "",
+            sku_id: String(sku.SkuId || ""),
+            price_cents: Math.round((sku.price || 0) * 100),
+            special_price_cents: sku.special_price ? Math.round(sku.special_price * 100) : undefined,
+            quantity: sku.quantity || 0,
+            reserved_quantity: sku.withholding_quantity || sku.reserved_stock || 0,
+            package_content: sku.package_content || "",
+            package_weight: sku.package_weight || "",
+            images: Array.isArray(sku.Images)
+              ? sku.Images.map((img: string) => this.normalizeImageUrl(img))
+              : typeof sku.Images === "string"
+              ? [this.normalizeImageUrl(sku.Images)]
+              : [],
+          }))
+        : [];
 
       return {
         item_id: String(p.item_id || firstSku.ShopSku || `ITEM_${Date.now()}`),
         seller_sku: firstSku.SellerSku || `SKU_${p.item_id}`,
         daraz_sku_id: String(firstSku.SkuId || firstSku.ShopSku || ""),
-        title: rawAttributes.name || firstSku.package_content || "Daraz Product",
+        title: rawAttributes.name || firstSku.package_content || p.title || "Daraz Product",
         category: String(p.primary_category || rawAttributes.category || "General"),
         brand: String(rawAttributes.brand || "Generic"),
         status: String(p.status || "active").toLowerCase(),
+        description,
         price_cents: Math.round((firstSku.price || 0) * 100),
         special_price_cents: firstSku.special_price ? Math.round(firstSku.special_price * 100) : undefined,
         quantity: firstSku.quantity || 0,
         reserved_quantity: firstSku.withholding_quantity || firstSku.reserved_stock || 0,
-        images: Array.isArray(imagesList) ? imagesList : [imagesList],
+        images: normalizedImages,
         attributes: rawAttributes,
+        variations,
+        product_url: p.url || p.product_url || rawAttributes.product_url || "",
       };
     });
 
     return { products, total };
+  }
+
+  /**
+   * Update Price and Quantity on Daraz Seller Center (/product/price_quantity/update)
+   */
+  async updatePriceAndQuantity(skuUpdates: Array<{
+    sellerSku: string;
+    itemId?: string;
+    priceCents?: number;
+    specialPriceCents?: number;
+    quantity?: number;
+  }>): Promise<boolean> {
+    const skuPayloads = skuUpdates.map((item) => {
+      const skuObj: Record<string, any> = {
+        SellerSku: item.sellerSku,
+      };
+      if (typeof item.priceCents === "number") {
+        skuObj.Price = (item.priceCents / 100).toFixed(2);
+      }
+      if (typeof item.specialPriceCents === "number") {
+        skuObj.SalePrice = (item.specialPriceCents / 100).toFixed(2);
+      }
+      if (typeof item.quantity === "number") {
+        skuObj.Quantity = item.quantity;
+      }
+      return skuObj;
+    });
+
+    const payload = JSON.stringify({
+      Request: {
+        Product: {
+          Skus: {
+            Sku: skuPayloads,
+          },
+        },
+      },
+    });
+
+    const response = await this.request<{ code: string; message?: string }>("/product/price_quantity/update", {
+      payload,
+    });
+
+    return !response.code || response.code === "0";
+  }
+
+  /**
+   * Update Product Attributes and Images on Daraz Seller Center (/product/update)
+   */
+  async updateProduct(itemId: string, sku: string, attributes: Record<string, any>, images?: string[]): Promise<boolean> {
+    const skuObj: Record<string, any> = {
+      SellerSku: sku,
+    };
+
+    if (Array.isArray(images) && images.length > 0) {
+      skuObj.Images = {
+        Image: images,
+      };
+    }
+
+    const payload = JSON.stringify({
+      Request: {
+        Product: {
+          ItemId: itemId,
+          Attributes: attributes,
+          Skus: {
+            Sku: [skuObj],
+          },
+        },
+      },
+    });
+
+    const response = await this.request<{ code: string; message?: string }>("/product/update", {
+      payload,
+    });
+
+    return !response.code || response.code === "0";
   }
 
   /**

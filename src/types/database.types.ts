@@ -176,6 +176,14 @@ export interface Database {
           daraz_item_id: string | null;
           daraz_sku_id: string | null;
           title: string;
+          category: string | null;
+          brand: string | null;
+          status: string | null;
+          description: string | null;
+          images: Json;
+          attributes: Json;
+          variations: Json;
+          product_url: string | null;
           price_cents: number;
           special_price_cents: number | null;
           stock_quantity: number;
