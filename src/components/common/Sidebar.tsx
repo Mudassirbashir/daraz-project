@@ -68,6 +68,12 @@ const NAV_ITEMS: NavItem[] = [
     roles: ["super_admin", "product_manager", "ops_manager"],
   },
   {
+    title: "Operations Center (WMS)",
+    href: "/operations",
+    icon: CheckSquare,
+    roles: ["super_admin", "product_manager", "ops_manager"],
+  },
+  {
     title: "Orders & Delivery",
     href: "/orders",
     icon: ShoppingCart,
