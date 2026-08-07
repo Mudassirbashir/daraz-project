@@ -80,6 +80,12 @@ const NAV_ITEMS: NavItem[] = [
     roles: ["super_admin", "product_manager", "ops_manager"],
   },
   {
+    title: "Customer & Returns Center",
+    href: "/customers",
+    icon: Users,
+    roles: ["super_admin", "product_manager", "ops_manager"],
+  },
+  {
     title: "Team Tasks Board",
     href: "/tasks",
     icon: CheckSquare,
