@@ -25,8 +25,8 @@ const initialStores = [
     store_name: "Daraz Flagship PK 1",
     region: "PK",
     seller_id: "504904",
-    api_app_key: "504904",
-    api_app_secret: "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+    api_app_key: env.DARAZ_APP_KEY || "504904",
+    api_app_secret: env.DARAZ_APP_SECRET || "",
     is_active: true,
   },
   {
@@ -34,8 +34,8 @@ const initialStores = [
     store_name: "Daraz Express PK 2",
     region: "PK",
     seller_id: "504905",
-    api_app_key: "504904",
-    api_app_secret: "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+    api_app_key: env.DARAZ_APP_KEY || "504904",
+    api_app_secret: env.DARAZ_APP_SECRET || "",
     is_active: true,
   },
   {
@@ -43,8 +43,8 @@ const initialStores = [
     store_name: "Daraz Wholesale PK 3",
     region: "PK",
     seller_id: "504906",
-    api_app_key: "504904",
-    api_app_secret: "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+    api_app_key: env.DARAZ_APP_KEY || "504904",
+    api_app_secret: env.DARAZ_APP_SECRET || "",
     is_active: true,
   },
 ];

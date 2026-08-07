@@ -6,9 +6,7 @@ import { executeDarazSync } from "@/lib/daraz/sync-service";
 
 const FALLBACK_URL = "https://wpmeihwfxahifdidgiac.supabase.co";
 const FALLBACK_ANON_KEY = "sb_publishable_" + "wj4PMqg5UvZ7mhsGQU6I1g_NbnJrWb2";
-const FALLBACK_SERVICE_ROLE_KEY = "sb_secret_" + "EXbjrELdgRnZmx1w2J9Ftg_ajSa_NuJ";
 const FALLBACK_APP_KEY = "504904";
-const FALLBACK_APP_SECRET = "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
 
 function maskSecret(val?: string, visibleChars = 6): string {
   if (!val) return "[MISSING]";
@@ -29,12 +27,12 @@ export async function GET(req: NextRequest) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
   const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
 
-  // Read environment variables with fallbacks
+  // Read environment variables
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || FALLBACK_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || FALLBACK_SERVICE_ROLE_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
   const appKey = process.env.DARAZ_APP_KEY || FALLBACK_APP_KEY;
-  const appSecret = process.env.DARAZ_APP_SECRET || FALLBACK_APP_SECRET;
+  const appSecret = process.env.DARAZ_APP_SECRET || "";
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
 
   const envAudit = {
@@ -74,7 +72,14 @@ export async function GET(req: NextRequest) {
 
   if (!serviceRoleKey) {
     return NextResponse.json(
-      { success: false, error: "Environment Error: SUPABASE_SERVICE_ROLE_KEY is missing.", diagnostics },
+      { success: false, error: "Environment Error: SUPABASE_SERVICE_ROLE_KEY environment variable is required on server.", diagnostics },
+      { status: 500 }
+    );
+  }
+
+  if (!appSecret) {
+    return NextResponse.json(
+      { success: false, error: "Environment Error: DARAZ_APP_SECRET environment variable is required on server.", diagnostics },
       { status: 500 }
     );
   }

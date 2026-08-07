@@ -53,7 +53,7 @@ export class DarazApiClient {
 
   constructor(options: DarazClientOptions = {}) {
     this.appKey = process.env.DARAZ_APP_KEY || "504904";
-    this.appSecret = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
+    this.appSecret = process.env.DARAZ_APP_SECRET || "";
     this.baseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
     this.storeId = options.storeId;
     this.accessToken = options.accessToken;

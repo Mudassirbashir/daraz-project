@@ -10,10 +10,10 @@ function getValidSupabaseUrl(): string {
 
 function getValidServiceRoleKey(): string {
   const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (envKey && envKey.trim().length > 10) {
+  if (envKey && envKey.trim().length > 0) {
     return envKey.trim();
   }
-  return "sb_secret_" + "EXbjrELdgRnZmx1w2J9Ftg_ajSa_NuJ";
+  return "";
 }
 
 /**
@@ -30,7 +30,7 @@ export function createAdminClient() {
   }
 
   if (!serviceRoleKey) {
-    throw new Error("[Supabase Admin Error]: SUPABASE_SERVICE_ROLE_KEY is missing.");
+    throw new Error("[Supabase Admin Error]: SUPABASE_SERVICE_ROLE_KEY environment variable is required.");
   }
 
   return createSupabaseClient<any>(url, serviceRoleKey, {
