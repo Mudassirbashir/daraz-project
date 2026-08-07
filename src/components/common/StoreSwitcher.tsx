@@ -2,7 +2,7 @@
 
 import React from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
-import { Store, ChevronDown } from "lucide-react";
+import { Store } from "lucide-react";
 
 export interface StoreOption {
   id: string;
@@ -39,18 +39,18 @@ export function StoreSwitcher({ stores }: StoreSwitcherProps) {
   };
 
   return (
-    <div className="relative flex items-center">
-      <div className="flex items-center space-x-1.5 rounded-lg border border-slate-300 bg-white px-3 py-1.5 text-xs font-semibold text-slate-800 shadow-sm hover:border-orange-400 transition-all">
+    <div className="relative flex items-center select-none">
+      <div className="flex items-center space-x-2 rounded-xl border border-slate-200/80 dark:border-slate-800 bg-white/80 dark:bg-slate-900/80 backdrop-blur-md px-3.5 py-1.5 text-xs font-bold text-slate-800 dark:text-slate-200 shadow-2xs hover:border-orange-400/80 transition-all apple-press">
         <Store className="h-4 w-4 text-orange-500 flex-shrink-0" />
         <select
           value={currentStoreId}
           onChange={handleSelectStore}
-          className="bg-transparent font-bold text-slate-900 focus:outline-none cursor-pointer pr-4"
+          className="bg-transparent font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer pr-3"
         >
-          <option value="all">All Stores (Combined View)</option>
-          {stores.map((s, index) => (
+          <option value="all">All Connected Stores (Unified ERP)</option>
+          {stores.map((s) => (
             <option key={s.id} value={s.id}>
-              {s.store_name} ({s.store_code}) {s.has_token ? "✓ Linked" : "⚠️ OAuth Needed"}
+              {s.store_name} ({s.store_code}) {s.has_token ? "✓ Live" : "⚠️ Token Required"}
             </option>
           ))}
         </select>

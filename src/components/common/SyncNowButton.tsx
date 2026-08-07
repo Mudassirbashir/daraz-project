@@ -38,28 +38,28 @@ export function SyncNowButton() {
   };
 
   return (
-    <div className="inline-flex flex-col items-end space-y-1">
+    <div className="inline-flex flex-col items-end space-y-1.5 select-none">
       <button
         onClick={handleSync}
         disabled={loading}
-        className="inline-flex items-center space-x-2 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-md shadow-orange-500/20 hover:bg-orange-600 focus:outline-none focus:ring-2 focus:ring-orange-500 focus:ring-offset-1 transition-all disabled:opacity-50"
+        className="inline-flex items-center space-x-2 rounded-xl bg-gradient-to-r from-orange-500 via-orange-500 to-amber-500 px-4 py-2 text-xs font-bold text-white shadow-md shadow-orange-500/25 hover:brightness-105 active:scale-95 transition-all apple-press border border-white/20 disabled:opacity-50"
       >
-        <RefreshCw className={`h-4 w-4 ${loading ? "animate-spin" : ""}`} />
-        <span>{loading ? "Syncing Live Daraz Data..." : "Sync Now"}</span>
+        <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+        <span>{loading ? "Syncing Live Daraz API..." : "Sync Now"}</span>
       </button>
 
       {statusMessage && (
         <div
-          className={`flex items-center space-x-1 text-[11px] font-medium px-2 py-1 rounded-md ${
+          className={`flex items-center space-x-1.5 text-[11px] font-bold px-3 py-1 rounded-xl shadow-sm ${
             statusMessage.type === "success"
-              ? "bg-emerald-50 text-emerald-700 border border-emerald-200"
-              : "bg-red-50 text-red-700 border border-red-200"
+              ? "bg-emerald-50/90 text-emerald-800 border border-emerald-200/80"
+              : "bg-red-50/90 text-red-800 border border-red-200/80"
           }`}
         >
           {statusMessage.type === "success" ? (
-            <CheckCircle2 className="h-3 w-3 text-emerald-600 flex-shrink-0" />
+            <CheckCircle2 className="h-3.5 w-3.5 text-emerald-600 flex-shrink-0" />
           ) : (
-            <AlertCircle className="h-3 w-3 text-red-600 flex-shrink-0" />
+            <AlertCircle className="h-3.5 w-3.5 text-red-600 flex-shrink-0" />
           )}
           <span>{statusMessage.text}</span>
         </div>
