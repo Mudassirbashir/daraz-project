@@ -4,18 +4,18 @@ import { Database } from "@/types/database.types";
 
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  if (envUrl && (envUrl.startsWith("http://") || envUrl.startsWith("https://"))) {
-    return envUrl.trim();
+  if (!envUrl || !envUrl.trim()) {
+    throw new Error("[Supabase Middleware Error]: NEXT_PUBLIC_SUPABASE_URL environment variable is required.");
   }
-  return "https://wpmeihwfxahifdidgiac.supabase.co";
+  return envUrl.trim();
 }
 
 function getValidAnonKey(): string {
   const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (envKey && envKey.trim().length > 10) {
-    return envKey.trim();
+  if (!envKey || !envKey.trim()) {
+    throw new Error("[Supabase Middleware Error]: NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is required.");
   }
-  return "sb_publishable_" + "wj4PMqg5UvZ7mhsGQU6I1g_NbnJrWb2";
+  return envKey.trim();
 }
 
 export async function updateSession(request: NextRequest) {
@@ -23,10 +23,10 @@ export async function updateSession(request: NextRequest) {
     request,
   });
 
-  const url = getValidSupabaseUrl();
-  const anonKey = getValidAnonKey();
-
   try {
+    const url = getValidSupabaseUrl();
+    const anonKey = getValidAnonKey();
+
     const supabase = createServerClient<Database>(
       url,
       anonKey,
@@ -52,7 +52,12 @@ export async function updateSession(request: NextRequest) {
 
     const {
       data: { user },
+      error: userError,
     } = await supabase.auth.getUser();
+
+    if (userError) {
+      console.warn("[Middleware UpdateSession Auth Notice]:", userError.message);
+    }
 
     return { supabaseResponse, user, supabase };
   } catch (err: any) {

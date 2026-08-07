@@ -15,19 +15,46 @@ export interface SyncResult {
   timestamp: string;
 }
 
+// In-memory sync lock to prevent concurrent overlapping executions
+let isSyncInProgress = false;
+let syncLockTimestamp = 0;
+const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max lock duration
+
 /**
  * Production-Grade Synchronization Engine:
- * 1. Queries active Daraz Stores from Supabase.
- * 2. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
- * 3. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id` to eliminate duplicates.
- * 4. Logs complete operational diagnostics into `daraz_api_logs` (started_time, finished_time, imported, updated, failed, api_errors).
- * 5. Returns execution metrics.
+ * 1. Prevents concurrent sync race conditions via lock guard.
+ * 2. Queries active Daraz Stores from Supabase.
+ * 3. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
+ * 4. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id` to eliminate duplicates.
+ * 5. Logs complete operational diagnostics into `daraz_api_logs`.
  */
 export async function executeDarazSync(): Promise<SyncResult> {
   const startTime = Date.now();
   const startedTimeIso = new Date(startTime).toISOString();
-  const supabase = createAdminClient();
   const errors: string[] = [];
+  const timestamp = new Date().toISOString();
+
+  // Check sync lock to prevent race conditions
+  if (isSyncInProgress && Date.now() - syncLockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
+    return {
+      success: false,
+      storesSynced: 0,
+      productsSynced: 0,
+      ordersSynced: 0,
+      importedCount: 0,
+      updatedCount: 0,
+      failedCount: 0,
+      durationMs: 0,
+      errors: ["Synchronization is already in progress by another request. Please wait."],
+      timestamp,
+    };
+  }
+
+  // Acquire lock
+  isSyncInProgress = true;
+  syncLockTimestamp = Date.now();
+
+  const supabase = createAdminClient();
 
   let storesSynced = 0;
   let productsSynced = 0;
@@ -35,8 +62,6 @@ export async function executeDarazSync(): Promise<SyncResult> {
   let importedCount = 0;
   let updatedCount = 0;
   let failedCount = 0;
-
-  const timestamp = new Date().toISOString();
 
   try {
     // 1. Fetch active Daraz Stores from Supabase
@@ -275,5 +300,8 @@ export async function executeDarazSync(): Promise<SyncResult> {
       errors,
       timestamp,
     };
+  } finally {
+    // Release sync lock
+    isSyncInProgress = false;
   }
 }

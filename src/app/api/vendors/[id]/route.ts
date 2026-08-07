@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const { id } = params;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
 
     const { data: vendor, error } = await supabase
@@ -31,6 +40,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const { id } = params;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const body = await req.json();
     const { name, contact_person, phone, email, address, rating, lead_time_days, minimum_order_quantity, notes } = body;
 
@@ -78,6 +95,14 @@ export async function DELETE(req: NextRequest, { params }: { params: { id: strin
   const { id } = params;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
 
     const { error } = await supabase

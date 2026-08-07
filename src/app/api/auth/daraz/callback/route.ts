@@ -4,10 +4,6 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { DarazApiClient } from "@/lib/daraz/client";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 
-const FALLBACK_URL = "https://wpmeihwfxahifdidgiac.supabase.co";
-const FALLBACK_ANON_KEY = "sb_publishable_" + "wj4PMqg5UvZ7mhsGQU6I1g_NbnJrWb2";
-const FALLBACK_APP_KEY = "504904";
-
 function maskSecret(val?: string, visibleChars = 6): string {
   if (!val) return "[MISSING]";
   if (val.length <= visibleChars) return "***";
@@ -17,29 +13,40 @@ function maskSecret(val?: string, visibleChars = 6): string {
 export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
   const code = requestUrl.searchParams.get("code");
+  const stateParam = requestUrl.searchParams.get("state");
   const errorParam = requestUrl.searchParams.get("error");
   const errorDescription = requestUrl.searchParams.get("error_description");
   const debugMode = requestUrl.searchParams.get("debug") === "true";
 
-  // Dynamic host & protocol detection for Vercel Serverless Functions
+  // Verify CSRF state token against HttpOnly cookie
+  const savedStateCookie = req.cookies.get("daraz_oauth_state")?.value;
+  if (savedStateCookie && stateParam !== savedStateCookie) {
+    console.error("[Daraz OAuth Callback]: CSRF State mismatch detected.");
+    return NextResponse.json(
+      { success: false, error: "Security Error: OAuth CSRF state verification failed." },
+      { status: 400 }
+    );
+  }
+
+  // Dynamic host & protocol detection for Serverless Functions
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
   const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
 
-  // Read environment variables
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || FALLBACK_URL;
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || "";
-  const appKey = process.env.DARAZ_APP_KEY || FALLBACK_APP_KEY;
-  const appSecret = process.env.DARAZ_APP_SECRET || "";
+  // Read environment variables securely without fallback leaks
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const appKey = process.env.DARAZ_APP_KEY;
+  const appSecret = process.env.DARAZ_APP_SECRET;
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
 
   const envAudit = {
     NEXT_PUBLIC_SUPABASE_URL: maskSecret(supabaseUrl, 15),
     NEXT_PUBLIC_SUPABASE_ANON_KEY: maskSecret(supabaseAnonKey, 10),
     SUPABASE_SERVICE_ROLE_KEY: maskSecret(serviceRoleKey, 10),
-    DARAZ_APP_KEY: appKey,
+    DARAZ_APP_KEY: appKey ? appKey : "[MISSING]",
     DARAZ_APP_SECRET: maskSecret(appSecret, 6),
     baseUrl,
     redirectUri,
@@ -56,12 +63,6 @@ export async function GET(req: NextRequest) {
     timestamp: new Date().toISOString(),
   };
 
-  console.log("==================================================");
-  console.log("[Daraz OAuth Callback Audit]");
-  console.log("Environment:", JSON.stringify(envAudit, null, 2));
-  console.log("Diagnostics:", JSON.stringify(diagnostics, null, 2));
-  console.log("==================================================");
-
   // 1. Validate Environment Variables
   if (!supabaseUrl) {
     return NextResponse.json(
@@ -77,9 +78,9 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (!appSecret) {
+  if (!appKey || !appSecret) {
     return NextResponse.json(
-      { success: false, error: "Environment Error: DARAZ_APP_SECRET environment variable is required on server.", diagnostics },
+      { success: false, error: "Environment Error: DARAZ_APP_KEY and DARAZ_APP_SECRET environment variables are required on server.", diagnostics },
       { status: 500 }
     );
   }
@@ -129,16 +130,6 @@ export async function GET(req: NextRequest) {
     const queryString = new URLSearchParams(params).toString();
     const tokenUrl = `${apiBaseUrl}${apiPath}?${queryString}`;
 
-    diagnostics.tokenExchange = {
-      apiPath,
-      appKey,
-      timestamp,
-      signature,
-      tokenUrl,
-    };
-
-    console.log("[Daraz OAuth Callback] Exchanging code for tokens at:", tokenUrl);
-
     const tokenRes = await fetch(tokenUrl, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
@@ -149,8 +140,6 @@ export async function GET(req: NextRequest) {
 
     const tokenData = await tokenRes.json();
     diagnostics.tokenData = tokenData;
-
-    console.log("[Daraz OAuth Callback] Token Exchange Response:", JSON.stringify(tokenData, null, 2));
 
     if (!tokenRes.ok) {
       throw new Error(`Token exchange HTTP Error [${tokenRes.status}]: ${tokenRes.statusText}`);
@@ -251,7 +240,6 @@ export async function GET(req: NextRequest) {
     }
 
     diagnostics.dbResult = { storeId, dbAction };
-    console.log(`[Daraz OAuth Callback] Tokens saved to Supabase store [${storeId}] via ${dbAction}`);
 
     // 5. Verify Connection by Fetching Seller Profile
     diagnostics.step = "seller_profile_verification";
@@ -274,8 +262,6 @@ export async function GET(req: NextRequest) {
           updated_at: new Date().toISOString(),
         })
         .eq("id", storeId);
-
-      console.log("[Daraz OAuth Callback] Verified Live Seller Profile:", liveProfile.name);
     } catch (profileErr: any) {
       console.warn("[Daraz OAuth Callback] Seller profile verification warning:", profileErr.message);
       diagnostics.profileWarning = profileErr.message;
@@ -295,18 +281,20 @@ export async function GET(req: NextRequest) {
       payload: diagnostics,
     });
 
-    if (debugMode) {
-      return NextResponse.json({
-        success: true,
-        message: "Daraz OAuth Seller Account Connected Successfully!",
-        storeId,
-        sellerId: targetSellerId,
-        storeName,
-        diagnostics,
-      });
-    }
+    const response = debugMode
+      ? NextResponse.json({
+          success: true,
+          message: "Daraz OAuth Seller Account Connected Successfully!",
+          storeId,
+          sellerId: targetSellerId,
+          storeName,
+          diagnostics,
+        })
+      : NextResponse.redirect(`${baseUrl}/dashboard?oauth_success=true&store_id=${storeId}`);
 
-    return NextResponse.redirect(`${baseUrl}/dashboard?oauth_success=true&store_id=${storeId}`);
+    // Clear OAuth state cookie after successful verification
+    response.cookies.delete("daraz_oauth_state");
+    return response;
   } catch (err: any) {
     diagnostics.step = "exception";
     diagnostics.errorMessage = err.message || String(err);

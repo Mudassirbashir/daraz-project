@@ -1,7 +1,16 @@
 import { NextRequest, NextResponse } from "next/server";
+import { createClient } from "@/lib/supabase/server";
 
 export async function POST(req: NextRequest) {
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const body = await req.json();
     const { productName, category, language, keyFeatures } = body;
 

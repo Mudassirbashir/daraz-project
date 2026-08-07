@@ -88,8 +88,18 @@ export class DarazApiClient {
   private maxRetries: number;
 
   constructor(options: DarazClientOptions = {}) {
-    this.appKey = process.env.DARAZ_APP_KEY || "504904";
-    this.appSecret = process.env.DARAZ_APP_SECRET || "";
+    const key = process.env.DARAZ_APP_KEY;
+    if (!key || !key.trim()) {
+      throw new Error("[DarazApiClient Error]: DARAZ_APP_KEY environment variable is required.");
+    }
+    this.appKey = key.trim();
+
+    const secret = process.env.DARAZ_APP_SECRET;
+    if (!secret || !secret.trim()) {
+      throw new Error("[DarazApiClient Error]: DARAZ_APP_SECRET environment variable is required.");
+    }
+    this.appSecret = secret.trim();
+
     this.baseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
     this.storeId = options.storeId;
     this.accessToken = options.accessToken;

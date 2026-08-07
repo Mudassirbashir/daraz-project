@@ -1,17 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
-  const page = parseInt(searchParams.get("page") || "1", 10);
-  const limit = parseInt(searchParams.get("limit") || "25", 10);
+  const pageInput = parseInt(searchParams.get("page") || "1", 10);
+  const limitInput = parseInt(searchParams.get("limit") || "25", 10);
+  const page = isNaN(pageInput) || pageInput < 1 ? 1 : pageInput;
+  const limit = isNaN(limitInput) || limitInput < 1 ? 25 : Math.min(limitInput, 100);
+
   const search = searchParams.get("search") || "";
   const filterType = searchParams.get("filter_type") || "all";
 
   const offset = (page - 1) * limit;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
 
     // Query all orders to build aggregated customer profiles
@@ -34,8 +46,8 @@ export async function GET(req: NextRequest) {
         customerMap[key] = {
           id: key,
           name,
-          phone: ord.customer_phone || "Not Available",
-          city: ord.customer_city || "Not Available",
+          phone: ord.customer_phone || "N/A",
+          city: ord.customer_city || "N/A",
           province: "Pakistan",
           ordersCount: 0,
           totalSpendCents: 0,

@@ -1,11 +1,15 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
-  const page = parseInt(searchParams.get("page") || "1", 10);
-  const limit = parseInt(searchParams.get("limit") || "25", 10);
+  const pageInput = parseInt(searchParams.get("page") || "1", 10);
+  const limitInput = parseInt(searchParams.get("limit") || "25", 10);
+  const page = isNaN(pageInput) || pageInput < 1 ? 1 : pageInput;
+  const limit = isNaN(limitInput) || limitInput < 1 ? 25 : Math.min(limitInput, 100);
+
   const search = searchParams.get("search") || "";
   const status = searchParams.get("status") || "all";
   const assignee = searchParams.get("assignee") || "all";
@@ -14,6 +18,14 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
 
     let query = supabase
@@ -58,6 +70,14 @@ export async function GET(req: NextRequest) {
 
 export async function POST(req: NextRequest) {
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const body = await req.json();
     const { title, description, assignedTo, status, priority, dueDate } = body;
 

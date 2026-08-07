@@ -4,18 +4,18 @@ import { Database } from "@/types/database.types";
 
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  if (envUrl && (envUrl.startsWith("http://") || envUrl.startsWith("https://"))) {
-    return envUrl.trim();
+  if (!envUrl || !envUrl.trim()) {
+    throw new Error("[Supabase Server Error]: NEXT_PUBLIC_SUPABASE_URL environment variable is required.");
   }
-  return "https://wpmeihwfxahifdidgiac.supabase.co";
+  return envUrl.trim();
 }
 
 function getValidAnonKey(): string {
   const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
-  if (envKey && envKey.trim().length > 10) {
-    return envKey.trim();
+  if (!envKey || !envKey.trim()) {
+    throw new Error("[Supabase Server Error]: NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is required.");
   }
-  return "sb_publishable_" + "wj4PMqg5UvZ7mhsGQU6I1g_NbnJrWb2";
+  return envKey.trim();
 }
 
 export function createClient() {
@@ -36,8 +36,8 @@ export function createClient() {
             cookiesToSet.forEach(({ name, value, options }) =>
               cookieStore.set(name, value, options)
             );
-          } catch {
-            // The `setAll` method was called from a Server Component.
+          } catch (err: any) {
+            // Server Component cookie manipulation notice
           }
         },
       },

@@ -1,20 +1,31 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest) {
   const { searchParams } = new URL(req.url);
 
-  const page = parseInt(searchParams.get("page") || "1", 10);
-  const limit = parseInt(searchParams.get("limit") || "25", 10);
+  const pageInput = parseInt(searchParams.get("page") || "1", 10);
+  const limitInput = parseInt(searchParams.get("limit") || "25", 10);
+  const page = isNaN(pageInput) || pageInput < 1 ? 1 : pageInput;
+  const limit = isNaN(limitInput) || limitInput < 1 ? 25 : Math.min(limitInput, 100);
+
   const search = searchParams.get("search") || "";
   const storeId = searchParams.get("store_id") || "all";
-  const status = searchParams.get("status") || "all";
   const sortBy = searchParams.get("sort_by") || "created_at";
   const sortOrder = searchParams.get("sort_order") || "desc";
 
   const offset = (page - 1) * limit;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
 
     // Query listings & inventory to calculate live financial catalog margins if orders table is currently empty
@@ -31,8 +42,11 @@ export async function GET(req: NextRequest) {
       listingsQuery = listingsQuery.or(`title.ilike.${q},seller_sku.ilike.${q},daraz_item_id.ilike.${q}`);
     }
 
+    const validSortFields = ["created_at", "title", "price_cents", "stock_quantity"];
+    const safeSortBy = validSortFields.includes(sortBy) ? sortBy : "created_at";
+
     listingsQuery = listingsQuery
-      .order(sortBy, { ascending: sortOrder === "asc" })
+      .order(safeSortBy, { ascending: sortOrder === "asc" })
       .range(offset, offset + limit - 1);
 
     const { data: listings, count, error } = await listingsQuery;

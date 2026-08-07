@@ -1,8 +1,17 @@
-import { NextResponse } from "next/server";
+import { NextRequest, NextResponse } from "next/server";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
+import { createClient } from "@/lib/supabase/server";
 
-export async function POST() {
+export async function POST(req: NextRequest) {
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const result = await executeDarazSync();
 
     return NextResponse.json({
@@ -29,7 +38,6 @@ export async function POST() {
   }
 }
 
-export async function GET() {
-  // Allow GET requests for convenience testing / manual triggers
-  return POST();
+export async function GET(req: NextRequest) {
+  return POST(req);
 }

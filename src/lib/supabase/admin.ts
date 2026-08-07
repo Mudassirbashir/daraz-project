@@ -2,18 +2,18 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  if (envUrl && (envUrl.startsWith("http://") || envUrl.startsWith("https://"))) {
-    return envUrl.trim();
+  if (!envUrl || !envUrl.trim()) {
+    throw new Error("[Supabase Admin Error]: NEXT_PUBLIC_SUPABASE_URL environment variable is required.");
   }
-  return "https://wpmeihwfxahifdidgiac.supabase.co";
+  return envUrl.trim();
 }
 
 function getValidServiceRoleKey(): string {
   const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (envKey && envKey.trim().length > 0) {
-    return envKey.trim();
+  if (!envKey || !envKey.trim()) {
+    throw new Error("[Supabase Admin Error]: SUPABASE_SERVICE_ROLE_KEY environment variable is required on server.");
   }
-  return "";
+  return envKey.trim();
 }
 
 /**
@@ -24,14 +24,6 @@ function getValidServiceRoleKey(): string {
 export function createAdminClient() {
   const url = getValidSupabaseUrl();
   const serviceRoleKey = getValidServiceRoleKey();
-
-  if (!url) {
-    throw new Error("[Supabase Admin Error]: NEXT_PUBLIC_SUPABASE_URL is missing.");
-  }
-
-  if (!serviceRoleKey) {
-    throw new Error("[Supabase Admin Error]: SUPABASE_SERVICE_ROLE_KEY environment variable is required.");
-  }
 
   return createSupabaseClient<any>(url, serviceRoleKey, {
     auth: {

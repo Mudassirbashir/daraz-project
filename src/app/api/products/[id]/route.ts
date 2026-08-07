@@ -1,10 +1,19 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const { id } = params;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
 
     // Fetch listing details with joined inventory and store data
@@ -105,6 +114,14 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   const { id } = params;
 
   try {
+    // Session Authentication Verification
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const body = await req.json();
     const { internalNotes, priceCents, stockQuantity } = body;
 
@@ -113,8 +130,19 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
       updated_at: new Date().toISOString(),
     };
 
-    if (typeof priceCents === "number") updateData.price_cents = priceCents;
-    if (typeof stockQuantity === "number") updateData.stock_quantity = stockQuantity;
+    if (typeof priceCents === "number") {
+      if (priceCents < 0) {
+        return NextResponse.json({ success: false, error: "Invalid price value." }, { status: 400 });
+      }
+      updateData.price_cents = priceCents;
+    }
+
+    if (typeof stockQuantity === "number") {
+      if (stockQuantity < 0) {
+        return NextResponse.json({ success: false, error: "Invalid stock quantity." }, { status: 400 });
+      }
+      updateData.stock_quantity = stockQuantity;
+    }
 
     const { data: updatedProduct, error } = await supabase
       .from("listings")
