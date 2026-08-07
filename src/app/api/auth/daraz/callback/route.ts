@@ -5,23 +5,55 @@ import { DarazApiClient } from "@/lib/daraz/client";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 
 export async function GET(req: NextRequest) {
-  const { searchParams } = new URL(req.url);
-  const code = searchParams.get("code");
-  const errorParam = searchParams.get("error");
-  const errorDescription = searchParams.get("error_description");
-
   const requestUrl = new URL(req.url);
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
+  const code = requestUrl.searchParams.get("code");
+  const errorParam = requestUrl.searchParams.get("error");
+  const errorDescription = requestUrl.searchParams.get("error_description");
+  const debugMode = requestUrl.searchParams.get("debug") === "true";
 
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
+  const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
+
+  const diagnostics: Record<string, any> = {
+    step: "init",
+    receivedUrl: req.url,
+    redirectUri,
+    hasCode: Boolean(code),
+    codeSnippet: code ? `${code.slice(0, 8)}...` : null,
+    errorParam,
+    errorDescription,
+    timestamp: new Date().toISOString(),
+  };
+
+  console.log("==================================================");
+  console.log("[Daraz OAuth Callback Audit Start]");
+  console.log("Diagnostics:", JSON.stringify(diagnostics, null, 2));
+  console.log("==================================================");
+
+  // 1. Handle OAuth provider errors
   if (errorParam) {
-    console.error("[Daraz OAuth Callback Error]:", errorParam, errorDescription);
-    return NextResponse.redirect(
-      `${baseUrl}/dashboard?oauth_error=${encodeURIComponent(errorDescription || errorParam)}`
+    diagnostics.step = "oauth_provider_error";
+    console.error("[Daraz OAuth Error from Provider]:", errorParam, errorDescription);
+    return NextResponse.json(
+      {
+        success: false,
+        error: `Daraz Authorization Rejected: ${errorDescription || errorParam}`,
+        diagnostics,
+      },
+      { status: 400 }
     );
   }
 
   if (!code) {
-    return NextResponse.json({ error: "Missing authorization code in OAuth callback." }, { status: 400 });
+    diagnostics.step = "missing_code";
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Missing authorization code in OAuth callback query parameters.",
+        diagnostics,
+      },
+      { status: 400 }
+    );
   }
 
   const appKey = process.env.DARAZ_APP_KEY || "504904";
@@ -29,7 +61,8 @@ export async function GET(req: NextRequest) {
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
 
   try {
-    // 1. Exchange authorization code for access token via /auth/token/create
+    // 2. Build Token Exchange Request (/auth/token/create)
+    diagnostics.step = "token_exchange_request";
     const apiPath = "/auth/token/create";
     const timestamp = Date.now().toString();
 
@@ -46,21 +79,37 @@ export async function GET(req: NextRequest) {
     const queryString = new URLSearchParams(params).toString();
     const tokenUrl = `${apiBaseUrl}${apiPath}?${queryString}`;
 
-    console.log("[Daraz OAuth Callback] Exchanging code for tokens at:", tokenUrl);
+    diagnostics.tokenExchange = {
+      apiPath,
+      appKey,
+      timestamp,
+      signature,
+      tokenUrl,
+    };
+
+    console.log("[Daraz OAuth Callback] Sending token exchange request to Daraz:", tokenUrl);
 
     const tokenRes = await fetch(tokenUrl, {
       method: "GET",
       headers: { "Content-Type": "application/json" },
     });
 
+    diagnostics.tokenResponseStatus = tokenRes.status;
+    diagnostics.tokenResponseStatusText = tokenRes.statusText;
+
+    const tokenData = await tokenRes.json();
+    diagnostics.tokenData = tokenData;
+
+    console.log("[Daraz OAuth Callback] Daraz Token Response Payload:", JSON.stringify(tokenData, null, 2));
+
     if (!tokenRes.ok) {
       throw new Error(`Token exchange HTTP Error [${tokenRes.status}]: ${tokenRes.statusText}`);
     }
 
-    const tokenData = await tokenRes.json();
-
     if (tokenData.code && tokenData.code !== "0") {
-      throw new Error(`Daraz Token Exchange Error [${tokenData.code}]: ${tokenData.message || tokenData.detail || "Invalid code"}`);
+      throw new Error(
+        `Daraz Token API Error Code [${tokenData.code}]: ${tokenData.message || tokenData.detail || "Invalid Code or Signature"}`
+      );
     }
 
     const {
@@ -72,28 +121,47 @@ export async function GET(req: NextRequest) {
       country,
     } = tokenData;
 
+    if (!access_token) {
+      throw new Error("Daraz API responded with HTTP 200 but access_token is missing in payload.");
+    }
+
     const expiresInSeconds = typeof expires_in === "number" ? expires_in : parseInt(expires_in || "2592000", 10);
     const tokenExpiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
-    const targetSellerId = seller_id || account || `SELLER_${Date.now()}`;
+    const targetSellerId = String(seller_id || account || `SELLER_${Date.now()}`);
     const storeName = account || `Daraz Store (${targetSellerId})`;
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    // 2. Persist Tokens Securely in Supabase daraz_stores Table
+    diagnostics.parsedToken = {
+      hasAccessToken: Boolean(access_token),
+      hasRefreshToken: Boolean(refresh_token),
+      expiresInSeconds,
+      tokenExpiresAt,
+      sellerId: targetSellerId,
+      account,
+      storeRegion,
+    };
+
+    // 3. Persist Credentials in Supabase daraz_stores
+    diagnostics.step = "supabase_upsert";
     const supabase = createAdminClient();
 
-    const { data: existingStore } = await supabase
+    // Check if store already exists by seller_id OR store_code
+    const { data: existingStores } = await supabase
       .from("daraz_stores")
-      .select("id")
-      .eq("seller_id", targetSellerId)
-      .single();
+      .select("id, store_code, seller_id")
+      .or(`seller_id.eq.${targetSellerId},store_code.eq.DARAZ-${storeRegion}-01`);
 
     let storeId: string;
+    let dbAction = "none";
 
-    if (existingStore) {
+    if (existingStores && existingStores.length > 0) {
+      const targetStore = existingStores[0];
       const { data: updated, error: updateErr } = await supabase
         .from("daraz_stores")
         .update({
+          seller_id: targetSellerId,
+          store_name: storeName,
           access_token,
           refresh_token,
           token_expires_at: tokenExpiresAt,
@@ -102,12 +170,13 @@ export async function GET(req: NextRequest) {
           is_active: true,
           updated_at: new Date().toISOString(),
         })
-        .eq("id", existingStore.id)
+        .eq("id", targetStore.id)
         .select()
         .single();
 
-      if (updateErr) throw new Error(`Failed to update tokens in database: ${updateErr.message}`);
+      if (updateErr) throw new Error(`Supabase store update error: ${updateErr.message}`);
       storeId = updated.id;
+      dbAction = "updated";
     } else {
       const storeCode = `DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`;
       const { data: inserted, error: insertErr } = await supabase
@@ -127,12 +196,16 @@ export async function GET(req: NextRequest) {
         .select()
         .single();
 
-      if (insertErr) throw new Error(`Failed to store credentials in database: ${insertErr.message}`);
+      if (insertErr) throw new Error(`Supabase store insert error: ${insertErr.message}`);
       storeId = inserted.id;
+      dbAction = "inserted";
     }
 
-    // 3. Fetch Live Seller Information using newly acquired Access Token
-    console.log("[Daraz OAuth Callback] Fetching live seller profile for store:", storeId);
+    diagnostics.dbResult = { storeId, dbAction };
+    console.log(`[Daraz OAuth Callback] Tokens saved to Supabase store [${storeId}] via ${dbAction}`);
+
+    // 4. Verify Connection via Live Seller Profile API
+    diagnostics.step = "seller_profile_verification";
     const client = new DarazApiClient({
       storeId,
       accessToken: access_token,
@@ -142,6 +215,8 @@ export async function GET(req: NextRequest) {
 
     try {
       const liveProfile = await client.getStoreProfile();
+      diagnostics.liveProfile = liveProfile;
+
       await supabase
         .from("daraz_stores")
         .update({
@@ -150,34 +225,51 @@ export async function GET(req: NextRequest) {
           updated_at: new Date().toISOString(),
         })
         .eq("id", storeId);
-      console.log("[Daraz OAuth Callback] Live seller info fetched successfully:", liveProfile.name);
-    } catch (sellerErr: any) {
-      console.warn("[Daraz OAuth Callback] Seller profile fetch warning:", sellerErr.message);
+
+      console.log("[Daraz OAuth Callback] Verified Live Seller Profile:", liveProfile.name);
+    } catch (profileErr: any) {
+      console.warn("[Daraz OAuth Callback] Seller profile verification warning:", profileErr.message);
+      diagnostics.profileWarning = profileErr.message;
     }
 
-    // 4. Trigger Automatic Live Data Synchronization
+    // 5. Trigger Initial Sync in Background
     executeDarazSync().catch((syncErr) =>
-      console.error("[Daraz OAuth Callback] Background sync error:", syncErr.message)
+      console.error("[Daraz OAuth Callback] Initial sync error:", syncErr.message)
     );
 
-    // Log OAuth completion event
+    // Audit Log in daraz_api_logs
     await supabase.from("daraz_api_logs").insert({
       store_id: storeId,
       sync_type: "oauth_login",
       status: "completed",
       records_synced: 1,
-      payload: {
-        seller_id: targetSellerId,
-        store_name: storeName,
-        expires_at: tokenExpiresAt,
-      },
+      payload: diagnostics,
     });
 
-    return NextResponse.redirect(`${baseUrl}/dashboard?oauth_success=true`);
+    if (debugMode) {
+      return NextResponse.json({
+        success: true,
+        message: "Daraz OAuth Seller Account Connected Successfully!",
+        storeId,
+        sellerId: targetSellerId,
+        storeName,
+        diagnostics,
+      });
+    }
+
+    return NextResponse.redirect(`${baseUrl}/dashboard?oauth_success=true&store_id=${storeId}`);
   } catch (err: any) {
-    console.error("[Daraz OAuth Exchange Exception]:", err.message);
-    return NextResponse.redirect(
-      `${baseUrl}/dashboard?oauth_error=${encodeURIComponent(err.message)}`
+    diagnostics.step = "exception";
+    diagnostics.errorMessage = err.message || String(err);
+    console.error("[Daraz OAuth Callback Exception]:", err);
+
+    return NextResponse.json(
+      {
+        success: false,
+        error: err.message || "Failed to exchange Daraz authorization code for tokens.",
+        diagnostics,
+      },
+      { status: 500 }
     );
   }
 }
