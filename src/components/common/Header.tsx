@@ -1,7 +1,7 @@
 import React from "react";
 import { RoleBadge } from "./RoleBadge";
 import { AppRole } from "@/types/database.types";
-import { Globe, Store, RefreshCw } from "lucide-react";
+import { Globe, Store, RefreshCw, LogOut } from "lucide-react";
 
 interface HeaderProps {
   userName?: string;
@@ -30,13 +30,23 @@ export function Header({
         </div>
       </div>
 
-      {/* Sync Status & User Role Badge */}
+      {/* Sync Status, User Role Badge & Logout Button */}
       <div className="flex items-center space-x-4">
         <div className="flex items-center space-x-1 text-xs text-emerald-600 bg-emerald-50 px-2.5 py-1 rounded-md border border-emerald-200 font-medium">
           <RefreshCw className="h-3.5 w-3.5 animate-spin" />
           <span>Daraz API Active</span>
         </div>
+        
         <RoleBadge role={userRole} userName={userName} />
+
+        <a
+          href="/api/auth/logout"
+          className="inline-flex items-center space-x-1.5 text-xs font-medium text-slate-600 hover:text-red-600 hover:bg-red-50 px-2.5 py-1.5 rounded-lg border border-slate-200 hover:border-red-200 transition-all"
+          title="Sign out of Operations Portal"
+        >
+          <LogOut className="h-3.5 w-3.5" />
+          <span>Logout</span>
+        </a>
       </div>
     </header>
   );

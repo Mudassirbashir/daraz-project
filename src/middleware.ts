@@ -4,7 +4,7 @@ import { PROTECTED_ROUTES } from "@/lib/rbac/permissions";
 import { AppRole } from "@/types/database.types";
 
 export async function middleware(request: NextRequest) {
-  const { pathname } = request.nextUrl;
+  const { pathname, searchParams } = request.nextUrl;
 
   // 1. Instantly bypass API routes, _next static assets, and public files
   if (
@@ -25,15 +25,20 @@ export async function middleware(request: NextRequest) {
     if (!user && !isAuthRoute) {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
-      loginUrl.searchParams.set("redirectTo", pathname);
+      if (pathname !== "/" && pathname !== "/dashboard") {
+        loginUrl.searchParams.set("redirectTo", pathname);
+      }
       return NextResponse.redirect(loginUrl);
     }
 
-    // Redirect authenticated users away from /login
+    // Redirect authenticated users away from /login ONLY if they aren't resolving explicit parameters
     if (user && pathname === "/login") {
-      const dashboardUrl = request.nextUrl.clone();
-      dashboardUrl.pathname = "/dashboard";
-      return NextResponse.redirect(dashboardUrl);
+      const hasMessages = searchParams.has("oauth_error") || searchParams.has("logged_out");
+      if (!hasMessages) {
+        const dashboardUrl = request.nextUrl.clone();
+        dashboardUrl.pathname = "/dashboard";
+        return NextResponse.redirect(dashboardUrl);
+      }
     }
 
     // Role-Based Access Control (RBAC) path protection

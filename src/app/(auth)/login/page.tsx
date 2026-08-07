@@ -37,12 +37,9 @@ function LoginForm() {
         setErrorMessage(error.message);
       } else if (data.session) {
         setSuccessMessage("Login successful! Redirecting to hub...");
-        router.refresh();
-        setTimeout(() => {
-          router.push("/dashboard");
-        }, 300);
+        window.location.href = "/dashboard";
       } else {
-        router.push("/dashboard");
+        window.location.href = "/dashboard";
       }
     } catch (err: any) {
       console.error("Login Exception:", err.message);
