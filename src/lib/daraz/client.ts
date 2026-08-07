@@ -25,14 +25,46 @@ export interface DarazProductItem {
   attributes: Record<string, any>;
 }
 
+export interface DarazOrderItemDetail {
+  order_item_id: string;
+  order_id: string;
+  name: string;
+  product_main_image: string;
+  seller_sku: string;
+  shop_sku: string;
+  item_price_cents: number;
+  paid_price_cents: number;
+  status: string;
+  shipment_provider: string;
+  tracking_code: string;
+  reason?: string;
+}
+
 export interface DarazOrderItem {
   order_id: string;
+  order_number: string;
+  package_id: string;
+  package_number: string;
   tracking_code: string;
   customer_first_name: string;
+  customer_phone: string;
   customer_city: string;
+  customer_address: string;
+  customer_province: string;
+  customer_area: string;
+  customer_postcode: string;
+  shipping_provider: string;
+  shipping_type: string;
+  payment_method: string;
   price_cents: number;
+  shipping_fee_cents: number;
+  voucher_discount_cents: number;
+  seller_discount_cents: number;
   statuses: string;
   created_at: string;
+  updated_at: string;
+  items: DarazOrderItemDetail[];
+  raw: Record<string, any>;
 }
 
 export interface DarazClientOptions {
@@ -299,7 +331,35 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Orders with Pagination (/orders/get)
+   * Fetch Itemized Order Details (/order/items/get)
+   */
+  async getOrderItems(orderId: string): Promise<DarazOrderItemDetail[]> {
+    try {
+      const response = await this.request<{ data?: any[] }>("/order/items/get", { order_id: orderId });
+      const rawItems = response.data || [];
+
+      return rawItems.map((item) => ({
+        order_item_id: String(item.order_item_id || item.item_id),
+        order_id: String(item.order_id || orderId),
+        name: item.name || "Daraz Product",
+        product_main_image: item.product_main_image || "",
+        seller_sku: item.sku || item.seller_sku || "SKU_UNKNOWN",
+        shop_sku: item.shop_sku || item.daraz_sku || "",
+        item_price_cents: Math.round((item.item_price || 0) * 100),
+        paid_price_cents: Math.round((item.paid_price || item.item_price || 0) * 100),
+        status: String(item.status || "pending").toLowerCase(),
+        shipment_provider: item.shipment_provider || "Daraz Express",
+        tracking_code: item.tracking_code || "",
+        reason: item.reason || "",
+      }));
+    } catch (err: any) {
+      console.warn(`[DarazApiClient] getOrderItems notice for Order ${orderId}:`, err.message);
+      return [];
+    }
+  }
+
+  /**
+   * Fetch Store Orders with Pagination & Full Normalized Header Fields (/orders/get)
    */
   async getOrders(offset = 0, limit = 50, createdAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
     const params: Record<string, string> = {
@@ -318,15 +378,37 @@ export class DarazApiClient {
     const rawOrders = response.data?.orders || [];
     const total = response.data?.countTotal || rawOrders.length;
 
-    const orders: DarazOrderItem[] = rawOrders.map((o) => ({
-      order_id: String(o.order_id),
-      tracking_code: o.statuses?.[0] || o.order_number || `DEX-${o.order_id}`,
-      customer_first_name: o.customer_first_name || "Customer",
-      customer_city: o.address_shipping?.city || "Pakistan",
-      price_cents: Math.round((o.price || 0) * 100),
-      statuses: (o.statuses?.[0] || "pending").toLowerCase(),
-      created_at: o.created_at || new Date().toISOString(),
-    }));
+    const orders: DarazOrderItem[] = rawOrders.map((o) => {
+      const addressShipping = o.address_shipping || {};
+      const addressBilling = o.address_billing || {};
+
+      return {
+        order_id: String(o.order_id),
+        order_number: String(o.order_number || o.order_id),
+        package_id: String(o.package_id || `PKG-${o.order_id}`),
+        package_number: String(o.package_number || o.order_id),
+        tracking_code: o.statuses?.[0] || o.tracking_code || o.order_number || `DEX-${o.order_id}`,
+        customer_first_name: `${o.customer_first_name || "Customer"} ${o.customer_last_name || ""}`.trim(),
+        customer_phone: addressShipping.phone || addressBilling.phone || "N/A",
+        customer_city: addressShipping.city || addressBilling.city || "Pakistan",
+        customer_address: `${addressShipping.address1 || ""} ${addressShipping.address2 || ""}`.trim() || "Address on File",
+        customer_province: addressShipping.address3 || addressShipping.state || "Pakistan",
+        customer_area: addressShipping.address4 || addressShipping.city || "",
+        customer_postcode: addressShipping.postcode || "",
+        shipping_provider: o.shipping_provider || addressShipping.shipping_provider || "Daraz Express (DEX)",
+        shipping_type: o.shipping_type || "Standard",
+        payment_method: o.payment_method || "COD",
+        price_cents: Math.round((o.price || 0) * 100),
+        shipping_fee_cents: Math.round((o.shipping_fee || 0) * 100),
+        voucher_discount_cents: Math.round((o.voucher_platform || 0) * 100),
+        seller_discount_cents: Math.round((o.voucher_seller || 0) * 100),
+        statuses: (o.statuses?.[0] || "pending").toLowerCase(),
+        created_at: o.created_at || new Date().toISOString(),
+        updated_at: o.updated_at || new Date().toISOString(),
+        items: [],
+        raw: o,
+      };
+    });
 
     return { orders, total };
   }
