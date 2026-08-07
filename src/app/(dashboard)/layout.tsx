@@ -1,26 +1,68 @@
 import React from "react";
 import { Sidebar } from "@/components/common/Sidebar";
 import { Header } from "@/components/common/Header";
+import { StoreOption } from "@/components/common/StoreSwitcher";
+import { createClient } from "@/lib/supabase/server";
+import { AppRole } from "@/types/database.types";
 
-export default function DashboardLayout({
+export default async function DashboardLayout({
   children,
 }: {
   children: React.ReactNode;
 }) {
-  // In production, user roles and profile will be fetched via Server Supabase client
-  const demoRole = "super_admin";
+  const supabase = createClient();
+
+  // Fetch authenticated user & profile
+  const {
+    data: { user },
+  } = await supabase.auth.getUser();
+
+  let userRole: AppRole = "ops_manager";
+  let userName = "Team Member";
+
+  if (user) {
+    const { data: profile } = await (supabase as any)
+      .from("profiles")
+      .select("full_name, role")
+      .eq("id", user.id)
+      .single();
+
+    if (profile) {
+      userRole = (profile.role as AppRole) || "ops_manager";
+      userName = profile.full_name || user.email || "Team Member";
+    } else {
+      userName = user.email || "Team Member";
+    }
+  }
+
+  // Fetch all active Daraz Stores (up to 3)
+  const { data: rawStores } = await (supabase as any)
+    .from("daraz_stores")
+    .select("id, store_code, store_name, seller_id, is_active, access_token")
+    .order("store_code", { ascending: true });
+
+  const stores: StoreOption[] = (rawStores || []).map((s: any) => ({
+    id: s.id,
+    store_code: s.store_code,
+    store_name: s.store_name,
+    seller_id: s.seller_id,
+    is_active: s.is_active,
+    has_token: Boolean(s.access_token),
+  }));
+
+  const region = rawStores && rawStores.length > 0 ? rawStores[0].region || "PK" : "PK";
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
-      {/* Sidebar Navigation */}
-      <Sidebar userRole={demoRole} />
-
-      {/* Main Content Workspace */}
+      <Sidebar userRole={userRole} />
       <div className="flex flex-1 flex-col overflow-hidden">
-        <Header userRole={demoRole} userName="Daraz Operations Lead" />
-        <main className="flex-1 overflow-y-auto p-6">
-          {children}
-        </main>
+        <Header
+          userRole={userRole}
+          userName={userName}
+          stores={stores}
+          region={region}
+        />
+        <main className="flex-1 overflow-y-auto p-6">{children}</main>
       </div>
     </div>
   );
