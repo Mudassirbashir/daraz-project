@@ -4,12 +4,20 @@ import { createClient } from "@/lib/supabase/server";
 
 export async function POST(req: NextRequest) {
   try {
-    // Session Authentication Verification
+    // Verify auth: User session OR Vercel Cron header / CRON_SECRET authorization
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
-    if (!user) {
-      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    const isVercelCron = req.headers.get("x-vercel-cron") === "1";
+    const cronSecret = process.env.CRON_SECRET;
+    const authHeader = req.headers.get("authorization");
+    const isCronAuthorized = Boolean(isVercelCron || (cronSecret && authHeader === `Bearer ${cronSecret}`));
+
+    if (!user && !isCronAuthorized) {
+      return NextResponse.json(
+        { success: false, error: "Unauthorized access: Active session or Vercel Cron authorization required." },
+        { status: 401 }
+      );
     }
 
     const result = await executeDarazSync();
