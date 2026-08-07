@@ -86,11 +86,9 @@ export async function GET(req: NextRequest) {
 
     (allOrders || []).forEach((o: any) => {
       const st = (o.status || "").toLowerCase();
-      if (["pending", "unpaid"].includes(st)) metrics.ordersWaiting++;
-      if (st === "ready_to_ship") {
-        metrics.ordersPicked++;
-        metrics.ordersPacked++;
-      }
+      if (["pending", "unpaid"].includes(st) && !o.is_packed) metrics.ordersWaiting++;
+      if (o.is_packed && !o.is_label_printed) metrics.ordersPicked++;
+      if (o.is_packed) metrics.ordersPacked++;
       if (["shipped", "delivered"].includes(st)) metrics.ordersShipped++;
     });
 

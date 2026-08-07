@@ -13,6 +13,8 @@ export type Permission =
   | "inventory:write"
   | "orders:read"
   | "orders:write"
+  | "orders:pack"
+  | "orders:print_label"
   | "tasks:read"
   | "tasks:write"
   | "finance:read"

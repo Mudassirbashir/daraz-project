@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { PrintableLabelModal } from "@/components/operations/PrintableLabelModal";
+import { PackingModal } from "@/components/operations/PackingModal";
 import {
   CheckSquare,
   Search,
@@ -414,19 +415,48 @@ export default function OperationsPage() {
                       <td className="px-4 py-3 font-bold text-slate-800">{ord.customer_name || "Customer"}</td>
                       <td className="px-4 py-3 font-mono font-bold text-orange-600">{ord.shelf_location || "N/A"}</td>
                       <td className="px-4 py-3">
-                        <span className="inline-flex items-center px-2 py-0.5 rounded-md font-bold text-[10px] capitalize bg-slate-100 text-slate-800">
-                          {ord.status?.replace(/_/g, " ") || "Pending"}
-                        </span>
+                        <div className="flex items-center space-x-1.5">
+                          <span
+                            className={`inline-flex items-center px-2.5 py-0.5 rounded-xl font-bold text-[10px] capitalize border ${
+                              ord.is_label_printed
+                                ? "bg-emerald-50 text-emerald-700 border-emerald-200"
+                                : ord.is_packed
+                                ? "bg-blue-50 text-blue-700 border-blue-200"
+                                : "bg-amber-50 text-amber-700 border-amber-200"
+                            }`}
+                          >
+                            {ord.is_label_printed
+                              ? "✓ Label Printed"
+                              : ord.is_packed
+                              ? "Packed (Ready for Label)"
+                              : "Ready to Pack"}
+                          </span>
+                        </div>
                       </td>
                       <td className="px-4 py-3 text-right space-x-1">
-                        <button
-                          onClick={() => setSelectedPrintOrder(ord)}
-                          title="Print shipping label or packing slip"
-                          className="inline-flex items-center space-x-1 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-700 hover:bg-slate-50 font-bold"
-                        >
-                          <Printer className="h-3.5 w-3.5 text-slate-500" />
-                          <span>Print Slip</span>
-                        </button>
+                        {!ord.is_packed ? (
+                          <button
+                            onClick={() => setPackingOrder(ord)}
+                            title="Open packing checklist and verify items"
+                            className="inline-flex items-center space-x-1 border border-orange-300 bg-orange-50 hover:bg-orange-100 rounded-xl px-2.5 py-1 text-orange-800 font-bold transition-all apple-press"
+                          >
+                            <PackageCheck className="h-3.5 w-3.5 text-orange-600" />
+                            <span>Pack Order</span>
+                          </button>
+                        ) : (
+                          <button
+                            onClick={() => setSelectedPrintOrder(ord)}
+                            title="Print official Daraz shipping label"
+                            className={`inline-flex items-center space-x-1 border rounded-xl px-2.5 py-1 font-bold transition-all apple-press ${
+                              ord.is_label_printed
+                                ? "border-slate-300 bg-slate-50 hover:bg-slate-100 text-slate-700"
+                                : "border-emerald-500 bg-emerald-600 text-white hover:bg-emerald-700 shadow-2xs"
+                            }`}
+                          >
+                            <Printer className="h-3.5 w-3.5" />
+                            <span>{ord.is_label_printed ? "Print Again" : "Print Label"}</span>
+                          </button>
+                        )}
                       </td>
                     </tr>
                   );
@@ -493,11 +523,24 @@ export default function OperationsPage() {
         </div>
       </div>
 
-      {/* Printable Label & Slip Modal */}
+      {/* Packing Modal */}
+      {packingOrder && (
+        <PackingModal
+          order={packingOrder}
+          onClose={() => setPackingOrder(null)}
+          onOrderPacked={() => fetchOperations()}
+          onOpenShippingLabel={(ord) => {
+            setSelectedPrintOrder(ord);
+          }}
+        />
+      )}
+
+      {/* Official Shipping Label Printable Modal */}
       {selectedPrintOrder && (
         <PrintableLabelModal
           order={selectedPrintOrder}
           onClose={() => setSelectedPrintOrder(null)}
+          onLabelPrinted={() => fetchOperations()}
         />
       )}
     </div>

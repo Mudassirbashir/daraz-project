@@ -3,6 +3,8 @@
 import React, { useState, useEffect } from "react";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { OrderDetailsModal } from "@/components/orders/OrderDetailsModal";
+import { PackingModal } from "@/components/operations/PackingModal";
+import { PrintableLabelModal } from "@/components/operations/PrintableLabelModal";
 import {
   ShoppingCart,
   Search,
@@ -50,6 +52,8 @@ export default function OrdersPage() {
 
   // Modal State
   const [selectedOrder, setSelectedOrder] = useState<any | null>(null);
+  const [packingOrder, setPackingOrder] = useState<any | null>(null);
+  const [printOrder, setPrintOrder] = useState<any | null>(null);
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -352,6 +356,27 @@ export default function OrdersPage() {
         <OrderDetailsModal
           order={selectedOrder}
           onClose={() => setSelectedOrder(null)}
+          onOpenPackingModal={(ord) => setPackingOrder(ord)}
+          onOpenPrintModal={(ord) => setPrintOrder(ord)}
+        />
+      )}
+
+      {/* Packing Modal */}
+      {packingOrder && (
+        <PackingModal
+          order={packingOrder}
+          onClose={() => setPackingOrder(null)}
+          onOrderPacked={() => fetchOrders()}
+          onOpenShippingLabel={(ord) => setPrintOrder(ord)}
+        />
+      )}
+
+      {/* Official Shipping Label Printable Modal */}
+      {printOrder && (
+        <PrintableLabelModal
+          order={printOrder}
+          onClose={() => setPrintOrder(null)}
+          onLabelPrinted={() => fetchOrders()}
         />
       )}
     </div>

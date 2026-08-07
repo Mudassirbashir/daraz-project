@@ -581,4 +581,37 @@ export class DarazApiClient {
 
     return { orders, total };
   }
+
+  /**
+   * Fetch Official Original Shipping Label Document (/order/document/get)
+   */
+  async getShippingDocument(
+    orderItemIds: string[],
+    docType: "shipping_label" | "invoice" | "carrierManifest" = "shipping_label"
+  ): Promise<{ file: string; mimeType: string }> {
+    const formattedItemIds = JSON.stringify(orderItemIds.map((id) => parseInt(id, 10) || id));
+
+    const response = await this.request<{
+      data?: {
+        document?: {
+          file?: string;
+          mime_type?: string;
+          document_type?: string;
+        };
+      };
+    }>("/order/document/get", {
+      doc_type: docType,
+      order_item_ids: formattedItemIds,
+    });
+
+    const doc = response.data?.document;
+    if (!doc || !doc.file) {
+      throw new Error(`Daraz API returned empty shipping document for items [${orderItemIds.join(", ")}].`);
+    }
+
+    return {
+      file: doc.file,
+      mimeType: doc.mime_type || "text/html",
+    };
+  }
 }

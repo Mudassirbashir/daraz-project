@@ -210,6 +210,13 @@ export interface Database {
           total_amount_cents: number;
           status: DarazOrderStatus;
           is_payout_settled: boolean;
+          is_packed: boolean;
+          packed_at: string | null;
+          packed_by: string | null;
+          is_label_printed: boolean;
+          label_printed_at: string | null;
+          label_printed_by: string | null;
+          reprint_count: number;
           order_date: string;
           created_at: string;
           updated_at: string;

@@ -21,9 +21,16 @@ import {
 interface OrderDetailsModalProps {
   order: any | null;
   onClose: () => void;
+  onOpenPackingModal?: (order: any) => void;
+  onOpenPrintModal?: (order: any) => void;
 }
 
-export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
+export function OrderDetailsModal({
+  order,
+  onClose,
+  onOpenPackingModal,
+  onOpenPrintModal,
+}: OrderDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<"details" | "developer">("details");
   const [copiedField, setCopiedField] = useState<string | null>(null);
 
@@ -204,7 +211,33 @@ export function OrderDetailsModal({ order, onClose }: OrderDetailsModalProps) {
         )}
 
         {/* Footer */}
-        <div className="flex justify-end pt-2 border-t border-slate-100">
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+          <div className="flex items-center space-x-2">
+            {!order.is_packed ? (
+              <button
+                onClick={() => {
+                  onClose();
+                  if (onOpenPackingModal) onOpenPackingModal(order);
+                }}
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-orange-700 transition-all apple-press"
+              >
+                <Package className="h-4 w-4" />
+                <span>Pack Order</span>
+              </button>
+            ) : (
+              <button
+                onClick={() => {
+                  onClose();
+                  if (onOpenPrintModal) onOpenPrintModal(order);
+                }}
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all apple-press"
+              >
+                <Truck className="h-4 w-4" />
+                <span>Print Official Shipping Label</span>
+              </button>
+            )}
+          </div>
+
           <button
             onClick={onClose}
             className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition-all"
