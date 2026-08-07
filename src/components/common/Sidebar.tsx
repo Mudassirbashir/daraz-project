@@ -56,6 +56,12 @@ const NAV_ITEMS: NavItem[] = [
     roles: ["super_admin", "product_manager", "ops_manager"],
   },
   {
+    title: "AI Listing Studio",
+    href: "/studio",
+    icon: Lightbulb,
+    roles: ["super_admin", "product_manager", "ops_manager"],
+  },
+  {
     title: "Store Listings",
     href: "/listings",
     icon: Tag,
