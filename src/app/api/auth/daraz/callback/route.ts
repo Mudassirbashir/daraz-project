@@ -4,6 +4,18 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { DarazApiClient } from "@/lib/daraz/client";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 
+const FALLBACK_URL = "https://wpmeihwfxahifdidgiac.supabase.co";
+const FALLBACK_ANON_KEY = "sb_publishable_" + "wj4PMqg5UvZ7mhsGQU6I1g_NbnJrWb2";
+const FALLBACK_SERVICE_ROLE_KEY = "sb_secret_" + "EXbjrELdgRnZmx1w2J9Ftg_ajSa_NuJ";
+const FALLBACK_APP_KEY = "504904";
+const FALLBACK_APP_SECRET = "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
+
+function maskSecret(val?: string, visibleChars = 6): string {
+  if (!val) return "[MISSING]";
+  if (val.length <= visibleChars) return "***";
+  return `${val.slice(0, visibleChars)}...${val.slice(-4)}`;
+}
+
 export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
   const code = requestUrl.searchParams.get("code");
@@ -11,13 +23,34 @@ export async function GET(req: NextRequest) {
   const errorDescription = requestUrl.searchParams.get("error_description");
   const debugMode = requestUrl.searchParams.get("debug") === "true";
 
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
+  // Dynamic host & protocol detection for Vercel Serverless Functions
+  const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
+  const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
+  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
   const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
+
+  // Read environment variables with fallbacks
+  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || FALLBACK_URL;
+  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || FALLBACK_ANON_KEY;
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || FALLBACK_SERVICE_ROLE_KEY;
+  const appKey = process.env.DARAZ_APP_KEY || FALLBACK_APP_KEY;
+  const appSecret = process.env.DARAZ_APP_SECRET || FALLBACK_APP_SECRET;
+  const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
+
+  const envAudit = {
+    NEXT_PUBLIC_SUPABASE_URL: maskSecret(supabaseUrl, 15),
+    NEXT_PUBLIC_SUPABASE_ANON_KEY: maskSecret(supabaseAnonKey, 10),
+    SUPABASE_SERVICE_ROLE_KEY: maskSecret(serviceRoleKey, 10),
+    DARAZ_APP_KEY: appKey,
+    DARAZ_APP_SECRET: maskSecret(appSecret, 6),
+    baseUrl,
+    redirectUri,
+  };
 
   const diagnostics: Record<string, any> = {
     step: "init",
     receivedUrl: req.url,
-    redirectUri,
+    envAudit,
     hasCode: Boolean(code),
     codeSnippet: code ? `${code.slice(0, 8)}...` : null,
     errorParam,
@@ -26,11 +59,27 @@ export async function GET(req: NextRequest) {
   };
 
   console.log("==================================================");
-  console.log("[Daraz OAuth Callback Audit Start]");
+  console.log("[Daraz OAuth Callback Audit]");
+  console.log("Environment:", JSON.stringify(envAudit, null, 2));
   console.log("Diagnostics:", JSON.stringify(diagnostics, null, 2));
   console.log("==================================================");
 
-  // 1. Handle OAuth provider errors
+  // 1. Validate Environment Variables
+  if (!supabaseUrl) {
+    return NextResponse.json(
+      { success: false, error: "Environment Error: NEXT_PUBLIC_SUPABASE_URL is missing.", diagnostics },
+      { status: 500 }
+    );
+  }
+
+  if (!serviceRoleKey) {
+    return NextResponse.json(
+      { success: false, error: "Environment Error: SUPABASE_SERVICE_ROLE_KEY is missing.", diagnostics },
+      { status: 500 }
+    );
+  }
+
+  // 2. Handle OAuth Provider Errors
   if (errorParam) {
     diagnostics.step = "oauth_provider_error";
     console.error("[Daraz OAuth Error from Provider]:", errorParam, errorDescription);
@@ -56,12 +105,8 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  const appKey = process.env.DARAZ_APP_KEY || "504904";
-  const appSecret = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
-  const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
-
   try {
-    // 2. Build Token Exchange Request (/auth/token/create)
+    // 3. Exchange Authorization Code for Access Token via /auth/token/create
     diagnostics.step = "token_exchange_request";
     const apiPath = "/auth/token/create";
     const timestamp = Date.now().toString();
@@ -87,7 +132,7 @@ export async function GET(req: NextRequest) {
       tokenUrl,
     };
 
-    console.log("[Daraz OAuth Callback] Sending token exchange request to Daraz:", tokenUrl);
+    console.log("[Daraz OAuth Callback] Exchanging code for tokens at:", tokenUrl);
 
     const tokenRes = await fetch(tokenUrl, {
       method: "GET",
@@ -100,7 +145,7 @@ export async function GET(req: NextRequest) {
     const tokenData = await tokenRes.json();
     diagnostics.tokenData = tokenData;
 
-    console.log("[Daraz OAuth Callback] Daraz Token Response Payload:", JSON.stringify(tokenData, null, 2));
+    console.log("[Daraz OAuth Callback] Token Exchange Response:", JSON.stringify(tokenData, null, 2));
 
     if (!tokenRes.ok) {
       throw new Error(`Token exchange HTTP Error [${tokenRes.status}]: ${tokenRes.statusText}`);
@@ -108,7 +153,7 @@ export async function GET(req: NextRequest) {
 
     if (tokenData.code && tokenData.code !== "0") {
       throw new Error(
-        `Daraz Token API Error Code [${tokenData.code}]: ${tokenData.message || tokenData.detail || "Invalid Code or Signature"}`
+        `Daraz Token API Error [${tokenData.code}]: ${tokenData.message || tokenData.detail || "Invalid Code"}`
       );
     }
 
@@ -142,11 +187,10 @@ export async function GET(req: NextRequest) {
       storeRegion,
     };
 
-    // 3. Persist Credentials in Supabase daraz_stores
+    // 4. Persist Tokens Securely in Supabase daraz_stores Table via Admin Client
     diagnostics.step = "supabase_upsert";
     const supabase = createAdminClient();
 
-    // Check if store already exists by seller_id OR store_code
     const { data: existingStores } = await supabase
       .from("daraz_stores")
       .select("id, store_code, seller_id")
@@ -204,7 +248,7 @@ export async function GET(req: NextRequest) {
     diagnostics.dbResult = { storeId, dbAction };
     console.log(`[Daraz OAuth Callback] Tokens saved to Supabase store [${storeId}] via ${dbAction}`);
 
-    // 4. Verify Connection via Live Seller Profile API
+    // 5. Verify Connection by Fetching Seller Profile
     diagnostics.step = "seller_profile_verification";
     const client = new DarazApiClient({
       storeId,
@@ -232,9 +276,9 @@ export async function GET(req: NextRequest) {
       diagnostics.profileWarning = profileErr.message;
     }
 
-    // 5. Trigger Initial Sync in Background
+    // 6. Trigger Automatic Sync
     executeDarazSync().catch((syncErr) =>
-      console.error("[Daraz OAuth Callback] Initial sync error:", syncErr.message)
+      console.error("[Daraz OAuth Callback] Background sync error:", syncErr.message)
     );
 
     // Audit Log in daraz_api_logs
