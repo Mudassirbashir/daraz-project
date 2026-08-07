@@ -12,10 +12,13 @@ export interface DarazStoreProfile {
 export interface DarazProductItem {
   item_id: string;
   seller_sku: string;
+  daraz_sku_id?: string;
   title: string;
+  status: string;
   price_cents: number;
   special_price_cents?: number;
   quantity: number;
+  images?: string[];
 }
 
 export interface DarazOrderItem {
@@ -49,8 +52,8 @@ export class DarazApiClient {
   private maxRetries: number;
 
   constructor(options: DarazClientOptions = {}) {
-    this.appKey = process.env.DARAZ_APP_KEY || "";
-    this.appSecret = process.env.DARAZ_APP_SECRET || "";
+    this.appKey = process.env.DARAZ_APP_KEY || "504904";
+    this.appSecret = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
     this.baseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
     this.storeId = options.storeId;
     this.accessToken = options.accessToken;
@@ -125,7 +128,6 @@ export class DarazApiClient {
     const expiresInSeconds = typeof data.expires_in === "number" ? data.expires_in : parseInt(data.expires_in || "2592000", 10);
     this.tokenExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
 
-    // Persist refreshed tokens in database if storeId is known
     if (this.storeId) {
       try {
         const supabase = createAdminClient();
@@ -184,7 +186,6 @@ export class DarazApiClient {
 
         clearTimeout(timeoutId);
 
-        // Handle Rate Limits (HTTP 429) or Server Errors (HTTP 5xx) with backoff
         if (res.status === 429 || res.status >= 500) {
           if (attempt < this.maxRetries) {
             const backoffMs = Math.pow(2, attempt) * 1000;
@@ -204,9 +205,7 @@ export class DarazApiClient {
 
         const data = await res.json();
 
-        // Check Daraz API Business Error Codes
         if (data.code && data.code !== "0") {
-          // Token expired error code handling
           if (data.code === "InAuthorized" || data.code === "IllegalAccessToken" || data.code === "15") {
             if (this.refreshToken && attempt === 1) {
               console.warn("[DarazApiClient] Access token rejected by Daraz API. Attempting refresh token...");
@@ -271,13 +270,17 @@ export class DarazApiClient {
 
     const products: DarazProductItem[] = rawProducts.map((p) => {
       const firstSku = p.skus?.[0] || {};
+      const imagesList = p.images || (firstSku.Images ? [firstSku.Images] : []);
       return {
         item_id: String(p.item_id || firstSku.ShopSku || `ITEM_${Date.now()}`),
         seller_sku: firstSku.SellerSku || `SKU_${p.item_id}`,
+        daraz_sku_id: String(firstSku.SkuId || firstSku.ShopSku || ""),
         title: p.attributes?.name || firstSku.package_content || "Daraz Product",
+        status: (p.status || "active").toLowerCase(),
         price_cents: Math.round((firstSku.price || 0) * 100),
         special_price_cents: firstSku.special_price ? Math.round(firstSku.special_price * 100) : undefined,
         quantity: firstSku.quantity || 0,
+        images: Array.isArray(imagesList) ? imagesList : [imagesList],
       };
     });
 
