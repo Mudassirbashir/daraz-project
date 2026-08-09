@@ -1,3 +1,4 @@
+// @ts-ignore
 import { prepare, layout, measureNaturalWidth } from "@chenglou/pretext";
 
 /**
