@@ -3,6 +3,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { DarazApiClient } from "@/lib/daraz/client";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const { id } = params;
   const { searchParams } = new URL(req.url);

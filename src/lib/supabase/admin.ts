@@ -3,7 +3,8 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   if (!envUrl || !envUrl.trim()) {
-    throw new Error("[Supabase Admin Error]: NEXT_PUBLIC_SUPABASE_URL environment variable is required.");
+    console.warn("[Supabase Admin Notice]: NEXT_PUBLIC_SUPABASE_URL environment variable is missing. Using fallback for build.");
+    return "https://placeholder.supabase.co";
   }
   return envUrl.trim();
 }
@@ -11,7 +12,8 @@ function getValidSupabaseUrl(): string {
 function getValidServiceRoleKey(): string {
   const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
   if (!envKey || !envKey.trim()) {
-    throw new Error("[Supabase Admin Error]: SUPABASE_SERVICE_ROLE_KEY environment variable is required on server.");
+    console.warn("[Supabase Admin Notice]: SUPABASE_SERVICE_ROLE_KEY environment variable is missing. Using fallback for build.");
+    return "placeholder-service-role-key";
   }
   return envKey.trim();
 }

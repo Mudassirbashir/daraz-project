@@ -1,6 +1,8 @@
 import { NextRequest, NextResponse } from "next/server";
 import crypto from "crypto";
 
+export const dynamic = "force-dynamic";
+
 export async function GET(req: NextRequest) {
   const appKey = process.env.DARAZ_APP_KEY;
   if (!appKey || !appKey.trim()) {

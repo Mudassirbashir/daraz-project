@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 import { createClient } from "@/lib/supabase/server";
 
+export const dynamic = "force-dynamic";
+
 export async function POST(req: NextRequest) {
   try {
     // Verify auth: User session OR Vercel Cron header / CRON_SECRET authorization

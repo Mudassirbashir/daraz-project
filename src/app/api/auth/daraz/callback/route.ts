@@ -4,6 +4,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { DarazApiClient } from "@/lib/daraz/client";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 
+export const dynamic = "force-dynamic";
+
 function maskSecret(val?: string, visibleChars = 6): string {
   if (!val) return "[MISSING]";
   if (val.length <= visibleChars) return "***";
