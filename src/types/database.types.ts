@@ -220,6 +220,33 @@ export interface Database {
           order_date: string;
           created_at: string;
           updated_at: string;
+          raw_payload?: Json;
+          customer_phone?: string | null;
+          customer_email?: string | null;
+          customer_address?: string | null;
+          customer_province?: string | null;
+          customer_district?: string | null;
+          customer_area?: string | null;
+          customer_landmark?: string | null;
+          customer_postcode?: string | null;
+          customer_id?: string | null;
+          customer_notes?: string | null;
+          order_number?: string | null;
+          package_id?: string | null;
+          shipping_provider?: string | null;
+          shipping_method?: string | null;
+          payment_method?: string | null;
+          currency?: string | null;
+          shipping_fee_cents?: number;
+          voucher_discount_cents?: number;
+          seller_discount_cents?: number;
+          tax_cents?: number;
+          daraz_created_at?: string | null;
+          daraz_updated_at?: string | null;
+          workflow_status?: string;
+          sync_status?: string;
+          sync_error?: string | null;
+          last_synced_at?: string | null;
         };
         Insert: Omit<Database['public']['Tables']['orders']['Row'], 'id' | 'created_at' | 'updated_at'> & {
           id?: string;
@@ -227,6 +254,97 @@ export interface Database {
           updated_at?: string;
         };
         Update: Partial<Database['public']['Tables']['orders']['Insert']>;
+      };
+      order_items: {
+        Row: {
+          id: string;
+          order_id: string;
+          daraz_order_id: string;
+          order_item_id: string;
+          name: string;
+          seller_sku: string;
+          shop_sku: string | null;
+          item_id: string | null;
+          product_id: string | null;
+          variation: string | null;
+          quantity: number;
+          picked_quantity: number;
+          is_picked: boolean;
+          item_price_cents: number;
+          paid_price_cents: number;
+          discount_cents: number;
+          product_main_image: string | null;
+          status: string | null;
+          shipment_provider: string | null;
+          tracking_code: string | null;
+          reason: string | null;
+          raw_item_payload: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['order_items']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['order_items']['Insert']>;
+      };
+      order_activities: {
+        Row: {
+          id: string;
+          order_id: string;
+          daraz_order_id: string;
+          previous_status: string | null;
+          new_status: string;
+          actor: string;
+          source: string;
+          notes: string | null;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['order_activities']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['order_activities']['Insert']>;
+      };
+      audit_logs: {
+        Row: {
+          id: string;
+          user_id: string | null;
+          actor_name: string;
+          entity_type: string;
+          entity_id: string;
+          action: string;
+          changes: Json;
+          source: string;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['audit_logs']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['audit_logs']['Insert']>;
+      };
+      sync_retry_queue: {
+        Row: {
+          id: string;
+          store_id: string | null;
+          operation_type: string;
+          entity_type: string;
+          entity_id: string;
+          attempt_count: number;
+          last_attempt_at: string;
+          next_retry_at: string | null;
+          error_message: string;
+          status: string;
+          payload: Json;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['sync_retry_queue']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['sync_retry_queue']['Insert']>;
       };
       tasks: {
         Row: {

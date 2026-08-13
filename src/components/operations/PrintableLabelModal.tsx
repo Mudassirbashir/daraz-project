@@ -227,17 +227,30 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
 
         {/* API Error View */}
         {errorMessage && !storeNotConnected && (
-          <div className="p-6 rounded-2xl bg-red-50 text-red-900 border border-red-200 dark:bg-red-900/30 dark:text-red-300 space-y-3 text-center print:hidden">
-            <AlertCircle className="mx-auto h-10 w-10 text-red-600" />
-            <h3 className="font-bold text-base">Shipping Label Unavailable</h3>
-            <p className="max-w-md mx-auto">{errorMessage}</p>
-            <button
-              onClick={fetchOfficialLabel}
-              className="inline-flex items-center space-x-2 rounded-xl bg-slate-900 text-white px-4 py-2 font-bold hover:bg-slate-800"
-            >
-              <RefreshCw className="h-4 w-4" />
-              <span>Try Again</span>
-            </button>
+          <div className="p-6 rounded-2xl bg-amber-50 text-amber-900 border border-amber-300 dark:bg-amber-500/10 dark:text-amber-300 space-y-3 text-center print:hidden">
+            <AlertCircle className="mx-auto h-10 w-10 text-amber-600" />
+            <h3 className="font-bold text-base">Official Daraz shipping label is not available through the connected API.</h3>
+            <p className="max-w-md mx-auto font-mono text-[11px] text-amber-800 dark:text-amber-400">
+              Reason: {errorMessage}
+            </p>
+            <div className="flex items-center justify-center space-x-3 pt-2">
+              <button
+                onClick={fetchOfficialLabel}
+                className="inline-flex items-center space-x-2 rounded-xl bg-slate-900 text-white px-4 py-2 font-bold hover:bg-slate-800"
+              >
+                <RefreshCw className="h-4 w-4" />
+                <span>Retry Daraz API</span>
+              </button>
+              <a
+                href="https://sellercenter.daraz.pk/"
+                target="_blank"
+                rel="noreferrer"
+                className="inline-flex items-center space-x-2 rounded-xl bg-orange-600 text-white px-4 py-2 font-bold hover:bg-orange-700 shadow-sm"
+              >
+                <Store className="h-4 w-4" />
+                <span>Open Daraz Seller Center</span>
+              </a>
+            </div>
           </div>
         )}
 

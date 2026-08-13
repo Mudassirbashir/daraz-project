@@ -194,7 +194,7 @@ export async function executeDarazSync(): Promise<SyncResult> {
           productOffset += limit;
         } while (productOffset < totalProducts && productOffset < 500);
 
-        // C. Sync Orders (with Pagination)
+        // C. Sync Orders (with Pagination & Exact Payload Preservation)
         let orderOffset = 0;
         let totalOrders = 0;
 
@@ -210,24 +210,127 @@ export async function executeDarazSync(): Promise<SyncResult> {
                 mappedStatus = ord.statuses as DarazOrderStatus;
               }
 
-              await supabase.from("orders").upsert(
+              // Extract exact raw fields from Daraz raw payload
+              const rawObj = ord.raw || {};
+              const shipping = rawObj.address_shipping || {};
+              const billing = rawObj.address_billing || {};
+
+              const exactCustomerName =
+                `${rawObj.customer_first_name || ""} ${rawObj.customer_last_name || ""}`.trim() ||
+                `${shipping.first_name || ""} ${shipping.last_name || ""}`.trim() ||
+                "Customer";
+
+              const exactPhone = shipping.phone || billing.phone || rawObj.customer_phone || null;
+              const exactEmail = rawObj.customer_email || shipping.email || null;
+              const exactAddress =
+                [shipping.address1, shipping.address2, shipping.address3, shipping.address4, shipping.address5]
+                  .filter(Boolean)
+                  .join(", ") || null;
+              const exactProvince = shipping.address3 || shipping.state || shipping.province || null;
+              const exactDistrict = shipping.address4 || shipping.district || null;
+              const exactArea = shipping.address5 || shipping.area || null;
+              const exactLandmark = shipping.landmark || null;
+              const exactPostcode = shipping.postcode || billing.postcode || null;
+
+              // Upsert order record
+              const { data: upsertedOrder, error: orderUpsertErr } = await supabase.from("orders").upsert(
                 {
                   store_id: store.id,
                   daraz_order_id: ord.order_id,
-                  tracking_number: ord.tracking_code,
-                  customer_name: ord.customer_first_name,
+                  order_number: ord.order_number || ord.order_id,
+                  package_id: ord.package_id || null,
+                  tracking_number: ord.tracking_code || null,
+                  customer_name: exactCustomerName,
+                  customer_phone: exactPhone,
+                  customer_email: exactEmail,
+                  customer_address: exactAddress,
+                  customer_province: exactProvince,
+                  customer_district: exactDistrict,
+                  customer_area: exactArea,
+                  customer_landmark: exactLandmark,
+                  customer_postcode: exactPostcode,
                   customer_city: ord.customer_city,
+                  customer_id: rawObj.customer_id ? String(rawObj.customer_id) : null,
+                  customer_notes: rawObj.remarks || rawObj.national_registration_number || null,
                   total_amount_cents: ord.price_cents,
+                  shipping_fee_cents: ord.shipping_fee_cents || 0,
+                  voucher_discount_cents: ord.voucher_discount_cents || 0,
+                  seller_discount_cents: ord.seller_discount_cents || 0,
+                  shipping_provider: ord.shipping_provider || null,
+                  shipping_method: ord.shipping_type || null,
+                  payment_method: ord.payment_method || null,
+                  currency: rawObj.currency || "PKR",
                   status: mappedStatus,
-                  order_date: ord.created_at,
+                  workflow_status: mappedStatus,
+                  sync_status: "synced",
+                  sync_error: null,
+                  last_synced_at: timestamp,
+                  daraz_created_at: ord.created_at || null,
+                  daraz_updated_at: ord.updated_at || null,
+                  order_date: ord.created_at || timestamp,
+                  raw_payload: rawObj,
                 },
                 { onConflict: "daraz_order_id" }
-              );
+              ).select("id").single();
+
+              if (orderUpsertErr) {
+                throw new Error(`Order upsert DB error: ${orderUpsertErr.message}`);
+              }
+
+              // Fetch and upsert order items
+              if (upsertedOrder?.id) {
+                const fetchedItems = await darazClient.getOrderItems(ord.order_id);
+                for (const item of fetchedItems) {
+                  await supabase.from("order_items").upsert(
+                    {
+                      order_id: upsertedOrder.id,
+                      daraz_order_id: ord.order_id,
+                      order_item_id: item.order_item_id,
+                      name: item.name,
+                      seller_sku: item.seller_sku,
+                      shop_sku: item.shop_sku || null,
+                      item_price_cents: item.item_price_cents,
+                      paid_price_cents: item.paid_price_cents,
+                      status: item.status,
+                      shipment_provider: item.shipment_provider || null,
+                      tracking_code: item.tracking_code || null,
+                      reason: item.reason || null,
+                      product_main_image: item.product_main_image || null,
+                      quantity: 1,
+                      raw_item_payload: item as any,
+                    },
+                    { onConflict: "order_id,order_item_id" }
+                  );
+                }
+
+                // Insert activity log
+                await supabase.from("order_activities").insert({
+                  order_id: upsertedOrder.id,
+                  daraz_order_id: ord.order_id,
+                  previous_status: null,
+                  new_status: mappedStatus,
+                  actor: "Daraz Engine",
+                  source: "Daraz API",
+                  notes: `Synced order #${ord.order_id} with status ${mappedStatus}`,
+                });
+              }
 
               ordersSynced++;
             } catch (ordErr: any) {
               failedCount++;
               console.error(`[SyncEngine] Order error for Order ID ${ord.order_id}:`, ordErr.message);
+
+              // Record error in sync_retry_queue for central Error Center
+              await supabase.from("sync_retry_queue").insert({
+                store_id: store.id,
+                operation_type: "order_sync",
+                entity_type: "order",
+                entity_id: ord.order_id,
+                attempt_count: 1,
+                error_message: ordErr.message || "Failed to process Daraz order during sync.",
+                status: "failed",
+                payload: ord.raw || {},
+              });
             }
           }
 

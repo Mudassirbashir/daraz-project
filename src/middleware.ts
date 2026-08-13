@@ -4,6 +4,7 @@ import { PROTECTED_ROUTES } from "@/lib/rbac/permissions";
 import { AppRole } from "@/types/database.types";
 
 const PUBLIC_API_ROUTES = [
+  "/api/auth/login",
   "/api/auth/daraz/login",
   "/api/auth/daraz/callback",
   "/api/auth/logout",
@@ -29,7 +30,19 @@ export async function middleware(request: NextRequest) {
 
   try {
     // 3. Refresh Supabase Auth session & extract current user
-    const { supabaseResponse, user, supabase } = await updateSession(request);
+    let { supabaseResponse, user, supabase } = await updateSession(request);
+
+    // Fallback: check daraz_ops_user cookie
+    if (!user) {
+      const fallbackCookie = request.cookies.get("daraz_ops_user");
+      if (fallbackCookie?.value) {
+        try {
+          user = JSON.parse(fallbackCookie.value);
+        } catch (e) {
+          // invalid JSON cookie
+        }
+      }
+    }
 
     // Block unauthenticated access to API routes
     if (!user && pathname.startsWith("/api")) {

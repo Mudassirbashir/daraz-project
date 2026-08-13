@@ -4,6 +4,9 @@ import React, { useState, useEffect } from "react";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { PrintableLabelModal } from "@/components/operations/PrintableLabelModal";
 import { PackingModal } from "@/components/operations/PackingModal";
+import { PickingModal } from "@/components/operations/PickingModal";
+import { ErrorCenterView } from "@/components/operations/ErrorCenterView";
+import { AuditLogsView } from "@/components/operations/AuditLogsView";
 import {
   CheckSquare,
   Search,
@@ -58,8 +61,10 @@ export default function OperationsPage() {
   // Print Label Modal State
   const [selectedPrintOrder, setSelectedPrintOrder] = useState<any | null>(null);
 
-  // Active Packing Modal Order
+  // Active Picking & Packing Modal Orders
   const [packingOrder, setPackingOrder] = useState<any | null>(null);
+  const [pickingOrder, setPickingOrder] = useState<any | null>(null);
+  const [mainMode, setMainMode] = useState<"operations" | "errors" | "audit">("operations");
 
   const fetchOperations = async () => {
     setLoading(true);
@@ -522,6 +527,15 @@ export default function OperationsPage() {
           </div>
         </div>
       </div>
+
+      {/* Picking Modal */}
+      {pickingOrder && (
+        <PickingModal
+          order={pickingOrder}
+          onClose={() => setPickingOrder(null)}
+          onPickingCompleted={() => fetchOperations()}
+        />
+      )}
 
       {/* Packing Modal */}
       {packingOrder && (

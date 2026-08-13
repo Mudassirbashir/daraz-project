@@ -50,6 +50,32 @@ export default function FinancePage() {
   // Stores List
   const [stores, setStores] = useState<any[]>([]);
 
+  // Active Finance View Tab
+  const [activeTab, setActiveTab] = useState<"pnl" | "reconciliation">("pnl");
+  const [reconcileData, setReconcileData] = useState<any | null>(null);
+  const [reconcileLoading, setReconcileLoading] = useState(false);
+
+  const fetchReconciliation = async () => {
+    setReconcileLoading(true);
+    try {
+      const res = await fetch("/api/finance/reconcile");
+      const data = await res.json();
+      if (data.success) {
+        setReconcileData(data);
+      }
+    } catch (err: any) {
+      console.error("[FetchReconciliation Error]:", err.message);
+    } finally {
+      setReconcileLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    if (activeTab === "reconciliation") {
+      fetchReconciliation();
+    }
+  }, [activeTab]);
+
   // Column Visibility State
   const [columnVisibility, setColumnVisibility] = useState({
     product: true,
@@ -153,17 +179,40 @@ export default function FinancePage() {
       {/* Header Bar */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Money</h1>
-          <p className="text-xs text-slate-500">
-            See your sales, store fees, product costs, and profit.
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Money & Finance Control</h1>
+          <p className="text-xs text-slate-500 dark:text-slate-400">
+            Source-verified net profit calculation & Daraz financial reconciliation.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
+          <div className="flex items-center bg-slate-100 dark:bg-slate-800 p-1 rounded-xl">
+            <button
+              onClick={() => setActiveTab("pnl")}
+              className={`px-3.5 py-1.5 font-bold text-xs rounded-lg transition-all ${
+                activeTab === "pnl"
+                  ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+              }`}
+            >
+              Profit & Loss
+            </button>
+            <button
+              onClick={() => setActiveTab("reconciliation")}
+              className={`px-3.5 py-1.5 font-bold text-xs rounded-lg transition-all ${
+                activeTab === "reconciliation"
+                  ? "bg-white dark:bg-slate-900 text-slate-900 dark:text-white shadow-sm"
+                  : "text-slate-600 dark:text-slate-400 hover:text-slate-900"
+              }`}
+            >
+              Finance Reconciliation
+            </button>
+          </div>
+
           <button
             onClick={exportToCSV}
             title="Download financial summary as a CSV file"
-            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 bg-white px-3.5 py-2 text-xs font-bold text-slate-700 shadow-sm hover:bg-slate-50 transition-all"
+            className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3.5 py-2 text-xs font-bold text-slate-700 dark:text-slate-300 shadow-sm hover:bg-slate-50 transition-all"
           >
             <Download className="h-4 w-4 text-slate-500" />
             <span>Download Summary</span>
@@ -172,6 +221,103 @@ export default function FinancePage() {
           <SyncNowButton />
         </div>
       </div>
+
+      {/* RECONCILIATION VIEW CARD (PART 12) */}
+      {activeTab === "reconciliation" && (
+        <div className="rounded-3xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-xl space-y-6 text-xs">
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+            <div>
+              <h2 className="text-lg font-bold text-slate-900 dark:text-white">Daraz vs App Finance Reconciliation</h2>
+              <p className="text-slate-500">Compares total Daraz reported payouts against local app order totals.</p>
+            </div>
+            <button
+              onClick={fetchReconciliation}
+              disabled={reconcileLoading}
+              className="px-4 py-2 rounded-xl bg-orange-600 hover:bg-orange-700 text-white font-bold inline-flex items-center space-x-2"
+            >
+              <RefreshCw className={`h-4 w-4 ${reconcileLoading ? "animate-spin" : ""}`} />
+              <span>Find Difference</span>
+            </button>
+          </div>
+
+          {reconcileLoading ? (
+            <div className="p-12 text-center text-slate-500">
+              <RefreshCw className="h-6 w-6 animate-spin mx-auto text-orange-500 mb-2" />
+              <span>Calculating financial reconciliation across orders...</span>
+            </div>
+          ) : reconcileData ? (
+            <div className="space-y-6">
+              <div className="grid grid-cols-1 sm:grid-cols-4 gap-4">
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 font-semibold text-[11px]">Daraz Total (Reported)</span>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{reconcileData.darazTotalFormatted}</p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 font-semibold text-[11px]">App Local Total</span>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{reconcileData.localTotalFormatted}</p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-800/50 border border-slate-200 dark:border-slate-700">
+                  <span className="text-slate-500 font-semibold text-[11px]">Difference</span>
+                  <p className="text-2xl font-bold text-slate-900 dark:text-white mt-1">{reconcileData.differenceFormatted}</p>
+                </div>
+
+                <div className="p-4 rounded-2xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/30 flex items-center justify-between">
+                  <div>
+                    <span className="text-amber-800 dark:text-amber-400 font-semibold text-[11px]">Status</span>
+                    <p className="text-base font-bold text-amber-700 dark:text-amber-300 mt-1">
+                      {reconcileData.status === "needs_review" ? "⚠️ Needs Review" : "✓ Reconciled"}
+                    </p>
+                  </div>
+                </div>
+              </div>
+
+              {/* Mismatched Orders Table */}
+              <div className="space-y-3">
+                <h3 className="font-bold text-slate-900 dark:text-white">
+                  Orders Causing Variance ({reconcileData.mismatchedOrders?.length || 0})
+                </h3>
+
+                {reconcileData.mismatchedOrders?.length === 0 ? (
+                  <div className="p-8 rounded-2xl border border-slate-200 dark:border-slate-800 text-center text-slate-500">
+                    ✓ Zero variance detected. All Daraz payouts match local order totals.
+                  </div>
+                ) : (
+                  <div className="overflow-x-auto rounded-2xl border border-slate-200 dark:border-slate-800">
+                    <table className="w-full text-left border-collapse">
+                      <thead>
+                        <tr className="bg-slate-50 dark:bg-slate-800/60 text-slate-500 uppercase text-[10px] tracking-wider border-b border-slate-100 dark:border-slate-800">
+                          <th className="p-3">Order ID</th>
+                          <th className="p-3">Store</th>
+                          <th className="p-3">Customer</th>
+                          <th className="p-3">Local App Amount</th>
+                          <th className="p-3">Daraz Reported Payout</th>
+                          <th className="p-3">Difference</th>
+                          <th className="p-3">Variance Reason</th>
+                        </tr>
+                      </thead>
+                      <tbody className="divide-y divide-slate-100 dark:divide-slate-800">
+                        {reconcileData.mismatchedOrders.map((ord: any) => (
+                          <tr key={ord.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
+                            <td className="p-3 font-mono font-bold text-slate-900 dark:text-white">#{ord.daraz_order_id}</td>
+                            <td className="p-3">{ord.store_name}</td>
+                            <td className="p-3">{ord.customer_name}</td>
+                            <td className="p-3 font-bold">PKR {(ord.localTotalCents / 100).toFixed(2)}</td>
+                            <td className="p-3 font-bold text-blue-600">PKR {(ord.darazReportedCents / 100).toFixed(2)}</td>
+                            <td className="p-3 font-bold text-red-600">PKR {(ord.differenceCents / 100).toFixed(2)}</td>
+                            <td className="p-3 text-slate-500">{ord.reason}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                )}
+              </div>
+            </div>
+          ) : null}
+        </div>
+      )}
 
       {/* Overview Cards */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4 text-xs">

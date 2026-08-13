@@ -15,6 +15,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
+    const body = await req.json();
+    const { status, notes } = body as { status: string; notes?: string };
+
+    if (!status) {
+      return NextResponse.json({ success: false, error: "Missing required 'status' parameter." }, { status: 400 });
+    }
+
     const supabase = createAdminClient();
 
     // Fetch user profile name
@@ -24,12 +31,12 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .eq("id", user.id)
       .maybeSingle();
 
-    const operatorName = profile?.full_name || profile?.employee_id || user.email || "Warehouse Staff";
+    const operatorName = profile?.full_name || profile?.employee_id || user.email || "Ops Manager";
 
-    // Fetch target order
+    // Fetch order
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
-      .select("*, daraz_stores(*)")
+      .select("*")
       .eq("id", id)
       .single();
 
@@ -38,62 +45,58 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     const timestamp = new Date().toISOString();
+    const previousStatus = order.workflow_status || order.status;
 
-    // Update order status to packed / ready_to_ship
+    // Update order workflow status
     const { data: updatedOrder, error: updateErr } = await supabase
       .from("orders")
       .update({
-        is_packed: true,
-        packed_at: timestamp,
-        packed_by: operatorName,
-        status: "ready_to_ship",
-        workflow_status: "packed",
+        workflow_status: status,
         updated_at: timestamp,
       })
       .eq("id", id)
-      .select("*, daraz_stores(id, store_name, store_code, region)")
+      .select("*, daraz_stores(id, store_name, store_code)")
       .single();
 
     if (updateErr) {
-      throw new Error(`Failed to update order packing state: ${updateErr.message}`);
+      throw new Error(`Failed to update order status: ${updateErr.message}`);
     }
 
-    // Insert order activity log
+    // Record activity log
     await supabase.from("order_activities").insert({
       order_id: order.id,
       daraz_order_id: order.daraz_order_id,
-      previous_status: order.workflow_status || order.status,
-      new_status: "packed",
+      previous_status: previousStatus,
+      new_status: status,
       actor: operatorName,
       source: "Staff UI",
-      notes: "Order packing checklist verified and marked packed.",
+      notes: notes || `Order status transitioned from ${previousStatus} to ${status}`,
     });
 
-    // Insert system audit log
+    // Record audit log
     await supabase.from("audit_logs").insert({
       user_id: user.id,
       actor_name: operatorName,
       entity_type: "order",
       entity_id: order.id,
-      action: "order_packed",
+      action: "status_transition",
       changes: {
-        previous_status: order.workflow_status || order.status,
-        new_status: "packed",
-        packed_by: operatorName,
-        packed_at: timestamp,
+        previous_status: previousStatus,
+        new_status: status,
+        notes: notes || null,
       },
       source: "local",
     });
 
     return NextResponse.json({
       success: true,
-      message: "✓ Order Packed. Ready for Shipping Label.",
+      message: `✓ Status updated to ${status.replace(/_/g, " ").toUpperCase()}`,
       order: updatedOrder,
     });
   } catch (err: any) {
-    console.error("[POST /api/orders/[id]/pack Exception]:", err.message);
+    console.error("[POST /api/orders/[id]/status Exception]:", err.message);
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to mark order as packed." },
+      { success: false, error: err.message || "Failed to update status." },
       { status: 500 }
     );
   }

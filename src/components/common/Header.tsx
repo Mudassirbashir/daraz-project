@@ -46,6 +46,22 @@ export function Header({
         <StoreSwitcher stores={stores} />
       </div>
 
+      {/* Global Search Bar (PART 19) */}
+      <form
+        action="/orders"
+        method="GET"
+        className="hidden md:flex flex-1 max-w-md mx-4"
+      >
+        <div className="relative w-full">
+          <input
+            type="text"
+            name="search"
+            placeholder="Global Search: Order ID, SKU, Name, Phone, Tracking, Store..."
+            className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 px-4 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 shadow-xs"
+          />
+        </div>
+      </form>
+
       {/* Sync Status, User Role Badge & Logout Button */}
       <div className="flex items-center space-x-2 sm:space-x-3">
         {activeCount > 0 ? (

@@ -26,19 +26,32 @@ function LoginForm() {
     setErrorMessage(null);
 
     try {
+      // 1. Call server authentication API endpoint
+      const res = await fetch("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: targetEmail, password: targetPass }),
+      });
+
+      const data = await res.json();
+
+      if (data.success) {
+        setSuccessMessage("Login successful! Redirecting to hub...");
+        window.location.href = "/dashboard";
+        return;
+      }
+
+      // 2. Fallback to browser client Supabase authentication
       const supabase = createClient();
-      const { data, error } = await supabase.auth.signInWithPassword({
+      const { error: sbErr } = await supabase.auth.signInWithPassword({
         email: targetEmail,
         password: targetPass,
       });
 
-      if (error) {
-        console.error("Login Auth Error:", error.message);
-        setErrorMessage(error.message);
-      } else if (data.session) {
-        setSuccessMessage("Login successful! Redirecting to hub...");
-        window.location.href = "/dashboard";
+      if (sbErr) {
+        setErrorMessage(data.error || sbErr.message || "Invalid credentials.");
       } else {
+        setSuccessMessage("Login successful! Redirecting to hub...");
         window.location.href = "/dashboard";
       }
     } catch (err: any) {

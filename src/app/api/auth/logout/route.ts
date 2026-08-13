@@ -12,12 +12,13 @@ export async function GET(req: NextRequest) {
 
   const response = NextResponse.redirect(`${baseUrl}/login?logged_out=true`);
   
-  // Clear any residual supabase auth cookies explicitly
+  // Clear any residual auth cookies explicitly
   req.cookies.getAll().forEach((cookie) => {
-    if (cookie.name.includes("sb-") || cookie.name.includes("supabase")) {
+    if (cookie.name.includes("sb-") || cookie.name.includes("supabase") || cookie.name === "daraz_ops_user") {
       response.cookies.delete(cookie.name);
     }
   });
+  response.cookies.delete("daraz_ops_user");
 
   return response;
 }
