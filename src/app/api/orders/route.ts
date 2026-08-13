@@ -79,41 +79,45 @@ export async function GET(req: NextRequest) {
       throw new Error(`Database orders query error: ${error.message}`);
     }
 
-    // Calculate Dashboard Summary Metrics Across All Orders
-    const { data: allOrdersForMetrics } = await supabase
-      .from("orders")
-      .select("id, status, total_amount_cents, order_date");
-
-    const metrics = {
-      totalOrders: allOrdersForMetrics?.length || 0,
-      pending: 0,
-      readyToShip: 0,
-      shipped: 0,
-      delivered: 0,
-      canceled: 0,
-      returned: 0,
-      failed: 0,
-      todaysOrders: 0,
-      todaysRevenueCents: 0,
-    };
-
     const todayStr = new Date().toISOString().split("T")[0];
 
-    (allOrdersForMetrics || []).forEach((ord: any) => {
-      const st = (ord.status || "").toLowerCase();
-      if (["pending", "unpaid"].includes(st)) metrics.pending++;
-      if (st === "ready_to_ship") metrics.readyToShip++;
-      if (st === "shipped") metrics.shipped++;
-      if (st === "delivered") metrics.delivered++;
-      if (st === "canceled") metrics.canceled++;
-      if (st === "returned") metrics.returned++;
-      if (st === "failed") metrics.failed++;
+    // Calculate Dashboard Summary Metrics in Parallel (head: true downloads 0 row bodies for counts!)
+    const [
+      { count: totalOrdersCount },
+      { count: pendingCount },
+      { count: readyToShipCount },
+      { count: shippedCount },
+      { count: deliveredCount },
+      { count: canceledCount },
+      { count: returnedCount },
+      { count: failedCount },
+      { data: todayOrders },
+    ] = await Promise.all([
+      supabase.from("orders").select("*", { count: "exact", head: true }),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("status", ["pending", "unpaid"]),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "ready_to_ship"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "shipped"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "delivered"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "canceled"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "returned"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "failed"),
+      supabase.from("orders").select("total_amount_cents").gte("order_date", todayStr),
+    ]);
 
-      if (ord.order_date && ord.order_date.startsWith(todayStr)) {
-        metrics.todaysOrders++;
-        metrics.todaysRevenueCents += ord.total_amount_cents || 0;
-      }
-    });
+    const todaysRevenueCents = (todayOrders || []).reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);
+
+    const metrics = {
+      totalOrders: totalOrdersCount || 0,
+      pending: pendingCount || 0,
+      readyToShip: readyToShipCount || 0,
+      shipped: shippedCount || 0,
+      delivered: deliveredCount || 0,
+      canceled: canceledCount || 0,
+      returned: returnedCount || 0,
+      failed: failedCount || 0,
+      todaysOrders: (todayOrders || []).length,
+      todaysRevenueCents,
+    };
 
     return NextResponse.json({
       success: true,

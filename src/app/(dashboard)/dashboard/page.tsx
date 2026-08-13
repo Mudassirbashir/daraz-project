@@ -53,92 +53,92 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     // fallback to Mubashir
   }
 
-  // 1. Fetch All Configured Stores
-  const { data: stores } = await supabase
-    .from("daraz_stores")
-    .select("*")
-    .order("store_code", { ascending: true });
+  // 1. Fetch Stores & Active User Profile in parallel
+  const [storesResult, userProfileResult] = await Promise.all([
+    supabase.from("daraz_stores").select("id, store_code, store_name, region, is_active, seller_id, access_token, updated_at").order("store_code", { ascending: true }),
+    (async () => {
+      try {
+        const serverSupabase = createClient();
+        const { data: { user } } = await serverSupabase.auth.getUser();
+        if (user?.id) {
+          const { data: profile } = await supabase.from("profiles").select("full_name").eq("id", user.id).maybeSingle();
+          if (profile?.full_name) return profile.full_name.split(" ")[0];
+        }
+      } catch (e) {}
+      return "Mubashir";
+    })(),
+  ]);
 
-  const storesList = stores || [];
+  userName = userProfileResult;
+  const storesList = storesResult.data || [];
 
-  // Calculate per-store metrics & store status
-  const enrichedStores = await Promise.all(
-    storesList.map(async (st) => {
-      const isConnected = Boolean(st.access_token);
+  // 2. Fetch Selective Column Metrics in Parallel
+  let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
+  if (!isCombinedView && selectedStoreId) {
+    listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
+  }
 
-      if (!isConnected) {
-        return {
-          ...st,
-          isConnected: false,
-          productsCount: null,
-          stockCount: null,
-          ordersCount: null,
-          inProgressOrdersCount: null,
-          lastSyncedAt: null,
-        };
-      }
+  let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
+  if (!isCombinedView && selectedStoreId) {
+    ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
+  }
 
-      const { data: listings } = await supabase
-        .from("listings")
-        .select("stock_quantity")
-        .eq("store_id", st.id);
+  const [listingsResult, ordersResult, syncFailedResult] = await Promise.all([
+    listingsQuery,
+    ordersQuery,
+    supabase.from("daraz_api_logs").select("id", { count: "exact", head: true }).eq("status", "failed"),
+  ]);
 
-      const productsCount = (listings || []).length;
-      const stockCount = (listings || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
+  const listingsData = listingsResult.data || [];
+  const ordersList = ordersResult.data || [];
+  const syncFailedCount = syncFailedResult.count || 0;
 
-      const { data: orders } = await supabase
-        .from("orders")
-        .select("status")
-        .eq("store_id", st.id);
+  // Build per-store metrics map in memory (O(N) single pass instead of N async DB roundtrips)
+  const storeListingsMap: Record<string, { count: number; stock: number }> = {};
+  listingsData.forEach((l: any) => {
+    if (!storeListingsMap[l.store_id]) storeListingsMap[l.store_id] = { count: 0, stock: 0 };
+    storeListingsMap[l.store_id].count += 1;
+    storeListingsMap[l.store_id].stock += l.stock_quantity || 0;
+  });
 
-      const ordersCount = (orders || []).length;
-      const inProgressOrdersCount = (orders || []).filter((o) =>
-        ["pending", "unpaid", "ready_to_ship", "shipped"].includes(o.status)
-      ).length;
+  const storeOrdersMap: Record<string, { total: number; inProgress: number }> = {};
+  ordersList.forEach((o: any) => {
+    if (!storeOrdersMap[o.store_id]) storeOrdersMap[o.store_id] = { total: 0, inProgress: 0 };
+    storeOrdersMap[o.store_id].total += 1;
+    if (["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(o.workflow_status || o.status)) {
+      storeOrdersMap[o.store_id].inProgress += 1;
+    }
+  });
 
-      return {
-        ...st,
-        isConnected: true,
-        productsCount,
-        stockCount,
-        ordersCount,
-        inProgressOrdersCount,
-      };
-    })
-  );
+  const enrichedStores = storesList.map((st) => {
+    const isConnected = Boolean(st.access_token);
+    const storeListingStats = storeListingsMap[st.id] || { count: 0, stock: 0 };
+    const storeOrderStats = storeOrdersMap[st.id] || { total: 0, inProgress: 0 };
+
+    return {
+      ...st,
+      isConnected,
+      productsCount: isConnected ? storeListingStats.count : null,
+      stockCount: isConnected ? storeListingStats.stock : null,
+      ordersCount: isConnected ? storeOrderStats.total : null,
+      inProgressOrdersCount: isConnected ? storeOrderStats.inProgress : null,
+    };
+  });
 
   const totalStoresCount = enrichedStores.length;
   const connectedStoresCount = enrichedStores.filter((s) => s.isConnected).length;
   const disconnectedStoresCount = enrichedStores.filter((s) => !s.isConnected).length;
 
-  // 2. Query Aggregate Products
-  let listingsQuery = supabase.from("listings").select("stock_quantity");
-  if (!isCombinedView && selectedStoreId) {
-    listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
-  }
-  const { data: listingsData } = await listingsQuery;
-
-  const totalProductsCount = (listingsData || []).length;
-  const totalStockUnits = (listingsData || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
-  const lowStockCount = (listingsData || []).filter((item) => (item.stock_quantity || 0) <= 10).length;
-
-  // 3. Query All Orders & Detailed Operational Data
-  let ordersQuery = supabase.from("orders").select("*");
-  if (!isCombinedView && selectedStoreId) {
-    ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
-  }
-  const { data: ordersData } = await ordersQuery;
-  const ordersList = ordersData || [];
+  const totalProductsCount = listingsData.length;
+  const totalStockUnits = listingsData.reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
+  const lowStockCount = listingsData.filter((item) => (item.stock_quantity || 0) <= 10).length;
 
   const totalOrdersCount = ordersList.length;
   const inProgressOrdersCount = ordersList.filter((o: any) =>
     ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(o.workflow_status || o.status)
   ).length;
 
-  const totalRevenueCents = ordersList.reduce(
-    (sum: number, o: any) => sum + (o.total_amount_cents || 0),
-    0
-  );
+  const totalRevenueCents = ordersList.reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);
   const totalRevenueFormatted = (totalRevenueCents / 100).toLocaleString("en-PK", {
     style: "currency",
     currency: "PKR",
@@ -157,10 +157,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     return !isCompleted && nowMs - createdMs > 12 * 60 * 60 * 1000;
   }).length;
 
-  const { count: syncFailedCount } = await supabase
-    .from("daraz_api_logs")
-    .select("id", { count: "exact", head: true })
-    .eq("status", "failed");
+
 
   const missingLabelsCount = ordersList.filter(
     (o) => o.is_packed && !o.is_label_printed
