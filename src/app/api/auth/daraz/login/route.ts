@@ -10,7 +10,7 @@ export async function GET(req: NextRequest) {
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
-  const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
+  const redirectUri = `${baseUrl}/api/daraz/callback`;
 
   // Generate cryptographically secure state token to prevent CSRF
   const csrfStateToken = crypto.randomBytes(32).toString("hex");
