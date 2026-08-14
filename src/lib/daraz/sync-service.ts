@@ -115,10 +115,12 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         let productOffset = 0;
         const limit = 50;
         let totalProducts = 0;
+        let fetchedProductCount = 0;
 
         do {
           const { products, total } = await darazClient.getProducts(productOffset, limit);
           totalProducts = total;
+          fetchedProductCount = products.length;
 
           for (const item of products) {
             try {
@@ -199,11 +201,12 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           }
 
           productOffset += limit;
-        } while (productOffset < totalProducts && products.length > 0);
+        } while (productOffset < totalProducts && fetchedProductCount > 0);
 
         // C. Sync Orders using 24-hour safe overlap window to eliminate missing orders
         let orderOffset = 0;
         let totalOrders = 0;
+        let fetchedOrderCount = 0;
 
         const safeOverlapMs = 24 * 60 * 60 * 1000; // 24 hours safe overlap
         const lastSyncTime = store.last_synced_at ? new Date(store.last_synced_at).getTime() : Date.now() - 30 * 24 * 60 * 60 * 1000;
@@ -212,6 +215,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         do {
           const { orders, total } = await darazClient.getOrders(orderOffset, limit, incrementalUpdateAfter);
           totalOrders = total;
+          fetchedOrderCount = orders.length;
 
           for (const ord of orders) {
             try {
@@ -349,7 +353,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           }
 
           orderOffset += limit;
-        } while (orderOffset < totalOrders && orders.length > 0);
+        } while (orderOffset < totalOrders && fetchedOrderCount > 0);
 
         // Update store last_synced_at
         await supabase
