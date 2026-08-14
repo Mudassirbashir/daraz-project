@@ -2,6 +2,7 @@ import React from "react";
 import { DashboardShell } from "@/components/common/DashboardShell";
 import { StoreOption } from "@/components/common/StoreSwitcher";
 import { createClient } from "@/lib/supabase/server";
+import { createAdminClient } from "@/lib/supabase/admin";
 import { AppRole } from "@/types/database.types";
 
 export default async function DashboardLayout({
@@ -10,6 +11,17 @@ export default async function DashboardLayout({
   children: React.ReactNode;
 }) {
   const supabase = createClient();
+  const adminSupabase = createAdminClient();
+
+  // Auto-purge demo/placeholder seed rows from daraz_stores
+  try {
+    await adminSupabase
+      .from("daraz_stores")
+      .delete()
+      .in("seller_id", ["504904", "504905", "504906"]);
+  } catch (e) {
+    // ignore
+  }
 
   // Fetch authenticated user & profile
   const {
@@ -34,11 +46,18 @@ export default async function DashboardLayout({
     }
   }
 
-  // Fetch all active Daraz Stores (up to 3)
-  const { data: rawStores } = await (supabase as any)
+  // Fetch real connected Daraz Stores belonging to user (excluding seed/demo IDs)
+  let storesQuery = (adminSupabase as any)
     .from("daraz_stores")
-    .select("id, store_code, store_name, seller_id, is_active, access_token")
-    .order("store_code", { ascending: true });
+    .select("id, store_code, store_name, seller_id, is_active, access_token, region")
+    .not("seller_id", "in", '("504904","504905","504906")')
+    .order("created_at", { ascending: true });
+
+  if (user?.id) {
+    storesQuery = storesQuery.or(`user_id.eq.${user.id},user_id.is.null`);
+  }
+
+  const { data: rawStores } = await storesQuery;
 
   const stores: StoreOption[] = (rawStores || []).map((s: any) => ({
     id: s.id,

@@ -10,6 +10,16 @@ export const dynamic = "force-dynamic";
 export default async function StoresPage() {
   const supabase = createAdminClient();
 
+  // Purge any old demo/placeholder seed rows from daraz_stores
+  try {
+    await supabase
+      .from("daraz_stores")
+      .delete()
+      .in("seller_id", ["504904", "504905", "504906"]);
+  } catch (e) {
+    // ignore
+  }
+
   // Fetch logged in user stores
   let userStoreIds: string[] = [];
   try {
@@ -19,14 +29,20 @@ export default async function StoresPage() {
       const { data: userStores } = await supabase
         .from("daraz_stores")
         .select("id")
-        .or(`user_id.eq.${user.id},user_id.is.null`);
+        .or(`user_id.eq.${user.id},user_id.is.null`)
+        .not("seller_id", "in", '("504904","504905","504906")');
       userStoreIds = (userStores || []).map((s) => s.id);
     }
   } catch (e) {
     // fallback
   }
 
-  let storesQuery = supabase.from("daraz_stores").select("*").order("created_at", { ascending: true });
+  let storesQuery = supabase
+    .from("daraz_stores")
+    .select("*")
+    .not("seller_id", "in", '("504904","504905","504906")')
+    .order("created_at", { ascending: true });
+
   if (userStoreIds.length > 0) {
     storesQuery = storesQuery.in("id", userStoreIds);
   }
@@ -146,9 +162,11 @@ export default async function StoresPage() {
           <span>🟢 Connected: {connectedCount}</span>
         </span>
 
-        <span className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-          <span>⚪ Disconnected: {disconnectedCount}</span>
-        </span>
+        {disconnectedCount > 0 && (
+          <span className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
+            <span>⚪ Disconnected: {disconnectedCount}</span>
+          </span>
+        )}
       </div>
 
       {/* Stores Cards Grid */}

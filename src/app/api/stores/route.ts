@@ -15,11 +15,22 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // 1. Fetch user-scoped configured stores (or system stores if user_id is null)
+    // Purge any old demo/placeholder seed rows from daraz_stores
+    try {
+      await supabase
+        .from("daraz_stores")
+        .delete()
+        .in("seller_id", ["504904", "504905", "504906"]);
+    } catch (e) {
+      // ignore
+    }
+
+    // Fetch user-scoped configured real stores
     const { data: stores, error: storesErr } = await supabase
       .from("daraz_stores")
       .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token")
       .or(`user_id.eq.${user.id},user_id.is.null`)
+      .not("seller_id", "in", '("504904","504905","504906")')
       .order("created_at", { ascending: true });
 
     if (storesErr) {
@@ -28,10 +39,10 @@ export async function GET(req: NextRequest) {
 
     const storesList = stores || [];
 
-    // 2. Compute live metrics for connected stores
+    // Compute live metrics for connected stores
     const enrichedStores = await Promise.all(
       storesList.map(async (store) => {
-        const isConnected = Boolean(store.access_token && store.access_token.trim());
+        const isConnected = Boolean(store.access_token && store.access_token.trim() && store.is_active);
 
         if (!isConnected) {
           return {
