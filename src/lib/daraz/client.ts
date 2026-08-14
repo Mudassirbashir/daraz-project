@@ -320,14 +320,14 @@ export class DarazApiClient {
    * Fetch Store Seller Profile (/seller/get)
    */
   async getStoreProfile(): Promise<DarazStoreProfile> {
-    const response = await this.request<{ data: any }>("/seller/get");
-    const data = response.data || {};
+    const response = await this.request<any>("/seller/get");
+    const dataObj = response.data || response.result || response || {};
     return {
-      seller_id: String(data.seller_id || data.short_code || "SELLER_UNKNOWN"),
-      name: data.name || data.short_code || "Daraz Store",
-      short_code: data.short_code || "STORE-01",
-      email: data.email || "",
-      location: data.location || "Pakistan",
+      seller_id: String(dataObj.seller_id || dataObj.short_code || "SELLER_UNKNOWN"),
+      name: dataObj.name || dataObj.short_code || "Daraz Store",
+      short_code: dataObj.short_code || "STORE-01",
+      email: dataObj.email || "",
+      location: dataObj.location || "Pakistan",
     };
   }
 
@@ -346,18 +346,29 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Products with Pagination, All Variations & Normalized Stock (/products/get)
+   * Fetch Store Products with Multi-Format Response Parsing & Pagination (/products/get)
    */
   async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
-    const response = await this.request<{ data: { products?: any[]; total_products?: number } }>("/products/get", {
+    const response = await this.request<any>("/products/get", {
       filter: "all",
       offset: String(offset),
       limit: String(limit),
     });
 
-    const rawProducts = response.data?.products || [];
-    const total = response.data?.total_products || rawProducts.length;
+    const dataObj = response.data || response.result || response;
+    let rawProducts: any[] = [];
 
+    if (Array.isArray(dataObj)) {
+      rawProducts = dataObj;
+    } else if (Array.isArray(dataObj?.products)) {
+      rawProducts = dataObj.products;
+    } else if (Array.isArray(dataObj?.products?.product)) {
+      rawProducts = dataObj.products.product;
+    } else if (Array.isArray(dataObj?.product)) {
+      rawProducts = dataObj.product;
+    }
+
+    const total = dataObj?.total_products || dataObj?.total || rawProducts.length;
     const products: DarazProductItem[] = [];
 
     rawProducts.forEach((p) => {
@@ -519,8 +530,19 @@ export class DarazApiClient {
    */
   async getOrderItems(orderId: string): Promise<DarazOrderItemDetail[]> {
     try {
-      const response = await this.request<{ data?: any[] }>("/order/items/get", { order_id: orderId });
-      const rawItems = response.data || [];
+      const response = await this.request<any>("/order/items/get", { order_id: orderId });
+      const dataObj = response.data || response.result || response;
+      let rawItems: any[] = [];
+
+      if (Array.isArray(dataObj)) {
+        rawItems = dataObj;
+      } else if (Array.isArray(dataObj?.order_items)) {
+        rawItems = dataObj.order_items;
+      } else if (Array.isArray(dataObj?.order_items?.order_item)) {
+        rawItems = dataObj.order_items.order_item;
+      } else if (Array.isArray(dataObj?.items)) {
+        rawItems = dataObj.items;
+      }
 
       return rawItems.map((item) => ({
         order_item_id: String(item.order_item_id || item.item_id),
@@ -543,7 +565,7 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Orders with Pagination & Normalized Status Mapping (/orders/get)
+   * Fetch Store Orders with Multi-Format Response Parsing (/orders/get)
    */
   async getOrders(offset = 0, limit = 50, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
     const safeUpdateAfter = updateAfter || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -556,10 +578,21 @@ export class DarazApiClient {
       update_after: safeUpdateAfter,
     };
 
-    const response = await this.request<{ data: { orders?: any[]; countTotal?: number; count?: number } }>("/orders/get", params);
+    const response = await this.request<any>("/orders/get", params);
+    const dataObj = response.data || response.result || response;
+    let rawOrders: any[] = [];
 
-    const rawOrders = response.data?.orders || [];
-    const total = response.data?.countTotal ?? response.data?.count ?? rawOrders.length;
+    if (Array.isArray(dataObj)) {
+      rawOrders = dataObj;
+    } else if (Array.isArray(dataObj?.orders)) {
+      rawOrders = dataObj.orders;
+    } else if (Array.isArray(dataObj?.orders?.order)) {
+      rawOrders = dataObj.orders.order;
+    } else if (Array.isArray(dataObj?.order)) {
+      rawOrders = dataObj.order;
+    }
+
+    const total = dataObj?.countTotal ?? dataObj?.count ?? rawOrders.length;
 
     const orders: DarazOrderItem[] = rawOrders.map((o) => {
       const addressShipping = o.address_shipping || {};

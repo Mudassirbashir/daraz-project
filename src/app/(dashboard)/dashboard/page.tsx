@@ -15,7 +15,8 @@ import {
   Flame,
   CheckCircle2,
   PackageCheck,
-  Printer
+  Printer,
+  Plus
 } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
@@ -34,8 +35,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const selectedStoreId = searchParams?.storeId || "all";
   const isCombinedView = selectedStoreId === "all";
 
-  // Fetch logged-in user profile name
+  // Fetch logged-in user profile name & authorized stores
   let userName = "Mubashir";
+  let userStoreIds: string[] = [];
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
@@ -48,39 +50,52 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       if (profile?.full_name) {
         userName = profile.full_name.split(" ")[0];
       }
+
+      const { data: userStores } = await supabase
+        .from("daraz_stores")
+        .select("id")
+        .or(`user_id.eq.${user.id},user_id.is.null`);
+      userStoreIds = (userStores || []).map((s) => s.id);
     }
   } catch (e) {
-    // fallback to Mubashir
+    // fallback
   }
 
-  // 1. Fetch Stores
-  const { data: storesData } = await supabase
+  // 1. Fetch Authorized Stores
+  let storesQuery = supabase
     .from("daraz_stores")
-    .select("id, store_code, store_name, region, is_active, seller_id, access_token, updated_at")
-    .order("store_code", { ascending: true });
+    .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
+    .order("created_at", { ascending: true });
 
+  if (userStoreIds.length > 0) {
+    storesQuery = storesQuery.in("id", userStoreIds);
+  }
+
+  const { data: storesData } = await storesQuery;
   let storesList = storesData || [];
 
   // 2. Fetch Listings & Orders Metrics
   let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
   if (!isCombinedView && selectedStoreId) {
     listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
+  } else if (userStoreIds.length > 0) {
+    listingsQuery = listingsQuery.in("store_id", userStoreIds);
   }
 
   let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
   if (!isCombinedView && selectedStoreId) {
     ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
+  } else if (userStoreIds.length > 0) {
+    ordersQuery = ordersQuery.in("store_id", userStoreIds);
   }
 
-  const [listingsResult, ordersResult, syncFailedResult] = await Promise.all([
+  const [listingsResult, ordersResult] = await Promise.all([
     listingsQuery,
     ordersQuery,
-    supabase.from("daraz_api_logs").select("id", { count: "exact", head: true }).eq("status", "failed"),
   ]);
 
   const listingsData = listingsResult.data || [];
   const ordersList = ordersResult.data || [];
-  const syncFailedCount = syncFailedResult.count || 0;
 
   // Build per-store metrics map in memory (robust normalized string keys)
   const storeListingsMap: Record<string, { count: number; stock: number }> = {};
@@ -120,7 +135,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const totalStoresCount = enrichedStores.length;
   const connectedStoresCount = enrichedStores.filter((s) => s.isConnected).length;
-  const disconnectedStoresCount = enrichedStores.filter((s) => !s.isConnected).length;
+  const isMaxStoresReached = totalStoresCount >= 3;
 
   const totalProductsCount = listingsData.length;
   const totalStockUnits = listingsData.reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
@@ -193,7 +208,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               </span>
             </div>
             <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-              Here is your multi-store operational overview synchronized with Daraz Seller Center.
+              Multi-store operational control panel synchronized with official Daraz Open Platform.
             </p>
           </div>
 
@@ -315,9 +330,15 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       {/* Store Cards Overview Grid */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
-          <h2 className="font-bold text-slate-900 dark:text-white text-base">Store Cards Overview</h2>
+          <div className="flex items-center space-x-2">
+            <h2 className="font-bold text-slate-900 dark:text-white text-base">Store Cards Overview</h2>
+            <span className="rounded-xl bg-orange-100 dark:bg-orange-500/10 px-2 py-0.5 text-[11px] font-bold text-orange-700 dark:text-orange-300">
+              {totalStoresCount} / 3 Stores
+            </span>
+          </div>
+
           <a href="/stores" className="text-xs font-bold text-orange-600 dark:text-orange-400 hover:underline flex items-center space-x-1">
-            <span>See All Stores ({totalStoresCount})</span>
+            <span>Manage Stores</span>
             <ArrowRight className="h-3.5 w-3.5" />
           </a>
         </div>
@@ -330,6 +351,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               .join("")
               .slice(0, 2)
               .toUpperCase();
+
+            const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
 
             return (
               <div
@@ -358,30 +381,37 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                     </span>
                   ) : (
                     <span className="inline-flex items-center space-x-1 rounded-xl bg-slate-100 text-slate-600 border border-slate-200 px-2 py-0.5 text-[10px] font-bold">
-                      <span>Not Connected</span>
+                      <span>Disconnected</span>
                     </span>
                   )}
                 </div>
+
+                {hasSyncError && (
+                  <div className="p-2 rounded-xl bg-amber-50 border border-amber-200 text-amber-800 text-[10px] font-medium flex items-center space-x-1.5">
+                    <AlertCircle className="h-3.5 w-3.5 shrink-0 text-amber-600" />
+                    <span>Notice: {store.last_sync_error || "Check API connection"}</span>
+                  </div>
+                )}
 
                 <div className="grid grid-cols-3 gap-2 pt-1 text-center">
                   <div className="rounded-xl bg-slate-50 dark:bg-slate-950/60 p-2.5 border border-slate-100 dark:border-slate-800">
                     <span className="text-[9px] font-bold text-slate-400 uppercase">Products</span>
                     <p className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                      {store.isConnected ? store.productsCount : "--"}
+                      {store.isConnected ? (hasSyncError && store.productsCount === 0 ? "Failed" : store.productsCount) : "--"}
                     </p>
                   </div>
 
                   <div className="rounded-xl bg-slate-50 dark:bg-slate-950/60 p-2.5 border border-slate-100 dark:border-slate-800">
                     <span className="text-[9px] font-bold text-slate-400 uppercase">Stock</span>
                     <p className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                      {store.isConnected ? store.stockCount : "--"}
+                      {store.isConnected ? (hasSyncError && store.stockCount === 0 ? "Failed" : store.stockCount) : "--"}
                     </p>
                   </div>
 
                   <div className="rounded-xl bg-slate-50 dark:bg-slate-950/60 p-2.5 border border-slate-100 dark:border-slate-800">
                     <span className="text-[9px] font-bold text-slate-400 uppercase">Orders</span>
                     <p className="text-base font-extrabold text-slate-900 dark:text-white mt-0.5">
-                      {store.isConnected ? store.ordersCount : "--"}
+                      {store.isConnected ? (hasSyncError && store.ordersCount === 0 ? "Failed" : store.ordersCount) : "--"}
                     </p>
                   </div>
                 </div>
@@ -416,6 +446,26 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
               </div>
             );
           })}
+
+          {/* Render Connect Store Card if totalStoresCount < 3 */}
+          {!isMaxStoresReached && (
+            <div className="rounded-3xl border border-dashed border-slate-300 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 p-6 flex flex-col items-center justify-center text-center space-y-3 min-h-[260px]">
+              <div className="h-12 w-12 rounded-2xl bg-orange-100 dark:bg-orange-500/10 text-orange-600 flex items-center justify-center">
+                <Plus className="h-6 w-6" />
+              </div>
+              <div>
+                <h3 className="font-bold text-slate-900 dark:text-white text-sm">Add Daraz Store</h3>
+                <p className="text-[11px] text-slate-500 mt-0.5">Connect up to {3 - totalStoresCount} more store account</p>
+              </div>
+              <a
+                href="/api/auth/daraz/login"
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 shadow-sm apple-press"
+              >
+                <Plus className="h-3.5 w-3.5" />
+                <span>Connect Store</span>
+              </a>
+            </div>
+          )}
         </div>
       </div>
     </div>

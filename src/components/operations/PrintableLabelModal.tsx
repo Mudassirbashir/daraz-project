@@ -11,7 +11,7 @@ import {
   FileText,
   Clock,
   ShieldCheck,
-  RotateCcw
+  Download
 } from "lucide-react";
 
 interface PrintableLabelModalProps {
@@ -27,6 +27,8 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
   const [storeNotConnected, setStoreNotConnected] = useState(false);
   const [fileContent, setFileContent] = useState<string>("");
   const [mimeType, setMimeType] = useState<string>("text/html");
+  const [isOfficial, setIsOfficial] = useState<boolean>(true);
+  const [sourceMessage, setSourceMessage] = useState<string>("");
   const [printTracking, setPrintTracking] = useState<{
     isLabelPrinted: boolean;
     labelPrintedAt: string | null;
@@ -53,11 +55,13 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
 
       if (!data.success) {
         if (data.storeNotConnected) setStoreNotConnected(true);
-        throw new Error(data.error || "Failed to load official Daraz shipping label.");
+        throw new Error(data.error || "Failed to load shipping label.");
       }
 
       setFileContent(data.file || "");
       setMimeType(data.mimeType || "text/html");
+      setIsOfficial(data.isOfficial !== false);
+      setSourceMessage(data.sourceMessage || (data.isOfficial ? "Official Daraz document retrieved" : "Application shipping label generated from synchronized order data"));
       if (data.printTracking) setPrintTracking(data.printTracking);
     } catch (err: any) {
       console.error("[FetchOfficialLabel Error]:", err.message);
@@ -80,7 +84,6 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
     setPrintState("sending");
 
     try {
-      // 1. Record print tracking event on backend
       const res = await fetch(`/api/orders/${order.id}/label`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -99,7 +102,6 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
 
       setPrintState("printed");
 
-      // 2. Trigger browser print of the official document container
       setTimeout(() => {
         const iframe = document.getElementById("daraz-official-label-iframe") as HTMLIFrameElement;
         if (iframe && iframe.contentWindow) {
@@ -147,7 +149,6 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
         {/* Print & Document Status Bar — Hidden during print */}
         <div className="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3 print:hidden">
           <div className="flex items-center space-x-2">
-            {/* Document Type Selector */}
             <button
               onClick={() => setDocType("shipping_label")}
               className={`px-3 py-1.5 font-bold rounded-xl transition-all ${
@@ -182,114 +183,102 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
             </button>
           </div>
 
-          {/* Print Tracking Badge & Print Button */}
+          {/* Document Source Badge & Print Button */}
           <div className="flex items-center space-x-3">
-            {printTracking.isLabelPrinted ? (
-              <span className="inline-flex items-center space-x-1 px-3 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-bold border border-emerald-200 dark:border-emerald-500/20">
-                <CheckCircle2 className="h-3.5 w-3.5" />
-                <span>✓ Printed ({printTracking.reprintCount}x)</span>
+            {isOfficial ? (
+              <span title={sourceMessage} className="inline-flex items-center space-x-1 px-3 py-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 text-blue-700 dark:text-blue-300 font-bold border border-blue-200 dark:border-blue-500/20 text-[11px]">
+                <ShieldCheck className="h-3.5 w-3.5 text-blue-600" />
+                <span>Official Daraz Document</span>
               </span>
             ) : (
-              <span className="inline-flex items-center space-x-1 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 font-bold border border-amber-200 dark:border-amber-500/20">
-                <Clock className="h-3.5 w-3.5" />
-                <span>Ready to Print</span>
+              <span title={sourceMessage} className="inline-flex items-center space-x-1 px-3 py-1 rounded-xl bg-amber-50 dark:bg-amber-500/10 text-amber-800 dark:text-amber-300 font-bold border border-amber-200 dark:border-amber-500/20 text-[11px]">
+                <FileText className="h-3.5 w-3.5 text-amber-600" />
+                <span>Application Generated Label</span>
+              </span>
+            )}
+
+            {printTracking.isLabelPrinted && (
+              <span className="inline-flex items-center space-x-1 px-2.5 py-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 font-bold border border-emerald-200 text-[10px]">
+                <CheckCircle2 className="h-3 w-3" />
+                <span>Printed ({printTracking.reprintCount}x)</span>
               </span>
             )}
 
             <button
               onClick={handlePrint}
               disabled={loading || !!errorMessage}
-              className="inline-flex items-center space-x-2 rounded-xl bg-orange-600 px-5 py-2.5 font-bold text-white hover:bg-orange-700 shadow-md transition-all apple-press disabled:opacity-50"
+              className="inline-flex items-center space-x-2 rounded-xl bg-orange-600 px-4 py-2 font-bold text-white hover:bg-orange-700 shadow-md transition-all apple-press disabled:opacity-50"
             >
               <Printer className="h-4 w-4" />
-              <span>{printTracking.isLabelPrinted ? "Print Again" : "Print Official Label"}</span>
+              <span>{printTracking.isLabelPrinted ? "Print Again" : "Print Label"}</span>
             </button>
           </div>
         </div>
 
-        {/* Store Not Connected Error View */}
+        {/* Store Not Connected Warning */}
         {storeNotConnected && (
-          <div className="p-6 rounded-2xl bg-amber-50 text-amber-900 border border-amber-300 dark:bg-amber-500/10 dark:text-amber-300 space-y-3 text-center print:hidden">
-            <AlertCircle className="mx-auto h-10 w-10 text-amber-600" />
-            <h3 className="font-bold text-base">Daraz Store Connection Required</h3>
-            <p className="max-w-md mx-auto">
-              Your Daraz seller store is not connected or access token has expired. Connect your store to pull official Daraz shipping labels.
+          <div className="p-4 rounded-2xl bg-amber-50 text-amber-900 border border-amber-300 dark:bg-amber-500/10 dark:text-amber-300 space-y-2 text-center print:hidden">
+            <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
+            <h3 className="font-bold text-sm">Daraz Store Not Connected</h3>
+            <p className="max-w-md mx-auto text-[11px]">
+              Showing application-generated fulfillment label sourced from real order data in your database. Reconnect store to pull official Daraz document API stream.
             </p>
-            <a
-              href="/api/auth/daraz/login"
-              className="inline-flex items-center space-x-2 rounded-xl bg-orange-500 px-5 py-2.5 font-bold text-white hover:bg-orange-600 shadow-md transition-all apple-press"
-            >
-              <Store className="h-4 w-4" />
-              <span>Connect Daraz Store</span>
-            </a>
           </div>
         )}
 
-        {/* API Error View */}
+        {/* Error View */}
         {errorMessage && !storeNotConnected && (
-          <div className="p-6 rounded-2xl bg-amber-50 text-amber-900 border border-amber-300 dark:bg-amber-500/10 dark:text-amber-300 space-y-3 text-center print:hidden">
-            <AlertCircle className="mx-auto h-10 w-10 text-amber-600" />
-            <h3 className="font-bold text-base">Official Daraz shipping label is not available through the connected API.</h3>
-            <p className="max-w-md mx-auto font-mono text-[11px] text-amber-800 dark:text-amber-400">
-              Reason: {errorMessage}
+          <div className="p-4 rounded-2xl bg-red-50 text-red-900 border border-red-200 space-y-2 text-center print:hidden">
+            <AlertCircle className="mx-auto h-8 w-8 text-red-600" />
+            <h3 className="font-bold text-sm">Shipping label error</h3>
+            <p className="max-w-md mx-auto font-mono text-[11px] text-red-800">
+              {errorMessage}
             </p>
-            <div className="flex items-center justify-center space-x-3 pt-2">
-              <button
-                onClick={fetchOfficialLabel}
-                className="inline-flex items-center space-x-2 rounded-xl bg-slate-900 text-white px-4 py-2 font-bold hover:bg-slate-800"
-              >
-                <RefreshCw className="h-4 w-4" />
-                <span>Retry Daraz API</span>
-              </button>
-              <a
-                href="https://sellercenter.daraz.pk/"
-                target="_blank"
-                rel="noreferrer"
-                className="inline-flex items-center space-x-2 rounded-xl bg-orange-600 text-white px-4 py-2 font-bold hover:bg-orange-700 shadow-sm"
-              >
-                <Store className="h-4 w-4" />
-                <span>Open Daraz Seller Center</span>
-              </a>
-            </div>
+            <button
+              onClick={fetchOfficialLabel}
+              className="inline-flex items-center space-x-2 rounded-xl bg-slate-900 text-white px-3.5 py-1.5 text-xs font-bold hover:bg-slate-800"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              <span>Retry Request</span>
+            </button>
           </div>
         )}
 
-        {/* Official Document Display Container */}
+        {/* Document Display Container */}
         {loading ? (
           <div className="p-16 text-center text-slate-500 flex flex-col items-center justify-center space-y-3 print:hidden">
             <RefreshCw className="h-8 w-8 animate-spin text-orange-500" />
-            <p className="font-bold text-slate-700 dark:text-slate-300">Fetching Official Daraz Shipping Document...</p>
-            <p className="text-[11px] text-slate-400">Communicating with official Daraz REST API endpoint /order/document/get</p>
+            <p className="font-bold text-slate-700 dark:text-slate-300">Loading Shipping Document...</p>
+            <p className="text-[11px] text-slate-400">Retrieving official document stream or application label from verified database record...</p>
           </div>
         ) : fileContent ? (
           <div className="rounded-2xl border border-slate-300 dark:border-slate-800 bg-white overflow-hidden min-h-[500px] flex flex-col print:border-none print:min-h-0 print:overflow-visible">
-            {/* If HTML shipping label or PDF base64 */}
             {mimeType.includes("html") || fileContent.trim().startsWith("<") ? (
               <iframe
                 id="daraz-official-label-iframe"
                 srcDoc={fileContent}
-                title="Official Daraz Shipping Label"
+                title="Daraz Order Shipping Label"
                 className="w-full min-h-[600px] border-none print:h-screen print:w-screen print:fixed print:inset-0 print:z-50"
               />
             ) : mimeType.includes("pdf") || fileContent.startsWith("JVBER") ? (
               <iframe
                 id="daraz-official-label-iframe"
                 src={`data:application/pdf;base64,${fileContent}`}
-                title="Official Daraz Shipping Label PDF"
+                title="Daraz Order Shipping Label PDF"
                 className="w-full min-h-[600px] border-none print:h-screen print:w-screen print:fixed print:inset-0 print:z-50"
               />
             ) : (
               <iframe
                 id="daraz-official-label-iframe"
                 srcDoc={fileContent}
-                title="Official Daraz Shipping Label Document"
+                title="Daraz Order Shipping Label Document"
                 className="w-full min-h-[600px] border-none print:h-screen print:w-screen print:fixed print:inset-0 print:z-50"
               />
             )}
           </div>
         ) : null}
 
-        {/* Footer Audit Information — Hidden during print */}
+        {/* Audit Info Footer */}
         {printTracking.isLabelPrinted && (
           <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 print:hidden">
             <span>

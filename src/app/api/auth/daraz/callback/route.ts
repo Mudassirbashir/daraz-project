@@ -114,14 +114,16 @@ export async function GET(req: NextRequest) {
     // Persist Tokens Securely in Supabase daraz_stores Table via Admin Client
     const supabase = createAdminClient();
 
+    // Check existing store with matching seller_id to allow reconnection
     const { data: existingStores } = await supabase
       .from("daraz_stores")
-      .select("id, store_code, seller_id")
+      .select("id, store_code, seller_id, is_active")
       .or(`seller_id.eq.${targetSellerId},store_code.eq.DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`);
 
     let storeId: string;
 
     if (existingStores && existingStores.length > 0) {
+      // Reconnect / Update Existing Store
       const targetStore = existingStores[0];
       const { data: updated, error: updateErr } = await supabase
         .from("daraz_stores")
@@ -135,6 +137,8 @@ export async function GET(req: NextRequest) {
           api_app_key: appKey,
           api_app_secret: appSecret,
           is_active: true,
+          sync_status: "syncing",
+          last_sync_error: null,
           updated_at: new Date().toISOString(),
         })
         .eq("id", targetStore.id)
@@ -144,6 +148,23 @@ export async function GET(req: NextRequest) {
       if (updateErr) throw new Error(`Supabase store update error: ${updateErr.message}`);
       storeId = updated.id;
     } else {
+      // Connecting a NEW store -> Enforce 3-Store Limit!
+      let storeQuery = supabase.from("daraz_stores").select("id", { count: "exact", head: true }).eq("is_active", true);
+      if (currentUserId) {
+        storeQuery = storeQuery.or(`user_id.eq.${currentUserId},user_id.is.null`);
+      }
+      const { count: activeStoreCount } = await storeQuery;
+
+      if ((activeStoreCount || 0) >= 3) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Maximum 3 Daraz stores allowed. Remove an existing store before connecting another.",
+          },
+          { status: 400 }
+        );
+      }
+
       const storeCode = `DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`;
       const { data: inserted, error: insertErr } = await supabase
         .from("daraz_stores")
@@ -159,6 +180,7 @@ export async function GET(req: NextRequest) {
           refresh_token,
           token_expires_at: tokenExpiresAt,
           is_active: true,
+          sync_status: "syncing",
         })
         .select()
         .single();
@@ -167,7 +189,7 @@ export async function GET(req: NextRequest) {
       storeId = inserted.id;
     }
 
-    // Verify Connection by Fetching Seller Profile
+    // Verify Connection & Get Seller Profile
     const client = new DarazApiClient({
       storeId,
       accessToken: access_token,
@@ -191,7 +213,7 @@ export async function GET(req: NextRequest) {
       console.warn("[Daraz OAuth Callback] Seller profile verification warning:", profileErr.message);
     }
 
-    // Trigger Automatic Sync for this Store
+    // Trigger Immediate Full Initial Sync for newly connected store
     executeDarazSync(storeId).catch((syncErr) =>
       console.error("[Daraz OAuth Callback] Background sync error:", syncErr.message)
     );

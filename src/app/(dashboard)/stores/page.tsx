@@ -1,6 +1,7 @@
 import React from "react";
-import { Store, Package, ShoppingCart, Truck, Plus } from "lucide-react";
+import { Store, Package, ShoppingCart, Truck, Plus, AlertCircle } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { StoreCardActions } from "@/components/stores/StoreCardActions";
 
@@ -9,12 +10,28 @@ export const dynamic = "force-dynamic";
 export default async function StoresPage() {
   const supabase = createAdminClient();
 
-  // Fetch all configured stores from Supabase
-  const { data: stores } = await supabase
-    .from("daraz_stores")
-    .select("*")
-    .order("store_code", { ascending: true });
+  // Fetch logged in user stores
+  let userStoreIds: string[] = [];
+  try {
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+    if (user?.id) {
+      const { data: userStores } = await supabase
+        .from("daraz_stores")
+        .select("id")
+        .or(`user_id.eq.${user.id},user_id.is.null`);
+      userStoreIds = (userStores || []).map((s) => s.id);
+    }
+  } catch (e) {
+    // fallback
+  }
 
+  let storesQuery = supabase.from("daraz_stores").select("*").order("created_at", { ascending: true });
+  if (userStoreIds.length > 0) {
+    storesQuery = storesQuery.in("id", userStoreIds);
+  }
+
+  const { data: stores } = await storesQuery;
   const storesList = stores || [];
 
   // Calculate live metrics per store
@@ -46,12 +63,12 @@ export default async function StoresPage() {
       // Query orders & in-progress orders for this store
       const { data: orders } = await supabase
         .from("orders")
-        .select("status")
+        .select("status, workflow_status")
         .eq("store_id", st.id);
 
       const ordersCount = (orders || []).length;
       const inProgressOrdersCount = (orders || []).filter((o) =>
-        ["pending", "unpaid", "ready_to_ship", "shipped"].includes(o.status)
+        ["pending", "unpaid", "ready_to_ship", "shipped"].includes(o.workflow_status || o.status)
       ).length;
 
       // Query last synced log
@@ -64,7 +81,7 @@ export default async function StoresPage() {
         .limit(1)
         .maybeSingle();
 
-      const lastSyncedAt = lastLog?.created_at || st.updated_at || null;
+      const lastSyncedAt = lastLog?.created_at || st.last_synced_at || st.updated_at || null;
 
       return {
         ...st,
@@ -80,6 +97,7 @@ export default async function StoresPage() {
 
   const connectedCount = enrichedStores.filter((s) => s.isConnected).length;
   const disconnectedCount = enrichedStores.filter((s) => !s.isConnected).length;
+  const isMaxStoresReached = enrichedStores.length >= 3;
 
   return (
     <div className="space-y-6">
@@ -89,23 +107,34 @@ export default async function StoresPage() {
           <div className="flex items-center space-x-2">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Your Daraz Stores</h1>
             <span className="rounded-xl bg-orange-100 dark:bg-orange-500/10 px-2.5 py-0.5 text-xs font-bold text-orange-700 dark:text-orange-300 border border-orange-200/80 dark:border-orange-500/20">
-              {enrichedStores.length} Stores Total
+              {enrichedStores.length} / 3 Stores Max
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-            Manage and check all your Daraz stores from one place.
+            Manage your connected Daraz seller accounts. Maximum 3 stores allowed per user.
           </p>
         </div>
 
         <div className="flex items-center space-x-2 shrink-0">
-          <a
-            href="/api/auth/daraz/login"
-            title="Connect a new official Daraz seller account"
-            className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-orange-600 transition-all apple-press"
-          >
-            <Plus className="h-4 w-4" />
-            <span>Connect New Store</span>
-          </a>
+          {isMaxStoresReached ? (
+            <button
+              disabled
+              title="Maximum 3 Daraz stores allowed. Remove an existing store before connecting another."
+              className="inline-flex items-center space-x-1.5 rounded-xl bg-slate-300 dark:bg-slate-800 px-4 py-2 text-xs font-bold text-slate-500 cursor-not-allowed opacity-75"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Max 3 Stores Reached</span>
+            </button>
+          ) : (
+            <a
+              href="/api/auth/daraz/login"
+              title="Connect a new official Daraz seller account"
+              className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-orange-600 transition-all apple-press"
+            >
+              <Plus className="h-4 w-4" />
+              <span>Connect New Store</span>
+            </a>
+          )}
 
           <SyncNowButton />
         </div>
@@ -131,6 +160,8 @@ export default async function StoresPage() {
             .join("")
             .slice(0, 2)
             .toUpperCase();
+
+          const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
 
           return (
             <div
@@ -161,18 +192,29 @@ export default async function StoresPage() {
                 {store.isConnected ? (
                   <span className="inline-flex items-center space-x-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shrink-0">
                     <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span>🟢 Connected</span>
+                    <span>Connected</span>
                   </span>
                 ) : (
                   <span className="inline-flex items-center space-x-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">
                     <span className="h-2 w-2 rounded-full bg-slate-400"></span>
-                    <span>⚪ Disconnected</span>
+                    <span>Disconnected</span>
                   </span>
                 )}
               </div>
 
+              {/* Sync Error Alert Banner */}
+              {hasSyncError && (
+                <div className="flex items-start space-x-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px]">
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
+                  <div>
+                    <span className="font-bold block">Store connected, but sync reported notice:</span>
+                    <span className="text-[10px] font-mono">{store.last_sync_error || "Check API connection"}</span>
+                  </div>
+                </div>
+              )}
+
               {/* Metrics Grid */}
-              <div className="grid grid-cols-3 gap-3 pt-2">
+              <div className="grid grid-cols-3 gap-3 pt-1">
                 {/* 1. Products */}
                 <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 p-3 text-center border border-slate-100 dark:border-slate-800">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-center space-x-1">
@@ -180,7 +222,7 @@ export default async function StoresPage() {
                     <span>Products</span>
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {store.isConnected ? store.productsCount : "--"}
+                    {store.isConnected ? (hasSyncError && store.productsCount === 0 ? "Failed" : store.productsCount) : "--"}
                   </p>
                 </div>
 
@@ -191,7 +233,7 @@ export default async function StoresPage() {
                     <span>Stock</span>
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {store.isConnected ? store.stockCount : "--"}
+                    {store.isConnected ? (hasSyncError && store.stockCount === 0 ? "Failed" : store.stockCount) : "--"}
                   </p>
                 </div>
 
@@ -202,7 +244,7 @@ export default async function StoresPage() {
                     <span>Orders</span>
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {store.isConnected ? store.ordersCount : "--"}
+                    {store.isConnected ? (hasSyncError && store.ordersCount === 0 ? "Failed" : store.ordersCount) : "--"}
                   </p>
                 </div>
               </div>
