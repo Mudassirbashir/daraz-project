@@ -213,10 +213,14 @@ export async function GET(req: NextRequest) {
       console.warn("[Daraz OAuth Callback] Seller profile verification warning:", profileErr.message);
     }
 
-    // Trigger Immediate Full Initial Sync for newly connected store
-    executeDarazSync(storeId).catch((syncErr) =>
-      console.error("[Daraz OAuth Callback] Background sync error:", syncErr.message)
-    );
+    // Synchronously await full initial sync so serverless execution container completes ingestion before redirecting
+    try {
+      console.log(`[Daraz OAuth Callback] Starting synchronous initial store sync for storeId ${storeId}...`);
+      const syncResult = await executeDarazSync(storeId);
+      console.log(`[Daraz OAuth Callback] Synchronous initial store sync complete for ${storeId}:`, syncResult);
+    } catch (syncErr: any) {
+      console.error(`[Daraz OAuth Callback] Synchronous initial store sync error for ${storeId}:`, syncErr.message);
+    }
 
     // Audit Log in daraz_api_logs
     await supabase.from("daraz_api_logs").insert({
