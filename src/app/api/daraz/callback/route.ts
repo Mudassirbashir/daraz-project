@@ -37,7 +37,7 @@ export async function GET(req: NextRequest) {
   }
 
   // 2. Validate Authorization Code presence
-  if (!code) {
+  if (!code || !code.trim()) {
     return NextResponse.redirect(
       `${baseUrl}/stores?error=missing_code&message=${encodeURIComponent(
         "Missing authorization code in OAuth callback query parameters."
@@ -51,12 +51,12 @@ export async function GET(req: NextRequest) {
     const { data: { user } } = await serverSupabase.auth.getUser();
     const currentUserId = user?.id || null;
 
-    // 3. Exchange Code for Access Token via /auth/token/create
+    // 3. Exchange Code for Access Token via GET /auth/token/create
     const apiPath = "/auth/token/create";
     const timestamp = Date.now().toString();
 
     const params: Record<string, string> = {
-      code,
+      code: code.trim(),
       app_key: appKey,
       timestamp,
       sign_method: "sha256",
@@ -68,33 +68,29 @@ export async function GET(req: NextRequest) {
     const queryString = new URLSearchParams(params).toString();
     const tokenUrl = `${apiBaseUrl}${apiPath}?${queryString}`;
 
-    console.log(`[Daraz OAuth Callback] Exchanging authorization code for tokens via ${tokenUrl.split("?")[0]}...`);
+    console.log(`[Daraz OAuth Callback] Initiating token exchange for app_key '${appKey}' code '${code.slice(0, 8)}...'`);
 
     const tokenRes = await fetch(tokenUrl, {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      method: "GET",
+      headers: { "Accept": "application/json" },
+      cache: "no-store",
     });
 
-    // Fall back to GET if POST request returns unsupported method
+    const tokenResText = await tokenRes.text();
     let tokenData: any;
-    if (!tokenRes.ok) {
-      console.warn(`[Daraz OAuth Callback] POST token exchange returned HTTP ${tokenRes.status}. Retrying with GET...`);
-      const getRes = await fetch(tokenUrl, {
-        method: "GET",
-        headers: { "Content-Type": "application/json" },
-      });
-      if (!getRes.ok) {
-        throw new Error(`Token exchange HTTP Error [${getRes.status}]: ${getRes.statusText}`);
-      }
-      tokenData = await getRes.json();
-    } else {
-      tokenData = await tokenRes.json();
+    try {
+      tokenData = JSON.parse(tokenResText);
+    } catch (parseErr) {
+      console.error(`[Daraz OAuth Callback] Non-JSON response from token endpoint (HTTP ${tokenRes.status}):`, tokenResText);
+      throw new Error(`Daraz Token API HTTP ${tokenRes.status}: ${tokenResText.slice(0, 150)}`);
     }
 
-    // 4. Handle Consumed or Expired Authorization Code gracefully
+    console.log(`[Daraz OAuth Callback] Token API Response Status: ${tokenRes.status}, Response Code: ${tokenData.code || "0"}`);
+
+    // 4. Handle Daraz API Errors or Consumed Code
     if (tokenData.code && tokenData.code !== "0") {
       const errCode = String(tokenData.code);
-      const errMsg = tokenData.message || tokenData.detail || "Invalid Code";
+      const errMsg = tokenData.message || tokenData.detail || tokenData.msg || tokenData.sub_message || `Error ${errCode}`;
 
       if (
         errCode === "InvalidCode" ||
@@ -124,7 +120,7 @@ export async function GET(req: NextRequest) {
 
         return NextResponse.redirect(
           `${baseUrl}/stores?error=code_expired&message=${encodeURIComponent(
-            "Daraz authorization session expired or code was already used. Please connect again."
+            `Daraz API Error [${errCode}]: ${errMsg}`
           )}`
         );
       }
@@ -280,11 +276,7 @@ export async function GET(req: NextRequest) {
     return response;
   } catch (err: any) {
     console.error("[Daraz OAuth Callback Exception]:", err.message);
-    const friendlyError = encodeURIComponent(
-      err.message?.includes("Maximum 3")
-        ? err.message
-        : "Daraz store authorization could not be completed. Please try connecting again."
-    );
-    return NextResponse.redirect(`${baseUrl}/stores?error=oauth_failed&message=${friendlyError}`);
+    const exactErrorMsg = encodeURIComponent(err.message || "Daraz store authorization failed.");
+    return NextResponse.redirect(`${baseUrl}/stores?error=oauth_failed&message=${exactErrorMsg}`);
   }
 }

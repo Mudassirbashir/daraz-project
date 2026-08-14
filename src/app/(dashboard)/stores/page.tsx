@@ -1,5 +1,5 @@
 import React from "react";
-import { Store, Package, ShoppingCart, Truck, Plus, AlertCircle } from "lucide-react";
+import { Store, Package, ShoppingCart, Truck, Plus, AlertCircle, CheckCircle2 } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
@@ -7,8 +7,19 @@ import { StoreCardActions } from "@/components/stores/StoreCardActions";
 
 export const dynamic = "force-dynamic";
 
-export default async function StoresPage() {
+interface StoresPageProps {
+  searchParams?: {
+    connected?: string;
+    error?: string;
+    message?: string;
+  };
+}
+
+export default async function StoresPage({ searchParams }: StoresPageProps) {
   const supabase = createAdminClient();
+  const isConnectedSuccess = searchParams?.connected === "true";
+  const errorMessage = searchParams?.message;
+  const errorCode = searchParams?.error;
 
   // One-time automatic purge of legacy dummy/placeholder seed store rows from daraz_stores
   try {
@@ -115,6 +126,26 @@ export default async function StoresPage() {
 
   return (
     <div className="space-y-6">
+      {/* Dynamic OAuth Alert Banners */}
+      {isConnectedSuccess && (
+        <div className="flex items-center space-x-3 p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-xs font-bold shadow-sm">
+          <CheckCircle2 className="h-5 w-5 text-emerald-600 dark:text-emerald-400 shrink-0" />
+          <span>Daraz Store Connected Successfully! Initial product catalog and order synchronization complete.</span>
+        </div>
+      )}
+
+      {errorCode && (
+        <div className="flex items-start space-x-3 p-4 rounded-2xl bg-red-50 dark:bg-red-500/10 border border-red-200 dark:border-red-500/20 text-red-800 dark:text-red-300 text-xs font-semibold shadow-sm">
+          <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <span className="font-bold block text-sm">Daraz OAuth Authorization Error</span>
+            <p className="font-mono text-[11px] text-red-700 dark:text-red-300">
+              {errorMessage || "Store authorization could not be completed. Please click Connect New Store to retry."}
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Header Bar */}
       <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
         <div>
