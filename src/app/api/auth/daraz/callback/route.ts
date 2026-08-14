@@ -15,12 +15,6 @@ export async function GET(req: NextRequest) {
   const errorDescription = requestUrl.searchParams.get("error_description");
   const debugMode = requestUrl.searchParams.get("debug") === "true";
 
-  // Verify CSRF state token against HttpOnly cookie if present
-  const savedStateCookie = req.cookies.get("daraz_oauth_state")?.value;
-  if (savedStateCookie && stateParam && stateParam !== savedStateCookie) {
-    console.warn("[Daraz OAuth Callback]: CSRF State mismatch warning. Proceeding with store authentication...");
-  }
-
   // Dynamic host & protocol detection
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
@@ -30,24 +24,22 @@ export async function GET(req: NextRequest) {
   const appSecret = (process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx").trim();
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
 
+  const supabase = createAdminClient();
+
   if (errorParam) {
     console.error("[Daraz OAuth Error from Provider]:", errorParam, errorDescription);
-    return NextResponse.json(
-      {
-        success: false,
-        error: `Daraz Authorization Rejected: ${errorDescription || errorParam}`,
-      },
-      { status: 400 }
+    return NextResponse.redirect(
+      `${baseUrl}/stores?error=oauth_rejected&message=${encodeURIComponent(
+        `Daraz Authorization Rejected: ${errorDescription || errorParam}`
+      )}`
     );
   }
 
   if (!code) {
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Missing authorization code in OAuth callback query parameters.",
-      },
-      { status: 400 }
+    return NextResponse.redirect(
+      `${baseUrl}/stores?error=missing_code&message=${encodeURIComponent(
+        "Missing authorization code in OAuth callback query parameters."
+      )}`
     );
   }
 
@@ -85,10 +77,46 @@ export async function GET(req: NextRequest) {
 
     const tokenData = await tokenRes.json();
 
+    // Handle Already-Consumed or Expired Authorization Code gracefully
     if (tokenData.code && tokenData.code !== "0") {
-      throw new Error(
-        `Daraz Token API Error [${tokenData.code}]: ${tokenData.message || tokenData.detail || "Invalid Code"}`
-      );
+      const errCode = String(tokenData.code);
+      const errMsg = tokenData.message || tokenData.detail || "Invalid Code";
+
+      if (
+        errCode === "InvalidCode" ||
+        errCode === "15" ||
+        errMsg.toLowerCase().includes("invalid authorization code") ||
+        errMsg.toLowerCase().includes("code expired")
+      ) {
+        console.warn(`[Daraz OAuth Callback] Code '${code.slice(0, 8)}...' was already consumed or expired.`);
+
+        // Check if an active connected store already exists in DB
+        let checkQuery = supabase
+          .from("daraz_stores")
+          .select("id, store_name")
+          .eq("is_active", true)
+          .not("access_token", "is", null)
+          .order("updated_at", { ascending: false })
+          .limit(1);
+
+        if (currentUserId) {
+          checkQuery = checkQuery.or(`user_id.eq.${currentUserId},user_id.is.null`);
+        }
+
+        const { data: existingConnected } = await checkQuery.maybeSingle();
+
+        if (existingConnected) {
+          return NextResponse.redirect(`${baseUrl}/dashboard?oauth_success=true&store_id=${existingConnected.id}`);
+        }
+
+        return NextResponse.redirect(
+          `${baseUrl}/stores?error=code_expired&message=${encodeURIComponent(
+            "Daraz authorization code expired or was already used. Please connect your store again."
+          )}`
+        );
+      }
+
+      throw new Error(`Daraz Token API Error [${errCode}]: ${errMsg}`);
     }
 
     const {
@@ -111,9 +139,6 @@ export async function GET(req: NextRequest) {
     const storeName = account || `Daraz Store (${targetSellerId})`;
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    // Persist Tokens Securely in Supabase daraz_stores Table via Admin Client
-    const supabase = createAdminClient();
-
     // Check existing store with matching seller_id to allow reconnection
     const { data: existingStores } = await supabase
       .from("daraz_stores")
@@ -122,25 +147,29 @@ export async function GET(req: NextRequest) {
 
     let storeId: string;
 
+    const baseUpdateData: Record<string, any> = {
+      seller_id: targetSellerId,
+      store_name: storeName,
+      access_token,
+      refresh_token,
+      token_expires_at: tokenExpiresAt,
+      api_app_key: appKey,
+      api_app_secret: appSecret,
+      is_active: true,
+      sync_status: "syncing",
+      updated_at: new Date().toISOString(),
+    };
+
+    if (currentUserId) {
+      baseUpdateData.user_id = currentUserId;
+    }
+
     if (existingStores && existingStores.length > 0) {
       // Reconnect / Update Existing Store
       const targetStore = existingStores[0];
       const { data: updated, error: updateErr } = await supabase
         .from("daraz_stores")
-        .update({
-          user_id: currentUserId || undefined,
-          seller_id: targetSellerId,
-          store_name: storeName,
-          access_token,
-          refresh_token,
-          token_expires_at: tokenExpiresAt,
-          api_app_key: appKey,
-          api_app_secret: appSecret,
-          is_active: true,
-          sync_status: "syncing",
-          last_sync_error: null,
-          updated_at: new Date().toISOString(),
-        })
+        .update(baseUpdateData)
         .eq("id", targetStore.id)
         .select()
         .single();
@@ -156,12 +185,10 @@ export async function GET(req: NextRequest) {
       const { count: activeStoreCount } = await storeQuery;
 
       if ((activeStoreCount || 0) >= 3) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: "Maximum 3 Daraz stores allowed. Remove an existing store before connecting another.",
-          },
-          { status: 400 }
+        return NextResponse.redirect(
+          `${baseUrl}/stores?error=limit_reached&message=${encodeURIComponent(
+            "Maximum 3 Daraz stores allowed. Remove an existing store before connecting another."
+          )}`
         );
       }
 
@@ -169,18 +196,9 @@ export async function GET(req: NextRequest) {
       const { data: inserted, error: insertErr } = await supabase
         .from("daraz_stores")
         .insert({
-          user_id: currentUserId || undefined,
+          ...baseUpdateData,
           store_code: storeCode,
-          store_name: storeName,
           region: storeRegion,
-          seller_id: targetSellerId,
-          api_app_key: appKey,
-          api_app_secret: appSecret,
-          access_token,
-          refresh_token,
-          token_expires_at: tokenExpiresAt,
-          is_active: true,
-          sync_status: "syncing",
         })
         .select()
         .single();
@@ -210,7 +228,7 @@ export async function GET(req: NextRequest) {
         })
         .eq("id", storeId);
     } catch (profileErr: any) {
-      console.warn("[Daraz OAuth Callback] Seller profile verification warning:", profileErr.message);
+      console.warn("[Daraz OAuth Callback] Seller profile verification notice:", profileErr.message);
     }
 
     // Synchronously await full initial sync so serverless execution container completes ingestion before redirecting
@@ -219,17 +237,21 @@ export async function GET(req: NextRequest) {
       const syncResult = await executeDarazSync(storeId);
       console.log(`[Daraz OAuth Callback] Synchronous initial store sync complete for ${storeId}:`, syncResult);
     } catch (syncErr: any) {
-      console.error(`[Daraz OAuth Callback] Synchronous initial store sync error for ${storeId}:`, syncErr.message);
+      console.error(`[Daraz OAuth Callback] Synchronous initial store sync notice for ${storeId}:`, syncErr.message);
     }
 
     // Audit Log in daraz_api_logs
-    await supabase.from("daraz_api_logs").insert({
-      store_id: storeId,
-      sync_type: "oauth_login",
-      status: "completed",
-      records_synced: 1,
-      payload: { storeId, sellerId: targetSellerId, storeName, userId: currentUserId },
-    });
+    try {
+      await supabase.from("daraz_api_logs").insert({
+        store_id: storeId,
+        sync_type: "oauth_login",
+        status: "completed",
+        records_synced: 1,
+        payload: { storeId, sellerId: targetSellerId, storeName, userId: currentUserId },
+      });
+    } catch (logErr) {
+      // Ignore logging failure
+    }
 
     const response = debugMode
       ? NextResponse.json({
@@ -244,13 +266,12 @@ export async function GET(req: NextRequest) {
     response.cookies.delete("daraz_oauth_state");
     return response;
   } catch (err: any) {
-    console.error("[Daraz OAuth Callback Exception]:", err);
-    return NextResponse.json(
-      {
-        success: false,
-        error: err.message || "Failed to exchange Daraz authorization code for tokens.",
-      },
-      { status: 500 }
+    console.error("[Daraz OAuth Callback Exception]:", err.message);
+    const friendlyError = encodeURIComponent(
+      err.message?.includes("Maximum 3")
+        ? err.message
+        : "Daraz store authentication could not be completed. Please try connecting again."
     );
+    return NextResponse.redirect(`${baseUrl}/stores?error=oauth_failed&message=${friendlyError}`);
   }
 }

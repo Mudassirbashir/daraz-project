@@ -10,7 +10,7 @@ export const dynamic = "force-dynamic";
 export default async function StoresPage() {
   const supabase = createAdminClient();
 
-  // Purge any old demo/placeholder seed rows from daraz_stores
+  // One-time automatic purge of legacy dummy/placeholder seed store rows from daraz_stores
   try {
     await supabase
       .from("daraz_stores")
@@ -29,8 +29,7 @@ export default async function StoresPage() {
       const { data: userStores } = await supabase
         .from("daraz_stores")
         .select("id")
-        .or(`user_id.eq.${user.id},user_id.is.null`)
-        .not("seller_id", "in", '("504904","504905","504906")');
+        .or(`user_id.eq.${user.id},user_id.is.null`);
       userStoreIds = (userStores || []).map((s) => s.id);
     }
   } catch (e) {
@@ -40,7 +39,6 @@ export default async function StoresPage() {
   let storesQuery = supabase
     .from("daraz_stores")
     .select("*")
-    .not("seller_id", "in", '("504904","504905","504906")')
     .order("created_at", { ascending: true });
 
   if (userStoreIds.length > 0) {

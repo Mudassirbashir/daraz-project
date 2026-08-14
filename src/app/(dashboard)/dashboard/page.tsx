@@ -35,7 +35,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const selectedStoreId = searchParams?.storeId || "all";
   const isCombinedView = selectedStoreId === "all";
 
-  // Purge any old demo/placeholder seed rows from daraz_stores
+  // Purge legacy seed store rows from database
   try {
     await supabase
       .from("daraz_stores")
@@ -64,8 +64,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       const { data: userStores } = await supabase
         .from("daraz_stores")
         .select("id")
-        .or(`user_id.eq.${user.id},user_id.is.null`)
-        .not("seller_id", "in", '("504904","504905","504906")');
+        .or(`user_id.eq.${user.id},user_id.is.null`);
       userStoreIds = (userStores || []).map((s) => s.id);
     }
   } catch (e) {
@@ -76,7 +75,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   let storesQuery = supabase
     .from("daraz_stores")
     .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
-    .not("seller_id", "in", '("504904","504905","504906")')
     .order("created_at", { ascending: true });
 
   if (userStoreIds.length > 0) {

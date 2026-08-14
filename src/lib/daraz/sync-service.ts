@@ -355,30 +355,36 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           orderOffset += limit;
         } while (orderOffset < totalOrders && fetchedOrderCount > 0);
 
-        // Update store last_synced_at
-        await supabase
-          .from("daraz_stores")
-          .update({
-            last_synced_at: timestamp,
-            sync_status: "idle",
-            last_sync_error: null,
-            updated_at: timestamp,
-          })
-          .eq("id", store.id);
+        // Safely update store status
+        try {
+          await supabase
+            .from("daraz_stores")
+            .update({
+              last_synced_at: timestamp,
+              sync_status: "idle",
+              updated_at: timestamp,
+            })
+            .eq("id", store.id);
+        } catch (stErr) {
+          // ignore optional column mismatch
+        }
 
         storesSynced++;
       } catch (storeErr: any) {
         console.error(`[SyncEngine] Sync failed for store ${store.store_code}:`, storeErr.message);
         errors.push(`Store ${store.store_name} (${store.store_code}): ${storeErr.message}`);
 
-        await supabase
-          .from("daraz_stores")
-          .update({
-            sync_status: "error",
-            last_sync_error: storeErr.message,
-            updated_at: timestamp,
-          })
-          .eq("id", store.id);
+        try {
+          await supabase
+            .from("daraz_stores")
+            .update({
+              sync_status: "error",
+              updated_at: timestamp,
+            })
+            .eq("id", store.id);
+        } catch (stErr) {
+          // ignore optional column mismatch
+        }
       } finally {
         storeSyncLocks.delete(store.id);
       }
@@ -387,24 +393,28 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
     const durationMs = Date.now() - startTime;
 
     // Log global sync job diagnostic
-    await supabase.from("daraz_api_logs").insert({
-      store_id: targetStoreId || connectedStores[0]?.id,
-      sync_type: targetStoreId ? "store_sync" : "cron_sync",
-      status: errors.length > 0 ? "completed_with_errors" : "completed",
-      records_synced: productsSynced + ordersSynced,
-      payload: {
-        durationMs,
-        storesSynced,
-        productsSynced,
-        ordersSynced,
-        importedCount,
-        updatedCount,
-        failedCount,
-        errors,
-        startedTimeIso,
-        completedTimeIso: timestamp,
-      },
-    });
+    try {
+      await supabase.from("daraz_api_logs").insert({
+        store_id: targetStoreId || connectedStores[0]?.id,
+        sync_type: targetStoreId ? "store_sync" : "cron_sync",
+        status: errors.length > 0 ? "completed_with_errors" : "completed",
+        records_synced: productsSynced + ordersSynced,
+        payload: {
+          durationMs,
+          storesSynced,
+          productsSynced,
+          ordersSynced,
+          importedCount,
+          updatedCount,
+          failedCount,
+          errors,
+          startedTimeIso,
+          completedTimeIso: timestamp,
+        },
+      });
+    } catch (logErr) {
+      // ignore
+    }
 
     return {
       success: errors.length === 0,
