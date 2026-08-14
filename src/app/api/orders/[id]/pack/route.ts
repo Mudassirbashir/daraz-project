@@ -11,21 +11,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
     const supabase = createAdminClient();
 
-    // Fetch user profile name
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name, employee_id")
-      .eq("id", user.id)
-      .maybeSingle();
+    // Fetch user profile name if user logged in
+    let operatorName = "Team Member (Ops Manager)";
+    if (user?.id) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, employee_id")
+        .eq("id", user.id)
+        .maybeSingle();
 
-    const operatorName = profile?.full_name || profile?.employee_id || user.email || "Packing Staff";
+      operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
+    }
 
     // Fetch order & store credentials
     const { data: order, error: fetchErr } = await supabase

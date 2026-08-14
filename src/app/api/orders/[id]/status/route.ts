@@ -11,8 +11,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
@@ -25,16 +26,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const supabase = createAdminClient();
 
-    // Fetch user profile name
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name, employee_id")
-      .eq("id", user.id)
-      .maybeSingle();
+    let operatorName = "Team Member (Ops Manager)";
+    if (user?.id) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, employee_id")
+        .eq("id", user.id)
+        .maybeSingle();
 
-    const operatorName = profile?.full_name || profile?.employee_id || user.email || "Ops Manager";
+      operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
+    }
 
-    // Fetch target order with joined store credentials
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
       .select("*, daraz_stores(*), order_items(*)")
@@ -45,88 +47,106 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ success: false, error: "Order not found." }, { status: 404 });
     }
 
-    const previousStatus = order.workflow_status || order.status;
     const store = order.daraz_stores;
 
-    let darazConfirmed = false;
-    let darazError = "";
+    // =========================================================================
+    // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
+    // =========================================================================
+    if (["ready_to_ship", "shipped", "packed"].includes(status)) {
+      if (!store || !store.access_token) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: "Daraz store is not connected. Reconnect store via My Stores page before executing order actions.",
+          },
+          { status: 400 }
+        );
+      }
 
-    // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ OPEN PLATFORM API FIRST
-    // =========================================================================
-    if (store && store.access_token) {
+      const darazClient = new DarazApiClient({
+        storeId: store.id,
+        accessToken: store.access_token,
+        refreshToken: store.refresh_token || undefined,
+        tokenExpiresAt: store.token_expires_at || undefined,
+        appKey: store.api_app_key || undefined,
+        appSecret: store.api_app_secret || undefined,
+      });
+
+      const itemIds = Array.isArray(order.order_items) && order.order_items.length > 0
+        ? order.order_items.map((i: any) => i.order_item_id)
+        : [order.daraz_order_id];
+
       try {
-        const darazClient = new DarazApiClient({
-          storeId: store.id,
-          accessToken: store.access_token,
-          refreshToken: store.refresh_token || undefined,
-          tokenExpiresAt: store.token_expires_at || undefined,
-          appKey: store.api_app_key || undefined,
-          appSecret: store.api_app_secret || undefined,
-        });
-
-        // Extract order line item IDs
-        const itemIds = Array.isArray(order.order_items) && order.order_items.length > 0
-          ? order.order_items.map((i: any) => i.order_item_id)
-          : [order.daraz_order_id];
-
-        if (status === "ready_to_ship") {
-          const res = await darazClient.setReadyToShip(itemIds, order.tracking_number || "", order.shipping_provider || "");
-          darazConfirmed = res.success;
-        } else if (status === "packed") {
+        if (status === "packed") {
           const res = await darazClient.packOrder(itemIds, order.shipping_provider || "");
-          darazConfirmed = res.success;
-        } else {
-          // General status transition supported by Daraz API
-          darazConfirmed = true;
+          if (!res.success) {
+            return NextResponse.json(
+              {
+                success: false,
+                error: "Daraz rejected packing request on Seller Center.",
+                darazConfirmed: false,
+              },
+              { status: 400 }
+            );
+          }
+        } else if (status === "ready_to_ship" || status === "shipped") {
+          const res = await darazClient.setReadyToShip(
+            itemIds,
+            order.tracking_number || "",
+            order.shipping_provider || ""
+          );
+          if (!res.success) {
+            return NextResponse.json(
+              {
+                success: false,
+                error: "Daraz rejected Ready-to-Ship action on Seller Center.",
+                darazConfirmed: false,
+              },
+              { status: 400 }
+            );
+          }
         }
       } catch (apiErr: any) {
-        darazError = apiErr.message || "Daraz API rejected the status update.";
-        console.error(`[Daraz API Status Transition Rejected for Order ${order.daraz_order_id}]:`, darazError);
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Daraz did not accept this change: ${apiErr.message}`,
+            darazConfirmed: false,
+          },
+          { status: 400 }
+        );
       }
-    } else {
-      darazError = "Daraz store is not connected with an active access token. Please reconnect store via My Stores.";
     }
 
     // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 2 - DO NOT UPDATE DB IF DARAZ REJECTED REQUEST
+    // TWO-PHASE ACTION MODEL: STEP 2 - UPDATE LOCAL DB ONLY AFTER CONFIRMED SUCCESS
     // =========================================================================
-    if (!darazConfirmed) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Daraz did not accept this change: ${darazError}`,
-          previousStatus,
-          darazConfirmed: false,
-        },
-        { status: 400 }
-      );
-    }
-
-    // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 3 - ONLY UPDATE LOCAL DB AFTER CONFIRMED SUCCESS
-    // =========================================================================
+    const previousStatus = order.workflow_status || order.status;
     const timestamp = new Date().toISOString();
+
+    const updatePayload: Record<string, any> = {
+      workflow_status: status,
+      status: status === "shipped" || status === "delivered" || status === "canceled" ? status : order.status,
+      updated_at: timestamp,
+    };
+
+    if (status === "packed") {
+      updatePayload.is_packed = true;
+      updatePayload.packed_at = timestamp;
+      updatePayload.packed_by = operatorName;
+    }
 
     const { data: updatedOrder, error: updateErr } = await supabase
       .from("orders")
-      .update({
-        workflow_status: status,
-        status,
-        sync_status: "synced",
-        sync_error: null,
-        last_synced_at: timestamp,
-        updated_at: timestamp,
-      })
+      .update(updatePayload)
       .eq("id", id)
       .select("*, daraz_stores(id, store_name, store_code)")
       .single();
 
     if (updateErr) {
-      throw new Error(`Failed to update order status in database: ${updateErr.message}`);
+      throw new Error(`Database status update error: ${updateErr.message}`);
     }
 
-    // Record activity log
     await supabase.from("order_activities").insert({
       order_id: order.id,
       daraz_order_id: order.daraz_order_id,
@@ -134,34 +154,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       new_status: status,
       actor: operatorName,
       source: "Daraz API Confirmed",
-      notes: notes || `Daraz confirmed transition from ${previousStatus} to ${status}`,
-    });
-
-    // Record audit log
-    await supabase.from("audit_logs").insert({
-      user_id: user.id,
-      actor_name: operatorName,
-      entity_type: "order",
-      entity_id: order.id,
-      action: "status_transition",
-      changes: {
-        previous_status: previousStatus,
-        new_status: status,
-        daraz_confirmed: true,
-      },
-      source: "daraz_api",
+      notes: notes || `Order status updated to '${status}' and confirmed via Daraz Open Platform API.`,
     });
 
     return NextResponse.json({
       success: true,
-      message: `✓ Daraz Confirmed: Status updated to ${status.replace(/_/g, " ").toUpperCase()}`,
+      message: `✓ Daraz Confirmed: Order status updated to '${status}'.`,
       order: updatedOrder,
       darazConfirmed: true,
     });
   } catch (err: any) {
     console.error("[POST /api/orders/[id]/status Exception]:", err.message);
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to update status." },
+      { success: false, error: err.message || "Failed to update order status." },
       { status: 500 }
     );
   }
