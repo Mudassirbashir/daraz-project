@@ -17,14 +17,15 @@ export async function POST(
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
-      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    if (!user && !opsUserCookie) {
+      return NextResponse.json({ success: false, error: "Unauthorized access. Please log in to manage stores." }, { status: 401 });
     }
 
     const supabase = createAdminClient();
 
-    // Fetch target store to verify ownership
+    // Fetch target store
     const { data: store, error: fetchErr } = await supabase
       .from("daraz_stores")
       .select("*")
@@ -35,8 +36,8 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Store not found." }, { status: 404 });
     }
 
-    // Security check: user must own store or store must be unassigned
-    if (store.user_id && store.user_id !== user.id) {
+    // Security check: if user is logged in via Supabase auth, verify store user_id match if set
+    if (user && store.user_id && store.user_id !== user.id) {
       return NextResponse.json({ success: false, error: "Access denied to disconnect this store." }, { status: 403 });
     }
 
@@ -62,7 +63,7 @@ export async function POST(
     try {
       await supabase.from("audit_logs").insert({
         store_id: storeId,
-        user_id: user.id,
+        user_id: user?.id || null,
         action: "disconnect_store",
         entity_type: "daraz_store",
         entity_id: storeId,

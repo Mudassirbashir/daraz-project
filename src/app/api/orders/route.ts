@@ -24,19 +24,21 @@ export async function GET(req: NextRequest) {
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
     const supabase = createAdminClient();
 
-    // Query user authorized store IDs
-    const { data: userStores } = await supabase
-      .from("daraz_stores")
-      .select("id")
-      .or(`user_id.eq.${user.id},user_id.is.null`);
+    // Query authorized stores (if logged in via Supabase Auth, filter user_id or system stores; else return all stores)
+    let storeQuery = supabase.from("daraz_stores").select("id");
+    if (user?.id) {
+      storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
+    }
 
+    const { data: userStores } = await storeQuery;
     const userStoreIds = (userStores || []).map((s) => s.id);
 
     if (userStoreIds.length === 0) {
@@ -132,7 +134,7 @@ export async function GET(req: NextRequest) {
 
     const metrics = {
       totalOrders: totalOrdersCount || 0,
-      pending: pendingCount || 0,
+      pending: (pendingCount || 0) + (readyToShipCount || 0),
       readyToShip: readyToShipCount || 0,
       shipped: shippedCount || 0,
       delivered: deliveredCount || 0,
