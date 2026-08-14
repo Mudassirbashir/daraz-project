@@ -36,12 +36,21 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Store not found." }, { status: 404 });
     }
 
-    // Security check: if user is logged in via Supabase auth, verify store user_id match if set
+    // Security check: verify store ownership if user_id is set
     if (user && store.user_id && store.user_id !== user.id) {
       return NextResponse.json({ success: false, error: "Access denied to disconnect this store." }, { status: 403 });
     }
 
-    // Execute Store Disconnect (removes API tokens, sets inactive, preserves historical data)
+    // Idempotency check: if store is already disconnected, return clean success
+    if (!store.is_active && !store.access_token) {
+      return NextResponse.json({
+        success: true,
+        alreadyDisconnected: true,
+        message: `Store '${store.store_name}' is already disconnected.`,
+      });
+    }
+
+    // Execute Store Disconnect (removes API tokens, sets inactive, preserves historical order/product data)
     const { error: updateErr } = await supabase
       .from("daraz_stores")
       .update({
@@ -50,7 +59,6 @@ export async function POST(
         access_token: null,
         refresh_token: null,
         token_expires_at: null,
-        last_sync_error: "Store disconnected by user.",
         updated_at: new Date().toISOString(),
       })
       .eq("id", storeId);
@@ -74,12 +82,12 @@ export async function POST(
         },
       });
     } catch (auditErr) {
-      // Ignore if audit log fails
+      // Ignore audit failure
     }
 
     return NextResponse.json({
       success: true,
-      message: `Store '${store.store_name}' has been securely disconnected from Daraz Hub. Historical records are preserved.`,
+      message: `Store '${store.store_name}' has been securely disconnected. Historical orders and products are preserved.`,
     });
   } catch (err: any) {
     console.error("[POST /api/stores/[id]/disconnect Exception]:", err.message);

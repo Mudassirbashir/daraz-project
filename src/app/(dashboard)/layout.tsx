@@ -46,10 +46,12 @@ export default async function DashboardLayout({
     }
   }
 
-  // Fetch real connected Daraz Stores belonging to user
+  // Fetch active connected Daraz Stores belonging to user
   let storesQuery = (adminSupabase as any)
     .from("daraz_stores")
     .select("id, store_code, store_name, seller_id, is_active, access_token, region")
+    .eq("is_active", true)
+    .not("access_token", "is", null)
     .order("created_at", { ascending: true });
 
   if (user?.id) {
