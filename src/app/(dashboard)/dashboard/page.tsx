@@ -118,6 +118,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     };
   });
 
+  const totalStoresCount = enrichedStores.length;
   const connectedStoresCount = enrichedStores.filter((s) => s.isConnected).length;
   const disconnectedStoresCount = enrichedStores.filter((s) => !s.isConnected).length;
 
