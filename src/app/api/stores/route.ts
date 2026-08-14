@@ -25,7 +25,49 @@ export async function GET(req: NextRequest) {
       throw new Error(`Failed to fetch stores: ${storesErr.message}`);
     }
 
-    const storesList = stores || [];
+    let storesList = stores || [];
+
+    // Auto-seed initial store slots if table is empty
+    if (storesList.length === 0) {
+      const initialSlots = [
+        {
+          store_code: "DARAZ-PK-01",
+          store_name: "Daraz Flagship PK 1",
+          region: "PK",
+          seller_id: "504904",
+          api_app_key: process.env.DARAZ_APP_KEY || "504904",
+          api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+          is_active: true,
+        },
+        {
+          store_code: "DARAZ-PK-02",
+          store_name: "Daraz Express PK 2",
+          region: "PK",
+          seller_id: "504905",
+          api_app_key: process.env.DARAZ_APP_KEY || "504904",
+          api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+          is_active: true,
+        },
+        {
+          store_code: "DARAZ-PK-03",
+          store_name: "Daraz Wholesale PK 3",
+          region: "PK",
+          seller_id: "504906",
+          api_app_key: process.env.DARAZ_APP_KEY || "504904",
+          api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+          is_active: true,
+        },
+      ];
+
+      const { data: inserted, error: insertErr } = await supabase
+        .from("daraz_stores")
+        .insert(initialSlots)
+        .select();
+
+      if (!insertErr && inserted) {
+        storesList = inserted;
+      }
+    }
 
     // 2. Fetch metrics for connected stores
     const enrichedStores = await Promise.all(

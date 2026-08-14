@@ -70,7 +70,44 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   ]);
 
   userName = userProfileResult;
-  const storesList = storesResult.data || [];
+  let storesList = storesResult.data || [];
+
+  if (storesList.length === 0) {
+    const initialSlots = [
+      {
+        store_code: "DARAZ-PK-01",
+        store_name: "Daraz Flagship PK 1",
+        region: "PK",
+        seller_id: "504904",
+        api_app_key: process.env.DARAZ_APP_KEY || "504904",
+        api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+        is_active: true,
+      },
+      {
+        store_code: "DARAZ-PK-02",
+        store_name: "Daraz Express PK 2",
+        region: "PK",
+        seller_id: "504905",
+        api_app_key: process.env.DARAZ_APP_KEY || "504904",
+        api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+        is_active: true,
+      },
+      {
+        store_code: "DARAZ-PK-03",
+        store_name: "Daraz Wholesale PK 3",
+        region: "PK",
+        seller_id: "504906",
+        api_app_key: process.env.DARAZ_APP_KEY || "504904",
+        api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+        is_active: true,
+      },
+    ];
+
+    const { data: inserted } = await supabase.from("daraz_stores").insert(initialSlots).select();
+    if (inserted && inserted.length > 0) {
+      storesList = inserted;
+    }
+  }
 
   // 2. Fetch Selective Column Metrics in Parallel
   let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");

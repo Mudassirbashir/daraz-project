@@ -93,16 +93,14 @@ export class DarazApiClient {
   constructor(options: DarazClientOptions = {}) {
     const key = process.env.DARAZ_APP_KEY;
     if (!key || !key.trim()) {
-      console.warn("[DarazApiClient Notice]: DARAZ_APP_KEY environment variable is missing. Using fallback for build.");
-      this.appKey = "dummy-app-key";
+      this.appKey = "504904";
     } else {
       this.appKey = key.trim();
     }
 
     const secret = process.env.DARAZ_APP_SECRET;
     if (!secret || !secret.trim()) {
-      console.warn("[DarazApiClient Notice]: DARAZ_APP_SECRET environment variable is missing. Using fallback for build.");
-      this.appSecret = "dummy-app-secret";
+      this.appSecret = "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
     } else {
       this.appSecret = secret.trim();
     }

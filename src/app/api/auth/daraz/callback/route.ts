@@ -40,8 +40,8 @@ export async function GET(req: NextRequest) {
   const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const appKey = process.env.DARAZ_APP_KEY;
-  const appSecret = process.env.DARAZ_APP_SECRET;
+  const appKey = process.env.DARAZ_APP_KEY || "504904";
+  const appSecret = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
 
   const envAudit = {
