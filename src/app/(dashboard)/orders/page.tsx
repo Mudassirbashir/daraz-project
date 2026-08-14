@@ -269,24 +269,41 @@ export default function OrdersPage() {
 
                       {columnVisibility.status && (
                         <td className="px-4 py-3">
-                          <span className="inline-flex items-center px-2 py-0.5 rounded font-bold text-[10px] capitalize bg-slate-100 text-slate-800 border border-slate-200">
-                            {o.order_status || "Pending"}
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
+                            (o.status || o.workflow_status) === "pending" || (o.status || o.workflow_status) === "unpaid"
+                              ? "bg-amber-100 text-amber-800 border border-amber-200"
+                              : (o.status || o.workflow_status) === "shipped" || (o.status || o.workflow_status) === "ready_to_ship"
+                              ? "bg-blue-100 text-blue-800 border border-blue-200"
+                              : (o.status || o.workflow_status) === "delivered"
+                              ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
+                              : "bg-slate-100 text-slate-800 border border-slate-200"
+                          }`}>
+                            {(o.status || o.workflow_status || "pending").replace(/_/g, " ")}
                           </span>
                         </td>
                       )}
 
                       {columnVisibility.tracking && (
-                        <td className="px-4 py-3 font-mono text-slate-600">{o.tracking_number || "N/A"}</td>
+                        <td className="px-4 py-3 font-mono text-slate-600">{o.tracking_number || o.daraz_order_id || "N/A"}</td>
                       )}
 
-                      <td className="px-4 py-3 text-right">
+                      <td className="px-4 py-3 text-right space-x-1.5">
                         <button
                           onClick={() => setSelectedOrder(o)}
-                          title="View order details and items"
+                          title="View complete order details and items"
                           className="inline-flex items-center space-x-1 border border-slate-300 rounded-lg px-2.5 py-1 text-slate-700 hover:bg-slate-50 font-bold"
                         >
                           <Eye className="h-3.5 w-3.5 text-slate-500" />
-                          <span>See Details</span>
+                          <span>Details</span>
+                        </button>
+
+                        <button
+                          onClick={() => setPrintOrder(o)}
+                          title="Print Official Shipping Label"
+                          className="inline-flex items-center space-x-1 border border-orange-200 bg-orange-50 rounded-lg px-2.5 py-1 text-orange-700 hover:bg-orange-100 font-bold"
+                        >
+                          <Package className="h-3.5 w-3.5 text-orange-600" />
+                          <span>Label</span>
                         </button>
                       </td>
                     </tr>

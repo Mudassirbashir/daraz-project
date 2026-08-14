@@ -532,48 +532,66 @@ export class DarazApiClient {
   /**
    * Fetch Store Orders with Pagination & Full Normalized Header Fields (/orders/get)
    */
-  async getOrders(offset = 0, limit = 50, createdAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
+  async getOrders(offset = 0, limit = 50, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
+    // Daraz OP REST API requires update_after or created_after to avoid Error E018
+    const safeUpdateAfter = updateAfter || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
     const params: Record<string, string> = {
       sort_by: "created_at",
       sort_direction: "DESC",
       offset: String(offset),
       limit: String(limit),
+      update_after: safeUpdateAfter,
     };
 
-    if (createdAfter) {
-      params.created_after = createdAfter;
-    }
-
-    const response = await this.request<{ data: { orders?: any[]; countTotal?: number } }>("/orders/get", params);
+    const response = await this.request<{ data: { orders?: any[]; countTotal?: number; count?: number } }>("/orders/get", params);
 
     const rawOrders = response.data?.orders || [];
-    const total = response.data?.countTotal || rawOrders.length;
+    const total = response.data?.countTotal ?? response.data?.count ?? rawOrders.length;
 
     const orders: DarazOrderItem[] = rawOrders.map((o) => {
       const addressShipping = o.address_shipping || {};
       const addressBilling = o.address_billing || {};
+
+      // Parse status safely whether Daraz returns an array or string
+      let rawStatus = "pending";
+      if (Array.isArray(o.statuses) && o.statuses.length > 0) {
+        rawStatus = String(o.statuses[0]);
+      } else if (typeof o.statuses === "string" && o.statuses.trim()) {
+        rawStatus = o.statuses.trim();
+      } else if (typeof o.status === "string" && o.status.trim()) {
+        rawStatus = o.status.trim();
+      }
+
+      const exactFirstName = o.customer_first_name || addressShipping.first_name || addressBilling.first_name || "Customer";
+      const exactLastName = o.customer_last_name || addressShipping.last_name || addressBilling.last_name || "";
+      const exactFullName = `${exactFirstName} ${exactLastName}`.trim();
+
+      const exactPhone = addressShipping.phone || addressBilling.phone || o.customer_phone || "N/A";
+      const exactCity = addressShipping.city || addressBilling.city || "Karachi";
+      const exactAddress = [addressShipping.address1, addressShipping.address2].filter(Boolean).join(", ").trim() || "Address on File";
 
       return {
         order_id: String(o.order_id),
         order_number: String(o.order_number || o.order_id),
         package_id: String(o.package_id || `PKG-${o.order_id}`),
         package_number: String(o.package_number || o.order_id),
-        tracking_code: o.statuses?.[0] || o.tracking_code || o.order_number || `DEX-${o.order_id}`,
-        customer_first_name: `${o.customer_first_name || "Customer"} ${o.customer_last_name || ""}`.trim(),
-        customer_phone: addressShipping.phone || addressBilling.phone || "N/A",
-        customer_city: addressShipping.city || addressBilling.city || "Pakistan",
-        customer_address: `${addressShipping.address1 || ""} ${addressShipping.address2 || ""}`.trim() || "Address on File",
+        tracking_code: o.tracking_code || o.order_number || String(o.order_id),
+        customer_first_name: exactFullName,
+        customer_phone: exactPhone,
+        customer_city: exactCity,
+        customer_address: exactAddress,
         customer_province: addressShipping.address3 || addressShipping.state || "Pakistan",
-        customer_area: addressShipping.address4 || addressShipping.city || "",
-        customer_postcode: addressShipping.postcode || "",
+        customer_area: addressShipping.address5 || addressShipping.address4 || exactCity,
+        customer_postcode: addressShipping.postcode || addressBilling.postcode || "",
         shipping_provider: o.shipping_provider || addressShipping.shipping_provider || "Daraz Express (DEX)",
         shipping_type: o.shipping_type || "Standard",
         payment_method: o.payment_method || "COD",
-        price_cents: Math.round((o.price || 0) * 100),
-        shipping_fee_cents: Math.round((o.shipping_fee || 0) * 100),
-        voucher_discount_cents: Math.round((o.voucher_platform || 0) * 100),
-        seller_discount_cents: Math.round((o.voucher_seller || 0) * 100),
-        statuses: (o.statuses?.[0] || "pending").toLowerCase(),
+        price_cents: Math.round(parseFloat(String(o.price || 0)) * 100),
+        shipping_fee_cents: Math.round(parseFloat(String(o.shipping_fee || 0)) * 100),
+        voucher_discount_cents: Math.round(parseFloat(String(o.voucher_platform || o.voucher || 0)) * 100),
+        seller_discount_cents: Math.round(parseFloat(String(o.voucher_seller || 0)) * 100),
+        statuses: rawStatus.toLowerCase(),
         created_at: o.created_at || new Date().toISOString(),
         updated_at: o.updated_at || new Date().toISOString(),
         items: [],
