@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { DarazApiClient } from "@/lib/daraz/client";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,6 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
-    // Session Authentication Verification
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
@@ -33,7 +33,6 @@ export async function GET(req: NextRequest) {
       .from("orders")
       .select("*, daraz_stores(store_name, store_code, region)", { count: "exact" });
 
-    // 1. Stage / Status Filter
     if (stage !== "all") {
       if (stage === "new") query = query.in("status", ["pending", "unpaid"]);
       else if (stage === "ready_to_pick" || stage === "picking") query = query.eq("status", "pending");
@@ -43,7 +42,6 @@ export async function GET(req: NextRequest) {
       else if (stage === "canceled" || stage === "returned") query = query.in("status", ["canceled", "returned", "failed"]);
     }
 
-    // 2. Search / Barcode Filter
     const searchTerm = barcode.trim() || search.trim();
     if (searchTerm) {
       const q = `%${searchTerm}%`;
@@ -58,7 +56,6 @@ export async function GET(req: NextRequest) {
       throw new Error(`Database orders query error: ${error.message}`);
     }
 
-    // Fetch warehouse diagnostics and targeted inventory shelf locations in parallel
     const [
       { count: waitingCount },
       { count: packedCount },
@@ -113,7 +110,6 @@ export async function GET(req: NextRequest) {
 
 export async function PATCH(req: NextRequest) {
   try {
-    // Session Authentication Verification
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
@@ -129,36 +125,91 @@ export async function PATCH(req: NextRequest) {
     }
 
     const supabase = createAdminClient();
+
+    // Fetch target orders with store info
+    const { data: ordersToProcess, error: fetchErr } = await supabase
+      .from("orders")
+      .select("*, daraz_stores(*), order_items(*)")
+      .in("id", ids);
+
+    if (fetchErr || !ordersToProcess || ordersToProcess.length === 0) {
+      return NextResponse.json({ success: false, error: "Target orders not found." }, { status: 404 });
+    }
+
+    const confirmedIds: string[] = [];
+    const rejectedErrors: string[] = [];
+
+    // Process each order through Daraz API first (Two-Phase Model)
+    for (const order of ordersToProcess) {
+      const store = order.daraz_stores;
+      if (!store || !store.access_token) {
+        rejectedErrors.push(`Order #${order.daraz_order_id}: Store disconnected.`);
+        continue;
+      }
+
+      try {
+        const darazClient = new DarazApiClient({
+          storeId: store.id,
+          accessToken: store.access_token,
+          refreshToken: store.refresh_token || undefined,
+          tokenExpiresAt: store.token_expires_at || undefined,
+          appKey: store.api_app_key || undefined,
+          appSecret: store.api_app_secret || undefined,
+        });
+
+        const itemIds = Array.isArray(order.order_items) && order.order_items.length > 0
+          ? order.order_items.map((i: any) => i.order_item_id)
+          : [order.daraz_order_id];
+
+        if (action === "pack" || targetStatus === "ready_to_ship") {
+          const res = await darazClient.packOrder(itemIds, order.shipping_provider || "");
+          if (res.success) confirmedIds.push(order.id);
+          else rejectedErrors.push(`Order #${order.daraz_order_id}: Daraz rejected packing.`);
+        } else if (action === "ship" || targetStatus === "shipped") {
+          const res = await darazClient.setReadyToShip(itemIds, order.tracking_number || "", order.shipping_provider || "");
+          if (res.success) confirmedIds.push(order.id);
+          else rejectedErrors.push(`Order #${order.daraz_order_id}: Daraz rejected RTS/shipping.`);
+        } else {
+          confirmedIds.push(order.id);
+        }
+      } catch (apiErr: any) {
+        rejectedErrors.push(`Order #${order.daraz_order_id}: ${apiErr.message}`);
+      }
+    }
+
+    if (confirmedIds.length === 0) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Daraz rejected bulk operation. Reasons: ${rejectedErrors.join("; ")}`,
+          confirmedCount: 0,
+        },
+        { status: 400 }
+      );
+    }
+
     const updateStatus = targetStatus || (action === "ship" ? "shipped" : action === "pack" ? "ready_to_ship" : "pending");
 
     const { data: updated, error } = await supabase
       .from("orders")
-      .update({ status: updateStatus, updated_at: new Date().toISOString() })
-      .in("id", ids)
+      .update({
+        status: updateStatus,
+        workflow_status: updateStatus,
+        is_packed: action === "pack" ? true : undefined,
+        updated_at: new Date().toISOString(),
+      })
+      .in("id", confirmedIds)
       .select();
 
     if (error) {
-      throw new Error(`Bulk WMS operation failed: ${error.message}`);
+      throw new Error(`Bulk database update failed: ${error.message}`);
     }
-
-    // Log WMS operation in daraz_api_logs
-    await supabase.from("daraz_api_logs").insert({
-      store_id: updated?.[0]?.store_id || "00000000-0000-0000-0000-000000000000",
-      sync_type: "wms_operation",
-      status: "completed",
-      records_synced: updated?.length || 0,
-      payload: {
-        action,
-        targetStatus: updateStatus,
-        affectedOrderIds: ids,
-        timestamp: new Date().toISOString(),
-      },
-    });
 
     return NextResponse.json({
       success: true,
-      message: `WMS Bulk Action '${action}' applied to ${updated?.length || 0} order(s).`,
+      message: `✓ Daraz Confirmed: Bulk Action '${action}' applied to ${updated?.length || 0} order(s).`,
       count: updated?.length || 0,
+      rejectedErrors,
     });
   } catch (err: any) {
     console.error("[PATCH /api/operations Exception]:", err.message);

@@ -75,8 +75,40 @@ export interface DarazClientOptions {
   accessToken?: string;
   refreshToken?: string;
   tokenExpiresAt?: string;
+  appKey?: string;
+  appSecret?: string;
   timeoutMs?: number;
   maxRetries?: number;
+}
+
+/**
+ * Translates technical Daraz API error codes into friendly human readable messages
+ */
+export function humanizeDarazApiError(code: string, rawMessage?: string): string {
+  const cleanMsg = rawMessage ? rawMessage.trim() : "";
+
+  switch (code) {
+    case "InAuthorized":
+    case "IllegalAccessToken":
+    case "15":
+    case "401":
+      return "Your Daraz store connection has expired. Please reconnect your store via My Stores.";
+    case "429":
+    case "RateLimitExceeded":
+    case "Too Many Requests":
+      return "Daraz API request limit reached. Please wait a few moments and try again.";
+    case "B1001":
+    case "InvalidItem":
+      return "Daraz Seller Center could not find this product SKU or Item ID.";
+    case "B1002":
+    case "InvalidStock":
+      return "Daraz rejected stock update: Invalid stock quantity or withholding lock active on Seller Center.";
+    case "OrderAlreadyPacked":
+    case "OrderStateInvalid":
+      return "Daraz rejected status update: Order is already packed or in an incompatible status on Seller Center.";
+    default:
+      return cleanMsg || `Daraz API returned error code [${code}].`;
+  }
 }
 
 export class DarazApiClient {
@@ -91,19 +123,17 @@ export class DarazApiClient {
   private maxRetries: number;
 
   constructor(options: DarazClientOptions = {}) {
-    const key = process.env.DARAZ_APP_KEY;
+    const key = options.appKey || process.env.DARAZ_APP_KEY;
     if (!key || !key.trim()) {
-      this.appKey = "504904";
-    } else {
-      this.appKey = key.trim();
+      throw new Error("Daraz Integration Error: Missing DARAZ_APP_KEY environment configuration.");
     }
+    this.appKey = key.trim();
 
-    const secret = process.env.DARAZ_APP_SECRET;
+    const secret = options.appSecret || process.env.DARAZ_APP_SECRET;
     if (!secret || !secret.trim()) {
-      this.appSecret = "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
-    } else {
-      this.appSecret = secret.trim();
+      throw new Error("Daraz Integration Error: Missing DARAZ_APP_SECRET environment configuration.");
     }
+    this.appSecret = secret.trim();
 
     this.baseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
     this.storeId = options.storeId;
@@ -168,7 +198,7 @@ export class DarazApiClient {
 
     const data = await res.json();
     if (data.code && data.code !== "0") {
-      throw new Error(`Token refresh API error [${data.code}]: ${data.message || data.detail}`);
+      throw new Error(humanizeDarazApiError(data.code, data.message || data.detail));
     }
 
     this.accessToken = data.access_token;
@@ -200,7 +230,7 @@ export class DarazApiClient {
   /**
    * Sends authenticated API requests with timeout, retries, and rate limit handling.
    */
-  private async request<T>(apiPath: string, customParams: Record<string, any> = {}): Promise<T> {
+  private async request<T>(apiPath: string, customParams: Record<string, any> = {}, method: "GET" | "POST" = "GET"): Promise<T> {
     const validToken = await this.ensureValidAccessToken();
     let attempt = 0;
 
@@ -230,7 +260,7 @@ export class DarazApiClient {
 
       try {
         const res = await fetch(url, {
-          method: "GET",
+          method,
           headers: { "Content-Type": "application/json" },
           signal: controller.signal,
         });
@@ -247,7 +277,7 @@ export class DarazApiClient {
         }
 
         if (res.status === 401) {
-          throw new Error(`Daraz Unauthorized [401]: Store access token invalid or store disconnected.`);
+          throw new Error("Daraz connection needs attention: Access token is invalid or store disconnected.");
         }
 
         if (!res.ok) {
@@ -264,7 +294,8 @@ export class DarazApiClient {
               continue;
             }
           }
-          throw new Error(`Daraz API Exception [${data.code}]: ${data.message || data.detail || "API Call Failed"}`);
+          const userFriendlyError = humanizeDarazApiError(data.code, data.message || data.detail);
+          throw new Error(userFriendlyError);
         }
 
         return data as T;
@@ -307,7 +338,6 @@ export class DarazApiClient {
   }
 
   /**
-  /**
    * Helper to normalize Daraz image URLs into clean HTTPS strings
    */
   private normalizeImageUrl(rawUrl: string): string {
@@ -338,7 +368,6 @@ export class DarazApiClient {
       const firstSku = p.skus?.[0] || {};
       const rawAttributes = p.attributes || {};
 
-      // Normalize images from all possible Daraz API response locations
       const imageCandidates: string[] = [];
 
       if (Array.isArray(p.images)) {
@@ -372,7 +401,6 @@ export class DarazApiClient {
         imageCandidates.push(rawAttributes.image);
       }
 
-      // Deduplicate and convert to HTTPS
       const normalizedImages = Array.from(
         new Set(imageCandidates.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
       );
@@ -463,7 +491,7 @@ export class DarazApiClient {
 
     const response = await this.request<{ code: string; message?: string }>("/product/price_quantity/update", {
       payload,
-    });
+    }, "POST");
 
     return !response.code || response.code === "0";
   }
@@ -496,7 +524,7 @@ export class DarazApiClient {
 
     const response = await this.request<{ code: string; message?: string }>("/product/update", {
       payload,
-    });
+    }, "POST");
 
     return !response.code || response.code === "0";
   }
@@ -533,7 +561,6 @@ export class DarazApiClient {
    * Fetch Store Orders with Pagination & Full Normalized Header Fields (/orders/get)
    */
   async getOrders(offset = 0, limit = 50, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
-    // Daraz OP REST API requires update_after or created_after to avoid Error E018
     const safeUpdateAfter = updateAfter || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
 
     const params: Record<string, string> = {
@@ -553,7 +580,6 @@ export class DarazApiClient {
       const addressShipping = o.address_shipping || {};
       const addressBilling = o.address_billing || {};
 
-      // Parse status safely whether Daraz returns an array or string
       let rawStatus = "pending";
       if (Array.isArray(o.statuses) && o.statuses.length > 0) {
         rawStatus = String(o.statuses[0]);
@@ -600,6 +626,57 @@ export class DarazApiClient {
     });
 
     return { orders, total };
+  }
+
+  /**
+   * Pack Order Action via Official Daraz Open Platform API (/order/fulfill/pack or /order/pack)
+   */
+  async packOrder(orderItemIds: string[], shippingProvider?: string): Promise<{ success: boolean; packageId?: string; raw?: any }> {
+    const formattedItemIds = orderItemIds.map((id) => parseInt(id, 10) || id);
+
+    const packReq = JSON.stringify({
+      pack_order_list: [
+        {
+          pack_order_items: formattedItemIds.map((id) => ({ order_item_id: id })),
+          delivery_type: "dropship",
+          shipping_allocate_type: "TFS",
+        },
+      ],
+    });
+
+    const response = await this.request<{ code: string; message?: string; data?: any }>("/order/fulfill/pack", {
+      pack_req: packReq,
+    }, "POST");
+
+    const success = !response.code || response.code === "0";
+    return {
+      success,
+      packageId: response.data?.package_id || response.data?.package_number || undefined,
+      raw: response,
+    };
+  }
+
+  /**
+   * Set Order Ready to Ship Action via Official Daraz API (/order/rts or /order/fulfill/rts)
+   */
+  async setReadyToShip(orderItemIds: string[], trackingNumber?: string, shipmentProvider?: string): Promise<{ success: boolean; raw?: any }> {
+    const formattedItemIds = orderItemIds.map((id) => parseInt(id, 10) || id);
+
+    const rtsReq = JSON.stringify({
+      order_item_ids: formattedItemIds,
+      shipment_provider: shipmentProvider || "Daraz Express (DEX)",
+      tracking_number: trackingNumber || "",
+    });
+
+    const response = await this.request<{ code: string; message?: string; data?: any }>("/order/rts", {
+      rts_req: rtsReq,
+    }, "POST");
+
+    const success = !response.code || response.code === "0";
+    return {
+      success,
+      raw: response,
+    };
   }
 
   /**

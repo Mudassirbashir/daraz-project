@@ -21,7 +21,6 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
-    // Session Authentication Verification
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
@@ -31,13 +30,34 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
+    // Query stores authorized for this user
+    const { data: userStores } = await supabase
+      .from("daraz_stores")
+      .select("id")
+      .or(`user_id.eq.${user.id},user_id.is.null`);
+
+    const userStoreIds = (userStores || []).map((s) => s.id);
+
+    if (userStoreIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        products: [],
+        pagination: { page: 1, limit, total: 0, totalPages: 0 },
+      });
+    }
+
     let query = supabase
       .from("listings")
       .select("*, daraz_stores(store_name, store_code, region)", { count: "exact" });
 
-    // 1. Store Filter
+    // 1. Store Filter & Multi-Store Security
     if (storeId !== "all") {
+      if (!userStoreIds.includes(storeId)) {
+        return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
+      }
       query = query.eq("store_id", storeId);
+    } else {
+      query = query.in("store_id", userStoreIds);
     }
 
     // 2. Status Filter

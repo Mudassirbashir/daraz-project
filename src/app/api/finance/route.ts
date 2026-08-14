@@ -20,7 +20,6 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
-    // Session Authentication Verification
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
@@ -30,117 +29,111 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Query listings & inventory to calculate live financial catalog margins if orders table is currently empty
-    let listingsQuery = supabase
-      .from("listings")
-      .select("*, inventory(unit_cost_cents), daraz_stores(id, store_name, store_code, region)", { count: "exact" });
+    // Query synced orders containing exact Daraz financial data
+    let ordersQuery = supabase
+      .from("orders")
+      .select("*, daraz_stores(id, store_name, store_code, region)", { count: "exact" });
 
     if (storeId !== "all") {
-      listingsQuery = listingsQuery.eq("store_id", storeId);
+      ordersQuery = ordersQuery.eq("store_id", storeId);
     }
 
     if (search.trim()) {
       const q = `%${search.trim()}%`;
-      listingsQuery = listingsQuery.or(`title.ilike.${q},seller_sku.ilike.${q},daraz_item_id.ilike.${q}`);
+      ordersQuery = ordersQuery.or(`daraz_order_id.ilike.${q},customer_name.ilike.${q},tracking_number.ilike.${q}`);
     }
 
-    const validSortFields = ["created_at", "title", "price_cents", "stock_quantity"];
-    const safeSortBy = validSortFields.includes(sortBy) ? sortBy : "created_at";
+    const validSortFields = ["order_date", "total_amount_cents", "customer_name", "status"];
+    const safeSortBy = validSortFields.includes(sortBy) ? sortBy : "order_date";
 
-    listingsQuery = listingsQuery
+    ordersQuery = ordersQuery
       .order(safeSortBy, { ascending: sortOrder === "asc" })
       .range(offset, offset + limit - 1);
 
-    const { data: listings, count, error } = await listingsQuery;
+    const { data: ordersList, count, error } = await ordersQuery;
 
     if (error) {
       throw new Error(`Database query error: ${error.message}`);
     }
 
-    // Process itemized financial calculations
-    const financialRecords = (listings || []).map((item) => {
-      const priceCents = item.special_price_cents || item.price_cents || 0;
-      const cogsCents = item.inventory?.unit_cost_cents || Math.round(priceCents * 0.6);
-      const commissionCents = Math.round(priceCents * 0.08); // 8% Daraz Marketplace commission
-      const paymentFeeCents = Math.round(priceCents * 0.015); // 1.5% payment fee
-      const shippingFeeCents = 15000; // PKR 150 standard shipping fee
+    // Process exact order financial records from Daraz API raw fields
+    const financialRecords = (ordersList || []).map((o) => {
+      const rawObj = o.raw_payload || {};
+      const grossPriceCents = o.total_amount_cents || Math.round((parseFloat(String(rawObj.price || 0)) * 100));
+      const shippingFeeCents = o.shipping_fee_cents || Math.round((parseFloat(String(rawObj.shipping_fee || 0)) * 100));
+      const voucherDiscountCents = o.voucher_discount_cents || Math.round((parseFloat(String(rawObj.voucher_platform || rawObj.voucher || 0)) * 100));
+      const sellerDiscountCents = o.seller_discount_cents || Math.round((parseFloat(String(rawObj.voucher_seller || 0)) * 100));
 
-      const totalExpensesCents = cogsCents + commissionCents + paymentFeeCents + shippingFeeCents;
-      const netProfitCents = priceCents - totalExpensesCents;
-      const marginPercentage = priceCents > 0 ? ((netProfitCents / priceCents) * 100).toFixed(1) : "0.0";
+      const netAmountCents = grossPriceCents + shippingFeeCents - voucherDiscountCents - sellerDiscountCents;
 
       return {
-        id: item.id,
-        item_id: item.daraz_item_id || item.id,
-        seller_sku: item.seller_sku,
-        daraz_sku_id: item.daraz_sku_id,
-        title: item.title,
-        store_name: item.daraz_stores?.store_name || "Daraz Store",
-        store_code: item.daraz_stores?.store_code || "STORE-01",
-        price_cents: priceCents,
-        cogs_cents: cogsCents,
-        commission_cents: commissionCents,
-        payment_fee_cents: paymentFeeCents,
+        id: o.id,
+        daraz_order_id: o.daraz_order_id,
+        order_number: o.order_number || o.daraz_order_id,
+        customer_name: o.customer_name || "Daraz Customer",
+        store_name: o.daraz_stores?.store_name || "Daraz Store",
+        store_code: o.daraz_stores?.store_code || "STORE-01",
+        status: o.status,
+        currency: o.currency || "PKR",
+        gross_sales_cents: grossPriceCents,
         shipping_fee_cents: shippingFeeCents,
-        total_expenses_cents: totalExpensesCents,
-        net_profit_cents: netProfitCents,
-        margin_percentage: parseFloat(marginPercentage),
-        stock_quantity: item.stock_quantity,
-        is_synced: item.is_synced,
-        last_synced_at: item.last_synced_at,
+        voucher_discount_cents: voucherDiscountCents,
+        seller_discount_cents: sellerDiscountCents,
+        net_amount_cents: netAmountCents,
+        fee_breakdown_status: rawObj.item_fee ? "Official API Breakdown" : "Data unavailable from Daraz API",
+        order_date: o.order_date,
       };
     });
 
-    // Calculate Centralized Finance Dashboard Metrics
-    const { data: allListings } = await supabase
-      .from("listings")
-      .select("price_cents, special_price_cents, stock_quantity, store_id, daraz_stores(store_name, store_code)");
+    // Calculate overall totals from actual DB records
+    const { data: allOrders } = await supabase
+      .from("orders")
+      .select("total_amount_cents, shipping_fee_cents, voucher_discount_cents, seller_discount_cents, status, store_id, daraz_stores(store_name, store_code)");
 
     const summary = {
-      totalRevenueCents: 0,
-      totalProfitCents: 0,
-      totalExpensesCents: 0,
-      netProfitCents: 0,
-      todaysRevenueCents: 0,
-      todaysProfitCents: 0,
+      totalGrossSalesCents: 0,
+      totalShippingFeeCents: 0,
+      totalVoucherDiscountCents: 0,
+      totalSellerDiscountCents: 0,
+      totalNetAmountCents: 0,
+      deliveredGrossSalesCents: 0,
       pendingSettlementCents: 0,
-      settledAmountCents: 0,
-      cancelledLossCents: 0,
-      returnedLossCents: 0,
     };
 
-    // Store Comparison Metrics
-    const storeComparison: Record<string, { store_name: string; store_code: string; revenue_cents: number; profit_cents: number; item_count: number }> = {};
+    const storeComparison: Record<string, { store_name: string; store_code: string; gross_sales_cents: number; net_amount_cents: number; order_count: number }> = {};
 
-    (allListings || []).forEach((item: any) => {
-      const price = item.special_price_cents || item.price_cents || 0;
-      const cogs = Math.round(price * 0.6);
-      const commission = Math.round(price * 0.08);
-      const paymentFee = Math.round(price * 0.015);
-      const shipping = 15000;
+    (allOrders || []).forEach((o: any) => {
+      const gross = o.total_amount_cents || 0;
+      const ship = o.shipping_fee_cents || 0;
+      const vch = o.voucher_discount_cents || 0;
+      const sellerDisc = o.seller_discount_cents || 0;
+      const net = gross + ship - vch - sellerDisc;
 
-      const totalExpenses = cogs + commission + paymentFee + shipping;
-      const netProfit = price - totalExpenses;
+      summary.totalGrossSalesCents += gross;
+      summary.totalShippingFeeCents += ship;
+      summary.totalVoucherDiscountCents += vch;
+      summary.totalSellerDiscountCents += sellerDisc;
+      summary.totalNetAmountCents += net;
 
-      summary.totalRevenueCents += price;
-      summary.totalProfitCents += netProfit;
-      summary.totalExpensesCents += totalExpenses;
-      summary.netProfitCents += netProfit;
-      summary.settledAmountCents += Math.max(0, price - commission - paymentFee);
+      if (o.status === "delivered") {
+        summary.deliveredGrossSalesCents += gross;
+      } else {
+        summary.pendingSettlementCents += gross;
+      }
 
-      const sId = item.store_id || "default";
+      const sId = o.store_id || "default";
       if (!storeComparison[sId]) {
         storeComparison[sId] = {
-          store_name: item.daraz_stores?.store_name || "Daraz Store",
-          store_code: item.daraz_stores?.store_code || "STORE-01",
-          revenue_cents: 0,
-          profit_cents: 0,
-          item_count: 0,
+          store_name: o.daraz_stores?.store_name || "Daraz Store",
+          store_code: o.daraz_stores?.store_code || "STORE-01",
+          gross_sales_cents: 0,
+          net_amount_cents: 0,
+          order_count: 0,
         };
       }
-      storeComparison[sId].revenue_cents += price;
-      storeComparison[sId].profit_cents += netProfit;
-      storeComparison[sId].item_count += 1;
+      storeComparison[sId].gross_sales_cents += gross;
+      storeComparison[sId].net_amount_cents += net;
+      storeComparison[sId].order_count += 1;
     });
 
     return NextResponse.json({

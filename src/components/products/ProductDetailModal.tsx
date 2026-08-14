@@ -20,7 +20,8 @@ import {
   ChevronRight,
   AlertCircle,
   Layers,
-  Info
+  Info,
+  ShieldAlert
 } from "lucide-react";
 import { ProductImage } from "./ProductImage";
 import { ImageGalleryModal } from "./ImageGalleryModal";
@@ -80,7 +81,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
       })
     : null;
 
-  // Handle Save Price / Stock / Title Updates
+  // TWO-PHASE ACTION MODEL: Send to Daraz -> Verify Response -> Update Local Representation
   const handleSaveField = async (fieldsToUpdate: {
     priceCents?: number;
     specialPriceCents?: number;
@@ -88,7 +89,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
     title?: string;
   }) => {
     setSavingState("saving");
-    setToastMessage("Saving to Daraz Seller Center...");
+    setToastMessage("Sending update request to Daraz Open Platform API...");
 
     try {
       const res = await fetch(`/api/products/${product.id}`, {
@@ -99,15 +100,15 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
 
       const data = await res.json();
 
-      if (!data.success) {
-        throw new Error(data.error || "Failed to update product.");
+      if (!data.success || !data.darazConfirmed) {
+        throw new Error(data.error || "Daraz did not accept this change.");
       }
 
       setProduct(data.product);
       if (onProductUpdated) onProductUpdated(data.product);
 
       setSavingState("success");
-      setToastMessage(data.message || "✓ Saved & Synced to Daraz");
+      setToastMessage(data.message || "✓ Daraz Confirmed: Saved & Synced");
       setIsEditingPrice(false);
       setIsEditingStock(false);
       setIsEditingTitle(false);
@@ -115,15 +116,15 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
       setTimeout(() => setSavingState("idle"), 3000);
     } catch (err: any) {
       setSavingState("error");
-      setToastMessage(`Couldn't save change: ${err.message}`);
-      setTimeout(() => setSavingState("idle"), 4000);
+      setToastMessage(`Daraz rejected request: ${err.message}`);
+      setTimeout(() => setSavingState("idle"), 5000);
     }
   };
 
-  // Handle Image Operations (Add / Replace / Remove)
+  // Image Operations
   const handleImageAction = async (action: "add" | "replace" | "remove", index?: number, url?: string) => {
     setSavingState("saving");
-    setToastMessage("Updating product images...");
+    setToastMessage("Sending image update request to Daraz...");
 
     try {
       const res = await fetch(`/api/products/${product.id}/images`, {
@@ -137,7 +138,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
       });
 
       const data = await res.json();
-      if (!data.success) throw new Error(data.error || "Failed to update images.");
+      if (!data.success) throw new Error(data.error || "Failed to update images on Daraz.");
 
       setProduct(data.product);
       if (onProductUpdated) onProductUpdated(data.product);
@@ -145,7 +146,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
       setNewImageUrl("");
       setShowAddImageInput(false);
       setSavingState("success");
-      setToastMessage(data.message || "✓ Images updated on Daraz");
+      setToastMessage(data.message || "✓ Daraz Confirmed: Images updated");
 
       setTimeout(() => setSavingState("idle"), 3000);
     } catch (err: any) {
@@ -157,17 +158,17 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
-      <div className="relative w-full max-w-4xl rounded-3xl bg-white dark:bg-slate-900 border border-slate-200 dark:border-slate-800 p-6 shadow-2xl space-y-6 max-h-[92vh] overflow-y-auto">
+      <div className="relative w-full max-w-4xl rounded-3xl bg-white p-6 shadow-2xl space-y-6 max-h-[92vh] overflow-y-auto text-xs">
         
         {/* Toast Banner */}
         {savingState !== "idle" && (
           <div
             className={`sticky top-0 z-20 flex items-center justify-between p-3 rounded-2xl text-xs font-bold transition-all shadow-md ${
               savingState === "saving"
-                ? "bg-blue-50 text-blue-800 border border-blue-200 dark:bg-blue-900/40 dark:text-blue-200"
+                ? "bg-blue-50 text-blue-800 border border-blue-200"
                 : savingState === "success"
-                ? "bg-emerald-50 text-emerald-800 border border-emerald-200 dark:bg-emerald-900/40 dark:text-emerald-200"
-                : "bg-red-50 text-red-800 border border-red-200 dark:bg-red-900/40 dark:text-red-200"
+                ? "bg-emerald-50 text-emerald-800 border border-emerald-200"
+                : "bg-red-50 text-red-800 border border-red-200"
             }`}
           >
             <div className="flex items-center space-x-2">
@@ -180,19 +181,19 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
         )}
 
         {/* Header */}
-        <div className="flex items-start justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+        <div className="flex items-start justify-between border-b border-slate-100 pb-4">
           <div className="space-y-1 max-w-2xl">
             <div className="flex flex-wrap items-center gap-2">
-              <span className="rounded-xl bg-orange-100 dark:bg-orange-500/20 px-2.5 py-0.5 text-xs font-bold text-orange-700 dark:text-orange-300">
+              <span className="rounded-xl bg-orange-100 px-2.5 py-0.5 text-xs font-bold text-orange-700">
                 {product.daraz_stores?.store_name || "Daraz Store"}
               </span>
 
-              <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
-                Seller SKU: <strong className="text-slate-900 dark:text-white">{product.seller_sku}</strong>
+              <span className="font-mono text-xs text-slate-500">
+                Seller SKU: <strong className="text-slate-900">{product.seller_sku}</strong>
               </span>
 
               {product.daraz_item_id && (
-                <span className="font-mono text-xs text-slate-500 dark:text-slate-400">
+                <span className="font-mono text-xs text-slate-500">
                   Item ID: {product.daraz_item_id}
                 </span>
               )}
@@ -204,13 +205,13 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                   type="text"
                   value={titleInput}
                   onChange={(e) => setTitleInput(e.target.value)}
-                  className="flex-1 rounded-xl border border-orange-500 px-3 py-1.5 text-sm font-bold text-slate-900 dark:text-white dark:bg-slate-950 focus:outline-none"
+                  className="flex-1 rounded-xl border border-orange-500 px-3 py-1.5 text-sm font-bold text-slate-900 focus:outline-none"
                 />
                 <button
                   onClick={() => handleSaveField({ title: titleInput })}
                   className="rounded-xl bg-orange-600 px-3 py-1.5 text-xs font-bold text-white hover:bg-orange-700 apple-press"
                 >
-                  Save Title
+                  Save Title to Daraz
                 </button>
                 <button
                   onClick={() => setIsEditingTitle(false)}
@@ -221,7 +222,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
               </div>
             ) : (
               <div className="flex items-center space-x-2 group">
-                <h2 className="text-xl font-bold text-slate-900 dark:text-white">{product.title}</h2>
+                <h2 className="text-xl font-bold text-slate-900">{product.title}</h2>
                 <button
                   onClick={() => setIsEditingTitle(true)}
                   title="Edit product title"
@@ -235,20 +236,20 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
 
           <button
             onClick={onClose}
-            className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 transition-colors"
+            className="rounded-xl p-2 text-slate-400 hover:bg-slate-100 transition-colors"
           >
             <X className="h-5 w-5" />
           </button>
         </div>
 
         {/* Tab Navigation */}
-        <div className="flex items-center space-x-2 border-b border-slate-100 dark:border-slate-800 pb-2 text-xs font-bold">
+        <div className="flex items-center space-x-2 border-b border-slate-100 pb-2 text-xs font-bold">
           <button
             onClick={() => setActiveTab("overview")}
             className={`px-4 py-2 rounded-xl transition-all ${
               activeTab === "overview"
-                ? "bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 shadow-sm"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                ? "bg-slate-950 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             Overview & Pricing
@@ -258,8 +259,8 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
             onClick={() => setActiveTab("images")}
             className={`px-4 py-2 rounded-xl transition-all ${
               activeTab === "images"
-                ? "bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 shadow-sm"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                ? "bg-slate-950 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             Image Management ({images.length})
@@ -269,8 +270,8 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
             onClick={() => setActiveTab("details")}
             className={`px-4 py-2 rounded-xl transition-all ${
               activeTab === "details"
-                ? "bg-slate-950 dark:bg-slate-100 text-white dark:text-slate-950 shadow-sm"
-                : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
+                ? "bg-slate-950 text-white shadow-sm"
+                : "text-slate-600 hover:bg-slate-100"
             }`}
           >
             More Details & Attributes
@@ -282,7 +283,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
             {/* Gallery Preview Box */}
             <div className="space-y-3">
-              <div className="relative h-72 w-full rounded-2xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 flex items-center justify-center overflow-hidden group">
+              <div className="relative h-72 w-full rounded-2xl bg-slate-100 border border-slate-200 flex items-center justify-center overflow-hidden group">
                 <ProductImage
                   src={images[activeImageIndex]}
                   alt={product.title}
@@ -301,7 +302,6 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                 )}
               </div>
 
-              {/* Thumbnails Row */}
               {images.length > 1 && (
                 <div className="flex items-center space-x-2 overflow-x-auto pb-1">
                   {images.map((imgUrl: string, idx: number) => (
@@ -311,7 +311,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                       className={`h-14 w-14 rounded-xl border-2 overflow-hidden shrink-0 transition-all ${
                         activeImageIndex === idx
                           ? "border-orange-500 ring-2 ring-orange-200"
-                          : "border-slate-200 dark:border-slate-700 opacity-60 hover:opacity-100"
+                          : "border-slate-200 opacity-60 hover:opacity-100"
                       }`}
                     >
                       <ProductImage src={imgUrl} alt={`Thumbnail ${idx + 1}`} className="h-full w-full object-cover" />
@@ -324,9 +324,9 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
             {/* Quick Pricing & Stock Editing Section */}
             <div className="space-y-4 text-xs">
               {/* Live Price Box */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 p-4 space-y-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center space-x-1.5">
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center space-x-1.5">
                     <DollarSign className="h-4 w-4 text-orange-500" />
                     <span>Price Control</span>
                   </h3>
@@ -334,7 +334,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                   {!isEditingPrice && (
                     <button
                       onClick={() => setIsEditingPrice(true)}
-                      className="text-xs font-bold text-orange-600 dark:text-orange-400 hover:underline"
+                      className="text-xs font-bold text-orange-600 hover:underline"
                     >
                       Update Price
                     </button>
@@ -342,14 +342,14 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                 </div>
 
                 {isEditingPrice ? (
-                  <div className="space-y-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <div className="space-y-2 pt-1 border-t border-slate-200">
                     <div>
                       <label className="block text-[11px] font-medium text-slate-500">Regular Price (PKR):</label>
                       <input
                         type="number"
                         value={priceInput}
                         onChange={(e) => setPriceInput(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-900 dark:text-white focus:border-orange-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -360,7 +360,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                         value={specialPriceInput}
                         onChange={(e) => setSpecialPriceInput(e.target.value)}
                         placeholder="Leave blank for no sale price"
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-900 dark:text-white focus:border-orange-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-900 focus:border-orange-500 focus:outline-none"
                       />
                     </div>
 
@@ -377,7 +377,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                       </button>
                       <button
                         onClick={() => setIsEditingPrice(false)}
-                        className="rounded-xl border border-slate-300 dark:border-slate-700 px-3 py-1.5 font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100"
+                        className="rounded-xl border border-slate-300 px-3 py-1.5 font-bold text-slate-600 hover:bg-slate-100"
                       >
                         Cancel
                       </button>
@@ -387,12 +387,12 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                   <div className="grid grid-cols-2 gap-3 pt-1">
                     <div>
                       <span className="text-slate-500">Regular Price:</span>
-                      <p className="text-lg font-bold text-slate-900 dark:text-white">{priceFormatted}</p>
+                      <p className="text-lg font-bold text-slate-900">{priceFormatted}</p>
                     </div>
 
                     <div>
                       <span className="text-slate-500">Sale Price:</span>
-                      <p className="text-lg font-bold text-emerald-600 dark:text-emerald-400">
+                      <p className="text-lg font-bold text-emerald-600">
                         {specialPriceFormatted || "None"}
                       </p>
                     </div>
@@ -401,9 +401,9 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
               </div>
 
               {/* Live Stock Box */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 p-4 space-y-3">
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
                 <div className="flex items-center justify-between">
-                  <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center space-x-1.5">
+                  <h3 className="font-bold text-slate-900 text-sm flex items-center space-x-1.5">
                     <Package className="h-4 w-4 text-blue-500" />
                     <span>Inventory Stock Control</span>
                   </h3>
@@ -411,7 +411,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                   {!isEditingStock && (
                     <button
                       onClick={() => setIsEditingStock(true)}
-                      className="text-xs font-bold text-blue-600 dark:text-blue-400 hover:underline"
+                      className="text-xs font-bold text-blue-600 hover:underline"
                     >
                       Update Stock
                     </button>
@@ -419,14 +419,14 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                 </div>
 
                 {isEditingStock ? (
-                  <div className="space-y-2 pt-1 border-t border-slate-200 dark:border-slate-800">
+                  <div className="space-y-2 pt-1 border-t border-slate-200">
                     <div>
                       <label className="block text-[11px] font-medium text-slate-500">Quantity Available on Daraz:</label>
                       <input
                         type="number"
                         value={stockInput}
                         onChange={(e) => setStockInput(e.target.value)}
-                        className="w-full rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-1.5 text-xs font-bold text-slate-900 dark:text-white focus:border-blue-500 focus:outline-none"
+                        className="w-full rounded-xl border border-slate-300 bg-white px-3 py-1.5 text-xs font-bold text-slate-900 focus:border-blue-500 focus:outline-none"
                       />
                     </div>
 
@@ -442,7 +442,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                       </button>
                       <button
                         onClick={() => setIsEditingStock(false)}
-                        className="rounded-xl border border-slate-300 dark:border-slate-700 px-3 py-1.5 font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100"
+                        className="rounded-xl border border-slate-300 px-3 py-1.5 font-bold text-slate-600 hover:bg-slate-100"
                       >
                         Cancel
                       </button>
@@ -452,16 +452,16 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                   <div className="flex items-center justify-between pt-1">
                     <div>
                       <span className="text-slate-500">Stock Count:</span>
-                      <p className="text-lg font-bold text-slate-900 dark:text-white">{product.stock_quantity} Units</p>
+                      <p className="text-lg font-bold text-slate-900">{product.stock_quantity} Units</p>
                     </div>
 
                     <span
                       className={`px-3 py-1 rounded-xl font-bold text-xs ${
                         product.stock_quantity > 10
-                          ? "bg-emerald-100 text-emerald-800 dark:bg-emerald-500/20 dark:text-emerald-300"
+                          ? "bg-emerald-100 text-emerald-800"
                           : product.stock_quantity > 0
-                          ? "bg-amber-100 text-amber-800 dark:bg-amber-500/20 dark:text-amber-300"
-                          : "bg-red-100 text-red-800 dark:bg-red-500/20 dark:text-red-300"
+                          ? "bg-amber-100 text-amber-800"
+                          : "bg-red-100 text-red-800"
                       }`}
                     >
                       {product.stock_quantity > 0 ? "In Stock" : "Out of Stock"}
@@ -471,7 +471,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
               </div>
 
               {/* Sync Metadata Box */}
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-2">
+              <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
                 <div className="flex justify-between items-center text-slate-500">
                   <span>Store Connection:</span>
                   <span className="font-bold text-emerald-600 flex items-center space-x-1">
@@ -482,7 +482,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
 
                 <div className="flex justify-between items-center text-slate-500">
                   <span>Last Synced:</span>
-                  <span className="font-semibold text-slate-800 dark:text-slate-200">
+                  <span className="font-semibold text-slate-800">
                     {product.last_synced_at ? new Date(product.last_synced_at).toLocaleString() : "Recently"}
                   </span>
                 </div>
@@ -496,7 +496,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
           <div className="space-y-4 text-xs">
             <div className="flex items-center justify-between">
               <div>
-                <h3 className="font-bold text-slate-900 dark:text-white text-base">Product Image Gallery</h3>
+                <h3 className="font-bold text-slate-900 text-base">Product Image Gallery</h3>
                 <p className="text-slate-500">
                   View, add, replace, or remove images associated with this product on Daraz.
                 </p>
@@ -511,17 +511,16 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
               </button>
             </div>
 
-            {/* Add Image URL Input Box */}
             {showAddImageInput && (
-              <div className="rounded-2xl border border-orange-200 dark:border-orange-500/30 bg-orange-50/50 dark:bg-orange-500/10 p-4 space-y-3">
-                <h4 className="font-bold text-orange-900 dark:text-orange-200">Add New Image URL</h4>
+              <div className="rounded-2xl border border-orange-200 bg-orange-50/50 p-4 space-y-3">
+                <h4 className="font-bold text-orange-900">Add New Image URL</h4>
                 <div className="flex items-center space-x-2">
                   <input
                     type="url"
                     value={newImageUrl}
                     onChange={(e) => setNewImageUrl(e.target.value)}
                     placeholder="https://img.alicdn.com/... or https://..."
-                    className="flex-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 px-3 py-2 text-xs text-slate-900 dark:text-white focus:outline-none"
+                    className="flex-1 rounded-xl border border-slate-300 bg-white px-3 py-2 text-xs text-slate-900 focus:outline-none"
                   />
                   <button
                     onClick={() => handleImageAction("add")}
@@ -534,20 +533,19 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
               </div>
             )}
 
-            {/* Images Grid */}
             {images.length > 0 ? (
               <div className="grid grid-cols-2 sm:grid-cols-4 gap-4 pt-2">
                 {images.map((imgUrl: string, idx: number) => (
                   <div
                     key={idx}
-                    className="relative rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-950 p-2 space-y-2 group"
+                    className="relative rounded-2xl border border-slate-200 bg-slate-50 p-2 space-y-2 group"
                   >
-                    <div className="h-40 w-full rounded-xl bg-white dark:bg-slate-900 overflow-hidden flex items-center justify-center">
+                    <div className="h-40 w-full rounded-xl bg-white overflow-hidden flex items-center justify-center">
                       <ProductImage src={imgUrl} alt={`Product Image ${idx + 1}`} className="h-full w-full object-contain" />
                     </div>
 
-                    <div className="flex items-center justify-between border-t border-slate-200 dark:border-slate-800 pt-2 px-1">
-                      <span className="font-bold text-slate-600 dark:text-slate-400">Image {idx + 1}</span>
+                    <div className="flex items-center justify-between border-t border-slate-200 pt-2 px-1">
+                      <span className="font-bold text-slate-600">Image {idx + 1}</span>
 
                       <div className="flex items-center space-x-1">
                         <button
@@ -558,7 +556,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                             }
                           }}
                           title="Replace this image"
-                          className="px-2 py-1 rounded-lg border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 font-bold text-slate-700 dark:text-slate-300 hover:bg-slate-100"
+                          className="px-2 py-1 rounded-lg border border-slate-300 bg-white font-bold text-slate-700 hover:bg-slate-100"
                         >
                           Replace
                         </button>
@@ -570,7 +568,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                             }
                           }}
                           title="Remove this image"
-                          className="p-1 rounded-lg text-red-500 hover:bg-red-50 dark:hover:bg-red-950"
+                          className="p-1 rounded-lg text-red-500 hover:bg-red-50"
                         >
                           <Trash2 className="h-4 w-4" />
                         </button>
@@ -580,7 +578,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
                 ))}
               </div>
             ) : (
-              <div className="p-8 text-center text-slate-400 border border-dashed border-slate-300 dark:border-slate-800 rounded-2xl space-y-2">
+              <div className="p-8 text-center text-slate-400 border border-dashed border-slate-300 rounded-2xl space-y-2">
                 <Package className="mx-auto h-8 w-8 text-slate-300" />
                 <p>No product images registered yet.</p>
               </div>
@@ -588,60 +586,66 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
           </div>
         )}
 
-        {/* TAB 3: MORE DETAILS & ATTRIBUTES */}
+        {/* TAB 3: MORE DETAILS & API EXPOSED STATUS */}
         {activeTab === "details" && (
           <div className="space-y-4 text-xs">
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-              <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-950/50 p-4 space-y-3">
-                <h3 className="font-bold text-slate-900 dark:text-white text-sm">Product Specifications</h3>
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm">Product Specifications</h3>
 
                 <div className="space-y-2 pt-1">
-                  <div className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1.5">
+                  <div className="flex justify-between border-b border-slate-200 pb-1.5">
                     <span className="text-slate-500">Category:</span>
-                    <span className="font-bold text-slate-800 dark:text-slate-200">{product.category || "General"}</span>
+                    <span className="font-bold text-slate-800">{product.category || "General"}</span>
                   </div>
 
-                  <div className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1.5">
+                  <div className="flex justify-between border-b border-slate-200 pb-1.5">
                     <span className="text-slate-500">Brand:</span>
-                    <span className="font-bold text-slate-800 dark:text-slate-200">{product.brand || "Generic"}</span>
+                    <span className="font-bold text-slate-800">{product.brand || "Generic"}</span>
                   </div>
 
-                  <div className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1.5">
+                  <div className="flex justify-between border-b border-slate-200 pb-1.5">
                     <span className="text-slate-500">Daraz Item ID:</span>
-                    <span className="font-mono font-bold text-slate-800 dark:text-slate-200">{product.daraz_item_id || "N/A"}</span>
+                    <span className="font-mono font-bold text-slate-800">{product.daraz_item_id || "N/A"}</span>
                   </div>
 
-                  <div className="flex justify-between border-b border-slate-200 dark:border-slate-800 pb-1.5">
+                  <div className="flex justify-between border-b border-slate-200 pb-1.5">
                     <span className="text-slate-500">Daraz SKU ID:</span>
-                    <span className="font-mono text-slate-700 dark:text-slate-300">{product.daraz_sku_id || "N/A"}</span>
+                    <span className="font-mono text-slate-700">{product.daraz_sku_id || "N/A"}</span>
                   </div>
                 </div>
               </div>
 
-              {/* Unsupported API Fields Notice */}
-              <div className="rounded-2xl border border-amber-200 dark:border-amber-500/30 bg-amber-50/50 dark:bg-amber-500/10 p-4 space-y-3">
-                <h3 className="font-bold text-amber-900 dark:text-amber-200 text-sm flex items-center space-x-1.5">
-                  <Info className="h-4 w-4 text-amber-600" />
-                  <span>API Capability Notice</span>
+              {/* Explicit Unsupported API Fields Notice */}
+              <div className="rounded-2xl border border-slate-200 bg-slate-50/50 p-4 space-y-3">
+                <h3 className="font-bold text-slate-900 text-sm flex items-center space-x-1.5">
+                  <Info className="h-4 w-4 text-slate-500" />
+                  <span>Unexposed API Fields Map</span>
                 </h3>
 
-                <p className="text-amber-800 dark:text-amber-300 leading-relaxed">
-                  Price, stock, title, and images are directly editable and synchronized live with your Daraz Seller account.
-                </p>
-
-                <div className="p-2.5 bg-white/80 dark:bg-slate-900/80 rounded-xl border border-amber-200 dark:border-amber-800/50 text-[11px] text-amber-900 dark:text-amber-200">
-                  Category & brand changes must be updated directly inside Daraz Seller Center. 
-                  <span className="font-semibold block mt-0.5 text-slate-500">
-                    "This field can't be changed from this app."
-                  </span>
+                <div className="space-y-1.5 pt-1 text-[11px]">
+                  {[
+                    "Product Video",
+                    "Package Weight & Dimensions",
+                    "Warranty Terms",
+                    "Page Views & Visitor Count",
+                    "Conversion Rate Analytics",
+                    "Wishlist Count",
+                    "Product Rating & Review Text",
+                  ].map((fieldName, i) => (
+                    <div key={i} className="flex items-center justify-between border-b border-slate-200 pb-1">
+                      <span className="text-slate-600">{fieldName}:</span>
+                      <span className="font-semibold text-slate-400 italic">Not supported by Daraz API</span>
+                    </div>
+                  ))}
                 </div>
               </div>
             </div>
 
             {/* Product Description */}
-            <div className="rounded-2xl border border-slate-200 dark:border-slate-800 bg-white dark:bg-slate-900 p-4 space-y-2">
-              <h3 className="font-bold text-slate-900 dark:text-white text-sm">Product Description</h3>
-              <div className="text-slate-600 dark:text-slate-300 leading-relaxed whitespace-pre-line pt-1">
+            <div className="rounded-2xl border border-slate-200 bg-white p-4 space-y-2">
+              <h3 className="font-bold text-slate-900 text-sm">Product Description</h3>
+              <div className="text-slate-600 leading-relaxed whitespace-pre-line pt-1">
                 {product.description || "No description provided."}
               </div>
             </div>
@@ -649,10 +653,10 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
         )}
 
         {/* Footer */}
-        <div className="flex justify-end pt-2 border-t border-slate-100 dark:border-slate-800">
+        <div className="flex justify-end pt-2 border-t border-slate-100">
           <button
             onClick={onClose}
-            className="rounded-xl bg-slate-950 dark:bg-slate-100 px-5 py-2.5 text-xs font-bold text-white dark:text-slate-950 hover:bg-slate-800 transition-all apple-press"
+            className="rounded-xl bg-slate-950 px-5 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition-all apple-press"
           >
             Close Details
           </button>

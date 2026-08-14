@@ -9,17 +9,32 @@ export async function GET(req: NextRequest) {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
-    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
-
-    if (!user && !opsUserCookie) {
-      console.warn("[API Dashboard Summary]: Unauthenticated session attempt. Proceeding with system admin client.");
+    if (!user) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
     const supabase = createAdminClient();
 
+    // Query stores authorized for this user
+    const { data: userStores } = await supabase
+      .from("daraz_stores")
+      .select("id")
+      .or(`user_id.eq.${user.id},user_id.is.null`);
+
+    const userStoreIds = (userStores || []).map((s) => s.id);
+
+    if (userStoreIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        summary: {
+          totalProducts: 0, outOfStock: 0, lowStock: 0, totalOrders: 0, pendingOrders: 0, readyToShipOrders: 0, shippedOrders: 0, deliveredOrders: 0, todaysOrdersCount: 0, todaysRevenueCents: 0, totalStores: 0, activeStores: 0,
+        },
+      });
+    }
+
     const todayStr = new Date().toISOString().split("T")[0];
 
-    // Execute parallel lightweight count queries (head: true downloads 0 row bodies!)
+    // Execute parallel lightweight count queries scoped to userStoreIds
     const [
       { count: totalProducts },
       { count: outOfStock },
@@ -33,18 +48,17 @@ export async function GET(req: NextRequest) {
       { count: activeStores },
       { data: todayOrdersData },
     ] = await Promise.all([
-      supabase.from("listings").select("*", { count: "exact", head: true }),
-      supabase.from("listings").select("*", { count: "exact", head: true }).eq("stock_quantity", 0),
-      supabase.from("listings").select("*", { count: "exact", head: true }).gt("stock_quantity", 0).lte("stock_quantity", 10),
-      supabase.from("orders").select("*", { count: "exact", head: true }),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("status", ["pending", "unpaid"]),
-      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "ready_to_ship"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "shipped"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).eq("status", "delivered"),
-      supabase.from("daraz_stores").select("*", { count: "exact", head: true }),
-      supabase.from("daraz_stores").select("*", { count: "exact", head: true }).eq("is_active", true),
-      // Query only total_amount_cents for orders today
-      supabase.from("orders").select("total_amount_cents").gte("order_date", todayStr),
+      supabase.from("listings").select("*", { count: "exact", head: true }).in("store_id", userStoreIds),
+      supabase.from("listings").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("stock_quantity", 0),
+      supabase.from("listings").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).gt("stock_quantity", 0).lte("stock_quantity", 10),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).in("status", ["pending", "unpaid"]),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "ready_to_ship"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "shipped"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "delivered"),
+      supabase.from("daraz_stores").select("*", { count: "exact", head: true }).in("id", userStoreIds),
+      supabase.from("daraz_stores").select("*", { count: "exact", head: true }).in("id", userStoreIds).eq("is_active", true),
+      supabase.from("orders").select("total_amount_cents").in("store_id", userStoreIds).gte("order_date", todayStr),
     ]);
 
     const todaysRevenueCents = (todayOrdersData || []).reduce((acc: number, curr: any) => acc + (curr.total_amount_cents || 0), 0);

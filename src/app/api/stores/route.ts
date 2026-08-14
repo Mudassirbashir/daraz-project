@@ -15,64 +15,23 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // 1. Fetch all configured stores
+    // 1. Fetch user-scoped configured stores (or system stores if user_id is null)
     const { data: stores, error: storesErr } = await supabase
       .from("daraz_stores")
-      .select("*")
-      .order("store_code", { ascending: true });
+      .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token")
+      .or(`user_id.eq.${user.id},user_id.is.null`)
+      .order("created_at", { ascending: true });
 
     if (storesErr) {
       throw new Error(`Failed to fetch stores: ${storesErr.message}`);
     }
 
-    let storesList = stores || [];
+    const storesList = stores || [];
 
-    // Auto-seed initial store slots if table is empty
-    if (storesList.length === 0) {
-      const initialSlots = [
-        {
-          store_code: "DARAZ-PK-01",
-          store_name: "Daraz Flagship PK 1",
-          region: "PK",
-          seller_id: "504904",
-          api_app_key: process.env.DARAZ_APP_KEY || "504904",
-          api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
-          is_active: true,
-        },
-        {
-          store_code: "DARAZ-PK-02",
-          store_name: "Daraz Express PK 2",
-          region: "PK",
-          seller_id: "504905",
-          api_app_key: process.env.DARAZ_APP_KEY || "504904",
-          api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
-          is_active: true,
-        },
-        {
-          store_code: "DARAZ-PK-03",
-          store_name: "Daraz Wholesale PK 3",
-          region: "PK",
-          seller_id: "504906",
-          api_app_key: process.env.DARAZ_APP_KEY || "504904",
-          api_app_secret: process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
-          is_active: true,
-        },
-      ];
-
-      const { data: inserted, error: insertErr } = await supabase
-        .from("daraz_stores")
-        .insert(initialSlots)
-        .select();
-
-      if (!insertErr && inserted) {
-        storesList = inserted;
-      }
-    }
-
-    // 2. Fetch metrics for connected stores
+    // 2. Compute live metrics for connected stores
     const enrichedStores = await Promise.all(
       storesList.map(async (store) => {
-        const isConnected = Boolean(store.access_token);
+        const isConnected = Boolean(store.access_token && store.access_token.trim());
 
         if (!isConnected) {
           return {
@@ -86,11 +45,11 @@ export async function GET(req: NextRequest) {
             statusText: "Not Connected",
             statusBadgeClass: "bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border-slate-200 dark:border-slate-700",
             last_synced_at: null,
-            products_count: null,
-            stock_count: null,
-            total_orders: null,
-            in_progress_orders: null,
-            completed_orders: null,
+            products_count: 0,
+            stock_count: 0,
+            total_orders: 0,
+            in_progress_orders: 0,
+            completed_orders: 0,
           };
         }
 
@@ -135,7 +94,7 @@ export async function GET(req: NextRequest) {
           region: store.region || "PK",
           isConnected: true,
           status: "connected",
-          statusText: "Connected",
+          statusText: "Connected & Synced",
           statusBadgeClass: "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
           last_synced_at,
           products_count,

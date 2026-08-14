@@ -15,44 +15,24 @@ export interface SyncResult {
   timestamp: string;
 }
 
-// In-memory sync lock to prevent concurrent overlapping executions
-let isSyncInProgress = false;
-let syncLockTimestamp = 0;
-const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes max lock duration
+// Per-store in-memory sync lock map to prevent overlapping sync runs for the same store
+const storeSyncLocks = new Map<string, number>();
+const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
  * Production-Grade Synchronization Engine:
- * 1. Prevents concurrent sync race conditions via lock guard.
+ * 1. Multi-store isolation with per-store lock guards.
  * 2. Queries active Daraz Stores from Supabase.
- * 3. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
- * 4. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id` to eliminate duplicates.
- * 5. Logs complete operational diagnostics into `daraz_api_logs`.
+ * 3. Uses incremental `last_synced_at` timestamps for Order API calls.
+ * 4. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
+ * 5. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id`.
+ * 6. Logs diagnostics into `daraz_api_logs` and records mismatches in `reconciliation_logs`.
  */
-export async function executeDarazSync(): Promise<SyncResult> {
+export async function executeDarazSync(targetStoreId?: string): Promise<SyncResult> {
   const startTime = Date.now();
   const startedTimeIso = new Date(startTime).toISOString();
   const errors: string[] = [];
   const timestamp = new Date().toISOString();
-
-  // Check sync lock to prevent race conditions
-  if (isSyncInProgress && Date.now() - syncLockTimestamp < SYNC_LOCK_TIMEOUT_MS) {
-    return {
-      success: false,
-      storesSynced: 0,
-      productsSynced: 0,
-      ordersSynced: 0,
-      importedCount: 0,
-      updatedCount: 0,
-      failedCount: 0,
-      durationMs: 0,
-      errors: ["Synchronization is already in progress by another request. Please wait."],
-      timestamp,
-    };
-  }
-
-  // Acquire lock
-  isSyncInProgress = true;
-  syncLockTimestamp = Date.now();
 
   const supabase = createAdminClient();
 
@@ -64,21 +44,23 @@ export async function executeDarazSync(): Promise<SyncResult> {
   let failedCount = 0;
 
   try {
-    // 1. Fetch active Daraz Stores from Supabase
-    const { data: stores, error: storesError } = await supabase
-      .from("daraz_stores")
-      .select("*")
-      .eq("is_active", true);
+    // 1. Query active connected stores
+    let query = supabase.from("daraz_stores").select("*").eq("is_active", true);
+
+    if (targetStoreId) {
+      query = query.eq("id", targetStoreId);
+    }
+
+    const { data: stores, error: storesError } = await query;
 
     if (storesError) {
       throw new Error(`Failed to query daraz_stores table: ${storesError.message}`);
     }
 
-    // Filter connected stores with valid access tokens
     const connectedStores = (stores || []).filter((s) => s.access_token && s.access_token.trim());
 
     if (connectedStores.length === 0) {
-      errors.push("No connected Daraz stores with active access tokens found. Please connect your Daraz store via /stores first.");
+      errors.push("No connected Daraz stores with active access tokens found. Please connect your Daraz store via My Stores page.");
       return {
         success: false,
         storesSynced: 0,
@@ -93,19 +75,28 @@ export async function executeDarazSync(): Promise<SyncResult> {
       };
     }
 
-    // 30 days ago ISO string for fresh order retrieval
-    const defaultUpdateAfter = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
-
-    // 2. Process each connected store synchronization
+    // 2. Process each connected store
     for (const store of connectedStores) {
-      const darazClient = new DarazApiClient({
-        storeId: store.id,
-        accessToken: store.access_token || undefined,
-        refreshToken: store.refresh_token || undefined,
-        tokenExpiresAt: store.token_expires_at || undefined,
-      });
+      // Check per-store sync lock
+      const lastLock = storeSyncLocks.get(store.id);
+      if (lastLock && Date.now() - lastLock < SYNC_LOCK_TIMEOUT_MS) {
+        console.warn(`[SyncEngine] Store ${store.store_code} is currently syncing by another process. Skipping...`);
+        continue;
+      }
+
+      // Set lock for this store
+      storeSyncLocks.set(store.id, Date.now());
 
       try {
+        const darazClient = new DarazApiClient({
+          storeId: store.id,
+          accessToken: store.access_token || undefined,
+          refreshToken: store.refresh_token || undefined,
+          tokenExpiresAt: store.token_expires_at || undefined,
+          appKey: store.api_app_key || undefined,
+          appSecret: store.api_app_secret || undefined,
+        });
+
         // A. Sync Store Profile
         try {
           const storeProfile = await darazClient.getStoreProfile();
@@ -117,12 +108,11 @@ export async function executeDarazSync(): Promise<SyncResult> {
               updated_at: timestamp,
             })
             .eq("id", store.id);
-          storesSynced++;
         } catch (profileErr: any) {
           console.warn(`[SyncEngine] Store profile notice for ${store.store_code}:`, profileErr.message);
         }
 
-        // B. Sync Products / Listings & Inventory (with Pagination & Images)
+        // B. Sync Products / Listings & Inventory
         let productOffset = 0;
         const limit = 50;
         let totalProducts = 0;
@@ -135,13 +125,30 @@ export async function executeDarazSync(): Promise<SyncResult> {
             try {
               const { data: existingListing } = await supabase
                 .from("listings")
-                .select("id")
+                .select("id, stock_quantity, price_cents")
                 .eq("store_id", store.id)
                 .eq("seller_sku", item.seller_sku)
                 .maybeSingle();
 
               if (existingListing) {
                 updatedCount++;
+                // Detect stock mismatch for reconciliation log if local stock differed from Daraz truth
+                if (existingListing.stock_quantity !== item.quantity) {
+                  try {
+                    await supabase.from("reconciliation_logs").insert({
+                      store_id: store.id,
+                      entity_type: "inventory",
+                      entity_id: item.seller_sku,
+                      daraz_value: { stock: item.quantity, price_cents: item.price_cents },
+                      local_value: { stock: existingListing.stock_quantity, price_cents: existingListing.price_cents },
+                      discrepancy_details: `Stock discrepancy detected: Local DB had ${existingListing.stock_quantity}, Daraz truth is ${item.quantity}. Updated local representation to match Daraz truth.`,
+                      status: "auto_reconciled",
+                      resolved_at: timestamp,
+                    });
+                  } catch (recErr) {
+                    // Ignore if reconciliation table not created
+                  }
+                }
               } else {
                 importedCount++;
               }
@@ -155,7 +162,6 @@ export async function executeDarazSync(): Promise<SyncResult> {
                     category: item.category || "General",
                     quantity_on_hand: item.quantity,
                     quantity_reserved: item.reserved_quantity || 0,
-                    unit_cost_cents: Math.round(item.price_cents * 0.6),
                   },
                   { onConflict: "sku" }
                 )
@@ -197,12 +203,15 @@ export async function executeDarazSync(): Promise<SyncResult> {
           productOffset += limit;
         } while (productOffset < totalProducts && productOffset < 500);
 
-        // C. Sync Orders (with Pagination, UpdateAfter, & Exact Payload Preservation)
+        // C. Sync Orders using incremental timestamp filter
         let orderOffset = 0;
         let totalOrders = 0;
 
+        // Use last_synced_at if available, else fall back to 30 days ago
+        const incrementalUpdateAfter = store.last_synced_at || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+
         do {
-          const { orders, total } = await darazClient.getOrders(orderOffset, limit, defaultUpdateAfter);
+          const { orders, total } = await darazClient.getOrders(orderOffset, limit, incrementalUpdateAfter);
           totalOrders = total;
 
           for (const ord of orders) {
@@ -213,7 +222,6 @@ export async function executeDarazSync(): Promise<SyncResult> {
                 mappedStatus = ord.statuses as DarazOrderStatus;
               }
 
-              // Extract exact raw fields from Daraz raw payload
               const rawObj = ord.raw || {};
               const shipping = rawObj.address_shipping || {};
               const billing = rawObj.address_billing || {};
@@ -270,14 +278,12 @@ export async function executeDarazSync(): Promise<SyncResult> {
                 raw_payload: rawObj,
               };
 
-              // 1. Attempt full order payload upsert
               let { data: upsertedOrder, error: orderUpsertErr } = await supabase
                 .from("orders")
                 .upsert(fullOrderPayload, { onConflict: "daraz_order_id" })
                 .select("id")
                 .maybeSingle();
 
-              // 2. Fall back to base columns if extended migration columns are not created on remote DB yet
               if (orderUpsertErr && orderUpsertErr.message.includes("schema cache")) {
                 const baseOrderPayload = {
                   store_id: store.id,
@@ -304,7 +310,7 @@ export async function executeDarazSync(): Promise<SyncResult> {
                 throw new Error(`Order upsert DB error: ${orderUpsertErr?.message || "Unknown error"}`);
               }
 
-              // Fetch and upsert order items
+              // Fetch and upsert order line items
               if (upsertedOrder?.id) {
                 try {
                   const fetchedItems = await darazClient.getOrderItems(ord.order_id);
@@ -333,21 +339,6 @@ export async function executeDarazSync(): Promise<SyncResult> {
                 } catch (itemErr: any) {
                   console.warn(`[SyncEngine] Order items notice for Order ${ord.order_id}:`, itemErr.message);
                 }
-
-                // Insert activity log
-                try {
-                  await supabase.from("order_activities").insert({
-                    order_id: upsertedOrder.id,
-                    daraz_order_id: ord.order_id,
-                    previous_status: null,
-                    new_status: mappedStatus,
-                    actor: "Daraz Engine",
-                    source: "Daraz API",
-                    notes: `Synced order #${ord.order_id} with status ${mappedStatus}`,
-                  });
-                } catch (actErr) {
-                  // Ignore activity log if table doesn't exist
-                }
               }
 
               ordersSynced++;
@@ -355,7 +346,6 @@ export async function executeDarazSync(): Promise<SyncResult> {
               failedCount++;
               console.error(`[SyncEngine] Order error for Order ID ${ord.order_id}:`, ordErr.message);
 
-              // Record error in sync_retry_queue for central Error Center
               await supabase.from("sync_retry_queue").insert({
                 store_id: store.id,
                 operation_type: "order_sync",
@@ -372,9 +362,20 @@ export async function executeDarazSync(): Promise<SyncResult> {
           orderOffset += limit;
         } while (orderOffset < totalOrders && orderOffset < 500);
 
-        const finishedTimeIso = new Date().toISOString();
+        // Update store last_synced_at
+        await supabase
+          .from("daraz_stores")
+          .update({
+            last_synced_at: timestamp,
+            sync_status: "idle",
+            last_sync_error: null,
+            updated_at: timestamp,
+          })
+          .eq("id", store.id);
 
-        // D. Log Detailed Diagnostics in daraz_api_logs
+        storesSynced++;
+
+        // Log sync diagnostics
         await supabase.from("daraz_api_logs").insert({
           store_id: store.id,
           sync_type: "full_sync",
@@ -382,7 +383,7 @@ export async function executeDarazSync(): Promise<SyncResult> {
           records_synced: productsSynced + ordersSynced,
           payload: {
             startedTime: startedTimeIso,
-            finishedTime: finishedTimeIso,
+            finishedTime: new Date().toISOString(),
             imported: importedCount,
             updated: updatedCount,
             failed: failedCount,
@@ -398,9 +399,15 @@ export async function executeDarazSync(): Promise<SyncResult> {
         errors.push(`Store [${store.store_code}] Error: ${errorMsg}`);
         failedCount++;
 
-        const finishedTimeIso = new Date().toISOString();
+        await supabase
+          .from("daraz_stores")
+          .update({
+            sync_status: "error",
+            last_sync_error: errorMsg,
+            updated_at: timestamp,
+          })
+          .eq("id", store.id);
 
-        // Log Failure in daraz_api_logs
         await supabase.from("daraz_api_logs").insert({
           store_id: store.id,
           sync_type: "full_sync",
@@ -408,14 +415,13 @@ export async function executeDarazSync(): Promise<SyncResult> {
           error_message: errorMsg,
           payload: {
             startedTime: startedTimeIso,
-            finishedTime: finishedTimeIso,
-            imported: importedCount,
-            updated: updatedCount,
-            failed: failedCount,
+            finishedTime: new Date().toISOString(),
             durationMs: Date.now() - startTime,
             apiErrors: [errorMsg],
           },
         });
+      } finally {
+        storeSyncLocks.delete(store.id);
       }
     }
 
@@ -446,8 +452,5 @@ export async function executeDarazSync(): Promise<SyncResult> {
       errors,
       timestamp,
     };
-  } finally {
-    // Release sync lock
-    isSyncInProgress = false;
   }
 }

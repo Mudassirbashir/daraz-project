@@ -1,16 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { generateDarazSignature } from "@/lib/daraz/signature";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 import { DarazApiClient } from "@/lib/daraz/client";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 
 export const dynamic = "force-dynamic";
-
-function maskSecret(val?: string, visibleChars = 6): string {
-  if (!val) return "[MISSING]";
-  if (val.length <= visibleChars) return "***";
-  return `${val.slice(0, visibleChars)}...${val.slice(-4)}`;
-}
 
 export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
@@ -30,92 +25,50 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Dynamic host & protocol detection for Serverless Functions
+  // Dynamic host & protocol detection
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
-  const redirectUri = `${baseUrl}/api/auth/daraz/callback`;
 
-  // Read environment variables securely with production fallbacks
-  const supabaseUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL || "https://wpmeihwfxahifdidgiac.supabase.co";
-  const supabaseAnonKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY || Buffer.from("c2JfcHVibGlzaGFibGVfd2o0UE1xZzVVdlo3bWhzR1FVNkkxZ19OYm5KcldiMg==", "base64").toString("utf-8");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY || Buffer.from("c2Jfc2VjcmV0X0VYYmpyRUxkZ1JuWm14MXcySjlGdGdfYWpTYV9OdUo=", "base64").toString("utf-8");
-  const appKey = process.env.DARAZ_APP_KEY || "504904";
-  const appSecret = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
+  const appKey = process.env.DARAZ_APP_KEY;
+  const appSecret = process.env.DARAZ_APP_SECRET;
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
-
-  const envAudit = {
-    NEXT_PUBLIC_SUPABASE_URL: maskSecret(supabaseUrl, 15),
-    NEXT_PUBLIC_SUPABASE_ANON_KEY: maskSecret(supabaseAnonKey, 10),
-    SUPABASE_SERVICE_ROLE_KEY: maskSecret(serviceRoleKey, 10),
-    DARAZ_APP_KEY: appKey ? appKey : "[MISSING]",
-    DARAZ_APP_SECRET: maskSecret(appSecret, 6),
-    baseUrl,
-    redirectUri,
-  };
-
-  const diagnostics: Record<string, any> = {
-    step: "init",
-    receivedUrl: req.url,
-    envAudit,
-    hasCode: Boolean(code),
-    codeSnippet: code ? `${code.slice(0, 8)}...` : null,
-    errorParam,
-    errorDescription,
-    timestamp: new Date().toISOString(),
-  };
-
-  // 1. Validate Environment Variables
-  if (!supabaseUrl) {
-    return NextResponse.json(
-      { success: false, error: "Environment Error: NEXT_PUBLIC_SUPABASE_URL is missing.", diagnostics },
-      { status: 500 }
-    );
-  }
-
-  if (!serviceRoleKey) {
-    return NextResponse.json(
-      { success: false, error: "Environment Error: SUPABASE_SERVICE_ROLE_KEY environment variable is required on server.", diagnostics },
-      { status: 500 }
-    );
-  }
 
   if (!appKey || !appSecret) {
     return NextResponse.json(
-      { success: false, error: "Environment Error: DARAZ_APP_KEY and DARAZ_APP_SECRET environment variables are required on server.", diagnostics },
+      { success: false, error: "Environment Error: DARAZ_APP_KEY and DARAZ_APP_SECRET environment variables are required on server." },
       { status: 500 }
     );
   }
 
-  // 2. Handle OAuth Provider Errors
   if (errorParam) {
-    diagnostics.step = "oauth_provider_error";
     console.error("[Daraz OAuth Error from Provider]:", errorParam, errorDescription);
     return NextResponse.json(
       {
         success: false,
         error: `Daraz Authorization Rejected: ${errorDescription || errorParam}`,
-        diagnostics,
       },
       { status: 400 }
     );
   }
 
   if (!code) {
-    diagnostics.step = "missing_code";
     return NextResponse.json(
       {
         success: false,
         error: "Missing authorization code in OAuth callback query parameters.",
-        diagnostics,
       },
       { status: 400 }
     );
   }
 
   try {
-    // 3. Exchange Authorization Code for Access Token via /auth/token/create
-    diagnostics.step = "token_exchange_request";
+    // Determine authenticated app user ID if logged in
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+    const currentUserId = user?.id || null;
+
+    // Exchange Code for Access Token via /auth/token/create
     const apiPath = "/auth/token/create";
     const timestamp = Date.now().toString();
 
@@ -137,15 +90,11 @@ export async function GET(req: NextRequest) {
       headers: { "Content-Type": "application/json" },
     });
 
-    diagnostics.tokenResponseStatus = tokenRes.status;
-    diagnostics.tokenResponseStatusText = tokenRes.statusText;
-
-    const tokenData = await tokenRes.json();
-    diagnostics.tokenData = tokenData;
-
     if (!tokenRes.ok) {
       throw new Error(`Token exchange HTTP Error [${tokenRes.status}]: ${tokenRes.statusText}`);
     }
+
+    const tokenData = await tokenRes.json();
 
     if (tokenData.code && tokenData.code !== "0") {
       throw new Error(
@@ -173,33 +122,22 @@ export async function GET(req: NextRequest) {
     const storeName = account || `Daraz Store (${targetSellerId})`;
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    diagnostics.parsedToken = {
-      hasAccessToken: Boolean(access_token),
-      hasRefreshToken: Boolean(refresh_token),
-      expiresInSeconds,
-      tokenExpiresAt,
-      sellerId: targetSellerId,
-      account,
-      storeRegion,
-    };
-
-    // 4. Persist Tokens Securely in Supabase daraz_stores Table via Admin Client
-    diagnostics.step = "supabase_upsert";
+    // Persist Tokens Securely in Supabase daraz_stores Table via Admin Client
     const supabase = createAdminClient();
 
     const { data: existingStores } = await supabase
       .from("daraz_stores")
       .select("id, store_code, seller_id")
-      .or(`seller_id.eq.${targetSellerId},store_code.eq.DARAZ-${storeRegion}-01`);
+      .or(`seller_id.eq.${targetSellerId},store_code.eq.DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`);
 
     let storeId: string;
-    let dbAction = "none";
 
     if (existingStores && existingStores.length > 0) {
       const targetStore = existingStores[0];
       const { data: updated, error: updateErr } = await supabase
         .from("daraz_stores")
         .update({
+          user_id: currentUserId || undefined,
           seller_id: targetSellerId,
           store_name: storeName,
           access_token,
@@ -216,12 +154,12 @@ export async function GET(req: NextRequest) {
 
       if (updateErr) throw new Error(`Supabase store update error: ${updateErr.message}`);
       storeId = updated.id;
-      dbAction = "updated";
     } else {
       const storeCode = `DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`;
       const { data: inserted, error: insertErr } = await supabase
         .from("daraz_stores")
         .insert({
+          user_id: currentUserId || undefined,
           store_code: storeCode,
           store_name: storeName,
           region: storeRegion,
@@ -238,24 +176,20 @@ export async function GET(req: NextRequest) {
 
       if (insertErr) throw new Error(`Supabase store insert error: ${insertErr.message}`);
       storeId = inserted.id;
-      dbAction = "inserted";
     }
 
-    diagnostics.dbResult = { storeId, dbAction };
-
-    // 5. Verify Connection by Fetching Seller Profile
-    diagnostics.step = "seller_profile_verification";
+    // Verify Connection by Fetching Seller Profile
     const client = new DarazApiClient({
       storeId,
       accessToken: access_token,
       refreshToken: refresh_token,
       tokenExpiresAt,
+      appKey,
+      appSecret,
     });
 
     try {
       const liveProfile = await client.getStoreProfile();
-      diagnostics.liveProfile = liveProfile;
-
       await supabase
         .from("daraz_stores")
         .update({
@@ -266,11 +200,10 @@ export async function GET(req: NextRequest) {
         .eq("id", storeId);
     } catch (profileErr: any) {
       console.warn("[Daraz OAuth Callback] Seller profile verification warning:", profileErr.message);
-      diagnostics.profileWarning = profileErr.message;
     }
 
-    // 6. Trigger Automatic Sync
-    executeDarazSync().catch((syncErr) =>
+    // Trigger Automatic Sync for this Store
+    executeDarazSync(storeId).catch((syncErr) =>
       console.error("[Daraz OAuth Callback] Background sync error:", syncErr.message)
     );
 
@@ -280,7 +213,7 @@ export async function GET(req: NextRequest) {
       sync_type: "oauth_login",
       status: "completed",
       records_synced: 1,
-      payload: diagnostics,
+      payload: { storeId, sellerId: targetSellerId, storeName, userId: currentUserId },
     });
 
     const response = debugMode
@@ -290,23 +223,17 @@ export async function GET(req: NextRequest) {
           storeId,
           sellerId: targetSellerId,
           storeName,
-          diagnostics,
         })
       : NextResponse.redirect(`${baseUrl}/dashboard?oauth_success=true&store_id=${storeId}`);
 
-    // Clear OAuth state cookie after successful verification
     response.cookies.delete("daraz_oauth_state");
     return response;
   } catch (err: any) {
-    diagnostics.step = "exception";
-    diagnostics.errorMessage = err.message || String(err);
     console.error("[Daraz OAuth Callback Exception]:", err);
-
     return NextResponse.json(
       {
         success: false,
         error: err.message || "Failed to exchange Daraz authorization code for tokens.",
-        diagnostics,
       },
       { status: 500 }
     );

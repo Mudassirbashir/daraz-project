@@ -15,7 +15,8 @@ import {
   Clock,
   CheckCircle2,
   Package,
-  DollarSign
+  AlertCircle,
+  RefreshCw
 } from "lucide-react";
 
 interface OrderDetailsModalProps {
@@ -23,6 +24,7 @@ interface OrderDetailsModalProps {
   onClose: () => void;
   onOpenPackingModal?: (order: any) => void;
   onOpenPrintModal?: (order: any) => void;
+  onOrderUpdated?: () => void;
 }
 
 export function OrderDetailsModal({
@@ -30,9 +32,13 @@ export function OrderDetailsModal({
   onClose,
   onOpenPackingModal,
   onOpenPrintModal,
+  onOrderUpdated,
 }: OrderDetailsModalProps) {
   const [activeTab, setActiveTab] = useState<"details" | "developer">("details");
   const [copiedField, setCopiedField] = useState<string | null>(null);
+  const [isProcessing, setIsProcessing] = useState(false);
+  const [actionError, setActionError] = useState<string | null>(null);
+  const [actionSuccess, setActionSuccess] = useState<string | null>(null);
 
   if (!order) return null;
 
@@ -42,12 +48,12 @@ export function OrderDetailsModal({
     setTimeout(() => setCopiedField(null), 2000);
   };
 
-  const amountFormatted = (order.total_amount_cents / 100).toLocaleString("en-PK", {
+  const amountFormatted = ((order.total_amount_cents || 0) / 100).toLocaleString("en-PK", {
     style: "currency",
     currency: "PKR",
   });
 
-  const rawJson = order.raw || {
+  const rawJson = order.raw_payload || order.raw || {
     order_id: order.daraz_order_id,
     tracking_number: order.tracking_number,
     customer_name: order.customer_name,
@@ -55,6 +61,35 @@ export function OrderDetailsModal({
     total_amount_cents: order.total_amount_cents,
     status: order.status,
     order_date: order.order_date,
+  };
+
+  // Two-Phase Action Model: Pack Order via API
+  const handlePackOrder = async () => {
+    setIsProcessing(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/orders/${order.id}/pack`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+      });
+      const data = await res.json();
+
+      if (data.success && data.darazConfirmed) {
+        setActionSuccess("✓ Daraz Confirmed: Order packed successfully");
+        if (onOrderUpdated) onOrderUpdated();
+        setTimeout(() => {
+          if (onOpenPrintModal) onOpenPrintModal(data.order || order);
+        }, 1000);
+      } else {
+        setActionError(data.error || "Daraz did not accept this packing request.");
+      }
+    } catch (err: any) {
+      setActionError(`Network error: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -89,6 +124,21 @@ export function OrderDetailsModal({
           </button>
         </div>
 
+        {/* Action Status Notification Banners */}
+        {actionError && (
+          <div className="flex items-center space-x-2 rounded-xl bg-red-50 p-3 text-xs font-semibold text-red-700 border border-red-200">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{actionError}</span>
+          </div>
+        )}
+
+        {actionSuccess && (
+          <div className="flex items-center space-x-2 rounded-xl bg-emerald-50 p-3 text-xs font-semibold text-emerald-700 border border-emerald-200">
+            <CheckCircle2 className="h-4 w-4 shrink-0" />
+            <span>{actionSuccess}</span>
+          </div>
+        )}
+
         {/* Tab Navigation */}
         <div className="flex items-center space-x-2 border-b border-slate-200 pb-2 text-xs">
           <button
@@ -108,7 +158,7 @@ export function OrderDetailsModal({
             }`}
           >
             <Code className="h-4 w-4" />
-            <span>Raw Daraz API Response (Developer Tab)</span>
+            <span>Raw Daraz API Response (Technical Details)</span>
           </button>
         </div>
 
@@ -143,15 +193,6 @@ export function OrderDetailsModal({
                   <div className="flex items-center space-x-1.5 pt-1 text-[11px] text-slate-500">
                     <Truck className="h-3.5 w-3.5 text-blue-500" />
                     <span className="font-mono">{order.tracking_number || "Tracking Pending"}</span>
-                    {order.tracking_number && (
-                      <button
-                        onClick={() => copyToClipboard(order.tracking_number, "tracking")}
-                        className="text-slate-400 hover:text-slate-700"
-                        title="Copy Tracking Number"
-                      >
-                        {copiedField === "tracking" ? <Check className="h-3 w-3 text-emerald-600" /> : <Copy className="h-3 w-3" />}
-                      </button>
-                    )}
                   </div>
                 </div>
               </div>
@@ -169,7 +210,7 @@ export function OrderDetailsModal({
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span className="text-slate-500">Payment Method:</span>
-                    <span className="font-semibold text-slate-800">COD</span>
+                    <span className="font-semibold text-slate-800">{order.payment_method || "COD"}</span>
                   </div>
                   <div className="flex justify-between text-slate-600">
                     <span className="text-slate-500">Order Date:</span>
@@ -192,13 +233,13 @@ export function OrderDetailsModal({
                     <CheckCircle2 className="h-4 w-4" />
                   </span>
                   <div>
-                    <p className="font-bold text-slate-900 capitalize">{order.status || "Pending"}</p>
+                    <p className="font-bold text-slate-900 capitalize">{(order.status || order.workflow_status || "Pending").replace(/_/g, " ")}</p>
                     <p className="text-[11px] text-slate-500">Synchronized from Daraz Open Platform API</p>
                   </div>
                 </div>
 
                 <span className="rounded-md bg-blue-50 px-3 py-1 text-xs font-bold text-blue-700 border border-blue-200">
-                  Live API Validated
+                  Daraz API Validated
                 </span>
               </div>
             </div>
@@ -210,19 +251,17 @@ export function OrderDetailsModal({
           </div>
         )}
 
-        {/* Footer */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100 dark:border-slate-800">
+        {/* Footer Actions */}
+        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
           <div className="flex items-center space-x-2">
             {!order.is_packed ? (
               <button
-                onClick={() => {
-                  onClose();
-                  if (onOpenPackingModal) onOpenPackingModal(order);
-                }}
-                className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-orange-700 transition-all apple-press"
+                onClick={handlePackOrder}
+                disabled={isProcessing}
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-orange-700 disabled:opacity-50 transition-all"
               >
-                <Package className="h-4 w-4" />
-                <span>Pack Order</span>
+                {isProcessing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
+                <span>{isProcessing ? "Sending Request to Daraz..." : "Pack Order on Daraz"}</span>
               </button>
             ) : (
               <button
@@ -230,7 +269,7 @@ export function OrderDetailsModal({
                   onClose();
                   if (onOpenPrintModal) onOpenPrintModal(order);
                 }}
-                className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all apple-press"
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all"
               >
                 <Truck className="h-4 w-4" />
                 <span>Print Official Shipping Label</span>
