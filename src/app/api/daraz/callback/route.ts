@@ -149,11 +149,11 @@ export async function GET(req: NextRequest) {
     const storeName = account || `Daraz Store (${targetSellerId})`;
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    // 5. Store Persistence & Reconnection Check
+    // 5. Store Persistence & Strict Exact seller_id Reconnection Check
     const { data: existingStores } = await supabase
       .from("daraz_stores")
       .select("id, store_code, seller_id, is_active")
-      .or(`seller_id.eq.${targetSellerId},store_code.eq.DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`);
+      .eq("seller_id", targetSellerId);
 
     let storeId: string;
 
@@ -175,7 +175,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (existingStores && existingStores.length > 0) {
-      // Reconnect existing seller record
+      // Reconnect existing seller record with exact seller_id match
       const targetStore = existingStores[0];
       const { data: updated, error: updateErr } = await supabase
         .from("daraz_stores")
@@ -188,7 +188,12 @@ export async function GET(req: NextRequest) {
       storeId = updated.id;
     } else {
       // New store connection -> Enforce 3-Store Limit!
-      let storeQuery = supabase.from("daraz_stores").select("id", { count: "exact", head: true }).eq("is_active", true);
+      let storeQuery = supabase
+        .from("daraz_stores")
+        .select("id", { count: "exact", head: true })
+        .eq("is_active", true)
+        .not("access_token", "is", null);
+
       if (currentUserId) {
         storeQuery = storeQuery.or(`user_id.eq.${currentUserId},user_id.is.null`);
       }
@@ -202,7 +207,18 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const storeCode = `DARAZ-${storeRegion}-${targetSellerId.slice(-6)}`;
+      // Generate a unique store code using full targetSellerId to prevent UNIQUE key collisions
+      let storeCode = `DARAZ-${storeRegion}-${targetSellerId}`;
+      const { data: codeCheck } = await supabase
+        .from("daraz_stores")
+        .select("id")
+        .eq("store_code", storeCode)
+        .maybeSingle();
+
+      if (codeCheck) {
+        storeCode = `DARAZ-${storeRegion}-${targetSellerId}-${Date.now().toString().slice(-4)}`;
+      }
+
       const { data: inserted, error: insertErr } = await supabase
         .from("daraz_stores")
         .insert({
