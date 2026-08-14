@@ -1,7 +1,8 @@
 import React from "react";
-import { Store, CheckCircle2, AlertCircle, RefreshCw, Plus, Package, ShoppingCart, Truck, ExternalLink, ArrowRight } from "lucide-react";
+import { Store, Package, ShoppingCart, Truck, Plus } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
+import { StoreCardActions } from "@/components/stores/StoreCardActions";
 
 export const dynamic = "force-dynamic";
 
@@ -19,7 +20,7 @@ export default async function StoresPage() {
   // Calculate live metrics per store
   const enrichedStores = await Promise.all(
     storesList.map(async (st) => {
-      const isConnected = Boolean(st.access_token);
+      const isConnected = Boolean(st.access_token && st.is_active);
 
       if (!isConnected) {
         return {
@@ -117,14 +118,13 @@ export default async function StoresPage() {
         </span>
 
         <span className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
-          <span>⚪ Not Connected: {disconnectedCount}</span>
+          <span>⚪ Disconnected: {disconnectedCount}</span>
         </span>
       </div>
 
       {/* Stores Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
         {enrichedStores.map((store) => {
-          // Generate store initials for logo placeholder
           const initials = store.store_name
             .split(" ")
             .map((w: string) => w[0])
@@ -166,7 +166,7 @@ export default async function StoresPage() {
                 ) : (
                   <span className="inline-flex items-center space-x-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">
                     <span className="h-2 w-2 rounded-full bg-slate-400"></span>
-                    <span>⚪ Not Connected</span>
+                    <span>⚪ Disconnected</span>
                   </span>
                 )}
               </div>
@@ -225,37 +225,12 @@ export default async function StoresPage() {
               )}
 
               {/* Action Buttons */}
-              <div className="pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center space-x-2">
-                {store.isConnected ? (
-                  <>
-                    <a
-                      href={`/listings?store_id=${store.id}`}
-                      title="Open store products"
-                      className="flex-1 inline-flex items-center justify-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2.5 font-bold text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-700 transition-all apple-press shadow-2xs"
-                    >
-                      <ExternalLink className="h-3.5 w-3.5 text-slate-500" />
-                      <span>Open Store</span>
-                    </a>
-
-                    <a
-                      href="/api/auth/daraz/login"
-                      title="Reconnect Daraz store account"
-                      className="inline-flex items-center justify-center p-2.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 transition-all"
-                    >
-                      <RefreshCw className="h-4 w-4" />
-                    </a>
-                  </>
-                ) : (
-                  <a
-                    href="/api/auth/daraz/login"
-                    title="Connect this Daraz store account"
-                    className="w-full inline-flex items-center justify-center space-x-2 rounded-xl bg-orange-500 px-4 py-2.5 font-bold text-white shadow-md hover:bg-orange-600 transition-all apple-press"
-                  >
-                    <Store className="h-4 w-4" />
-                    <span>Connect Store</span>
-                    <ArrowRight className="h-4 w-4" />
-                  </a>
-                )}
+              <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
+                <StoreCardActions
+                  storeId={store.id}
+                  storeName={store.store_name}
+                  isConnected={store.isConnected}
+                />
               </div>
 
               {/* Footer Last Synced */}

@@ -23,10 +23,10 @@ const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
  * Production-Grade Synchronization Engine:
  * 1. Multi-store isolation with per-store lock guards.
  * 2. Queries active Daraz Stores from Supabase.
- * 3. Uses incremental `last_synced_at` timestamps for Order API calls.
- * 4. Fetches Store Profiles, Catalog Listings, Images, and Orders via Daraz REST API.
+ * 3. Uses 24-hour safe overlap window on incremental `last_synced_at` to prevent missing orders.
+ * 4. Fetches Store Profiles, Catalog Listings, Variations, Images, and Orders via Daraz REST API.
  * 5. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id`.
- * 6. Logs diagnostics into `daraz_api_logs` and records mismatches in `reconciliation_logs`.
+ * 6. Logs diagnostics into `daraz_api_logs` and records discrepancies in `reconciliation_logs`.
  */
 export async function executeDarazSync(targetStoreId?: string): Promise<SyncResult> {
   const startTime = Date.now();
@@ -84,7 +84,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         continue;
       }
 
-      // Set lock for this store
       storeSyncLocks.set(store.id, Date.now());
 
       try {
@@ -112,7 +111,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           console.warn(`[SyncEngine] Store profile notice for ${store.store_code}:`, profileErr.message);
         }
 
-        // B. Sync Products / Listings & Inventory
+        // B. Sync Products / Listings & Inventory (with Variations)
         let productOffset = 0;
         const limit = 50;
         let totalProducts = 0;
@@ -132,7 +131,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
               if (existingListing) {
                 updatedCount++;
-                // Detect stock mismatch for reconciliation log if local stock differed from Daraz truth
                 if (existingListing.stock_quantity !== item.quantity) {
                   try {
                     await supabase.from("reconciliation_logs").insert({
@@ -203,12 +201,13 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           productOffset += limit;
         } while (productOffset < totalProducts && productOffset < 500);
 
-        // C. Sync Orders using incremental timestamp filter
+        // C. Sync Orders using 24-hour safe overlap window to eliminate missing orders
         let orderOffset = 0;
         let totalOrders = 0;
 
-        // Use last_synced_at if available, else fall back to 30 days ago
-        const incrementalUpdateAfter = store.last_synced_at || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+        const safeOverlapMs = 24 * 60 * 60 * 1000; // 24 hours safe overlap
+        const lastSyncTime = store.last_synced_at ? new Date(store.last_synced_at).getTime() : Date.now() - 30 * 24 * 60 * 60 * 1000;
+        const incrementalUpdateAfter = new Date(lastSyncTime - safeOverlapMs).toISOString();
 
         do {
           const { orders, total } = await darazClient.getOrders(orderOffset, limit, incrementalUpdateAfter);
@@ -217,9 +216,24 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           for (const ord of orders) {
             try {
               let mappedStatus: DarazOrderStatus = "pending";
-              const validStatuses = ["unpaid", "pending", "ready_to_ship", "shipped", "delivered", "canceled", "returned", "failed"];
-              if (validStatuses.includes(ord.statuses)) {
-                mappedStatus = ord.statuses as DarazOrderStatus;
+              const normStatus = (ord.statuses || "").toLowerCase().replace(/[-\s]+/g, "_");
+
+              if (["ready_to_ship", "to_ship", "to_pack"].includes(normStatus)) {
+                mappedStatus = "ready_to_ship";
+              } else if (["shipped", "in_transit"].includes(normStatus)) {
+                mappedStatus = "shipped";
+              } else if (normStatus === "delivered") {
+                mappedStatus = "delivered";
+              } else if (["canceled", "cancelled"].includes(normStatus)) {
+                mappedStatus = "canceled";
+              } else if (normStatus === "returned") {
+                mappedStatus = "returned";
+              } else if (normStatus === "failed") {
+                mappedStatus = "failed";
+              } else if (normStatus === "unpaid") {
+                mappedStatus = "unpaid";
+              } else {
+                mappedStatus = "pending";
               }
 
               const rawObj = ord.raw || {};
@@ -310,7 +324,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 throw new Error(`Order upsert DB error: ${orderUpsertErr?.message || "Unknown error"}`);
               }
 
-              // Fetch and upsert order line items
               if (upsertedOrder?.id) {
                 try {
                   const fetchedItems = await darazClient.getOrderItems(ord.order_id);
@@ -375,7 +388,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
         storesSynced++;
 
-        // Log sync diagnostics
         await supabase.from("daraz_api_logs").insert({
           store_id: store.id,
           sync_type: "full_sync",

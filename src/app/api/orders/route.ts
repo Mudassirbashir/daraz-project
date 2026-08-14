@@ -22,7 +22,6 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
-    // Session Authentication Verification & User Store Scoping
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
 
@@ -32,7 +31,7 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Query stores authorized for this user
+    // Query user authorized store IDs
     const { data: userStores } = await supabase
       .from("daraz_stores")
       .select("id")
@@ -51,26 +50,27 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    let query = supabase
-      .from("orders")
-      .select("*, daraz_stores(store_name, store_code, region)", { count: "exact" });
-
-    // 1. Strict Multi-Store Isolation
+    let targetStoreIds = userStoreIds;
     if (storeId !== "all") {
       if (!userStoreIds.includes(storeId)) {
         return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
       }
-      query = query.eq("store_id", storeId);
-    } else {
-      query = query.in("store_id", userStoreIds);
+      targetStoreIds = [storeId];
     }
+
+    let query = supabase
+      .from("orders")
+      .select("*, daraz_stores(store_name, store_code, region)", { count: "exact" })
+      .in("store_id", targetStoreIds);
 
     // 2. Status Filter
     if (status !== "all") {
       if (status === "pending") {
-        query = query.in("status", ["pending", "unpaid"]);
+        query = query.in("status", ["pending", "unpaid", "ready_to_ship"]);
+      } else if (status === "shipped") {
+        query = query.in("status", ["shipped", "in_transit"]);
       } else if (status === "delivered") {
-        query = query.in("status", ["delivered", "shipped"]);
+        query = query.eq("status", "delivered");
       } else if (status === "canceled") {
         query = query.in("status", ["canceled", "returned", "failed"]);
       } else {
@@ -105,7 +105,7 @@ export async function GET(req: NextRequest) {
 
     const todayStr = new Date().toISOString().split("T")[0];
 
-    // Calculate Summary Metrics for userStores in Parallel
+    // Calculate Summary Metrics for targetStoreIds in Parallel
     const [
       { count: totalOrdersCount },
       { count: pendingCount },
@@ -117,15 +117,15 @@ export async function GET(req: NextRequest) {
       { count: failedCount },
       { data: todayOrders },
     ] = await Promise.all([
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).in("status", ["pending", "unpaid"]),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "ready_to_ship"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "shipped"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "delivered"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "canceled"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "returned"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("status", "failed"),
-      supabase.from("orders").select("total_amount_cents").in("store_id", userStoreIds).gte("order_date", todayStr),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).in("status", ["pending", "unpaid"]),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).eq("status", "ready_to_ship"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).eq("status", "shipped"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).eq("status", "delivered"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).eq("status", "canceled"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).eq("status", "returned"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", targetStoreIds).eq("status", "failed"),
+      supabase.from("orders").select("total_amount_cents").in("store_id", targetStoreIds).gte("order_date", todayStr),
     ]);
 
     const todaysRevenueCents = (todayOrders || []).reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);

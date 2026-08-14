@@ -352,7 +352,7 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Products with Pagination & Normalized Fields (/products/get)
+   * Fetch Store Products with Pagination, All Variations & Normalized Stock (/products/get)
    */
   async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
     const response = await this.request<{ data: { products?: any[]; total_products?: number } }>("/products/get", {
@@ -364,46 +364,24 @@ export class DarazApiClient {
     const rawProducts = response.data?.products || [];
     const total = response.data?.total_products || rawProducts.length;
 
-    const products: DarazProductItem[] = rawProducts.map((p) => {
-      const firstSku = p.skus?.[0] || {};
+    const products: DarazProductItem[] = [];
+
+    rawProducts.forEach((p) => {
       const rawAttributes = p.attributes || {};
 
-      const imageCandidates: string[] = [];
-
+      const productLevelImages: string[] = [];
       if (Array.isArray(p.images)) {
         p.images.forEach((img: any) => {
-          if (typeof img === "string") imageCandidates.push(img);
+          if (typeof img === "string") productLevelImages.push(img);
         });
       }
-
-      if (Array.isArray(p.skus)) {
-        p.skus.forEach((sku: any) => {
-          if (Array.isArray(sku.Images)) {
-            sku.Images.forEach((img: any) => {
-              if (typeof img === "string") imageCandidates.push(img);
-            });
-          } else if (typeof sku.Images === "string") {
-            imageCandidates.push(sku.Images);
-          }
-          if (Array.isArray(sku.images)) {
-            sku.images.forEach((img: any) => {
-              if (typeof img === "string") imageCandidates.push(img);
-            });
-          }
-        });
-      }
-
       if (Array.isArray(rawAttributes.images)) {
         rawAttributes.images.forEach((img: any) => {
-          if (typeof img === "string") imageCandidates.push(img);
+          if (typeof img === "string") productLevelImages.push(img);
         });
       } else if (typeof rawAttributes.image === "string") {
-        imageCandidates.push(rawAttributes.image);
+        productLevelImages.push(rawAttributes.image);
       }
-
-      const normalizedImages = Array.from(
-        new Set(imageCandidates.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
-      );
 
       const description =
         rawAttributes.description ||
@@ -411,43 +389,56 @@ export class DarazApiClient {
         p.description ||
         "No description provided.";
 
-      const variations = Array.isArray(p.skus)
-        ? p.skus.map((sku: any) => ({
-            seller_sku: sku.SellerSku || "",
-            shop_sku: sku.ShopSku || "",
-            sku_id: String(sku.SkuId || ""),
-            price_cents: Math.round((sku.price || 0) * 100),
-            special_price_cents: sku.special_price ? Math.round(sku.special_price * 100) : undefined,
-            quantity: sku.quantity || 0,
-            reserved_quantity: sku.withholding_quantity || sku.reserved_stock || 0,
-            package_content: sku.package_content || "",
-            package_weight: sku.package_weight || "",
-            images: Array.isArray(sku.Images)
-              ? sku.Images.map((img: string) => this.normalizeImageUrl(img))
-              : typeof sku.Images === "string"
-              ? [this.normalizeImageUrl(sku.Images)]
-              : [],
-          }))
-        : [];
+      const skus = Array.isArray(p.skus) && p.skus.length > 0 ? p.skus : [{}];
 
-      return {
-        item_id: String(p.item_id || firstSku.ShopSku || `ITEM_${Date.now()}`),
-        seller_sku: firstSku.SellerSku || `SKU_${p.item_id}`,
-        daraz_sku_id: String(firstSku.SkuId || firstSku.ShopSku || ""),
-        title: rawAttributes.name || firstSku.package_content || p.title || "Daraz Product",
-        category: String(p.primary_category || rawAttributes.category || "General"),
-        brand: String(rawAttributes.brand || "Generic"),
-        status: String(p.status || "active").toLowerCase(),
-        description,
-        price_cents: Math.round((firstSku.price || 0) * 100),
-        special_price_cents: firstSku.special_price ? Math.round(firstSku.special_price * 100) : undefined,
-        quantity: firstSku.quantity || 0,
-        reserved_quantity: firstSku.withholding_quantity || firstSku.reserved_stock || 0,
-        images: normalizedImages,
-        attributes: rawAttributes,
-        variations,
-        product_url: p.url || p.product_url || rawAttributes.product_url || "",
-      };
+      // Extract each SKU variation as an accurate catalog item
+      skus.forEach((sku: any) => {
+        const skuImages: string[] = [...productLevelImages];
+        if (Array.isArray(sku.Images)) {
+          sku.Images.forEach((img: any) => {
+            if (typeof img === "string") skuImages.push(img);
+          });
+        } else if (typeof sku.Images === "string") {
+          skuImages.push(sku.Images);
+        }
+
+        const normalizedImages = Array.from(
+          new Set(skuImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
+        );
+
+        // Safely parse quantity & stock numbers (avoiding corrupted or multiplied numbers)
+        const rawQty = sku.quantity ?? sku.Available ?? 0;
+        const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
+
+        const rawReserved = sku.withholding_quantity ?? sku.reserved_stock ?? 0;
+        const parsedReserved = Math.max(0, parseInt(String(rawReserved), 10) || 0);
+
+        const priceCents = Math.round((parseFloat(String(sku.price || 0)) || 0) * 100);
+        const specialPriceCents = sku.special_price
+          ? Math.round(parseFloat(String(sku.special_price)) * 100)
+          : undefined;
+
+        const sellerSku = sku.SellerSku || `SKU_${p.item_id}_${sku.SkuId || "0"}`;
+
+        products.push({
+          item_id: String(p.item_id || sku.ShopSku || `ITEM_${Date.now()}`),
+          seller_sku: sellerSku,
+          daraz_sku_id: String(sku.SkuId || sku.ShopSku || ""),
+          title: rawAttributes.name || sku.package_content || p.title || "Daraz Product",
+          category: String(p.primary_category || rawAttributes.category || "General"),
+          brand: String(rawAttributes.brand || "Generic"),
+          status: String(p.status || sku.Status || "active").toLowerCase(),
+          description,
+          price_cents: priceCents,
+          special_price_cents: specialPriceCents,
+          quantity: parsedQuantity,
+          reserved_quantity: parsedReserved,
+          images: normalizedImages,
+          attributes: rawAttributes,
+          variations: skus,
+          product_url: p.url || p.product_url || rawAttributes.product_url || "",
+        });
+      });
     });
 
     return { products, total };
@@ -544,8 +535,8 @@ export class DarazApiClient {
         product_main_image: item.product_main_image || "",
         seller_sku: item.sku || item.seller_sku || "SKU_UNKNOWN",
         shop_sku: item.shop_sku || item.daraz_sku || "",
-        item_price_cents: Math.round((item.item_price || 0) * 100),
-        paid_price_cents: Math.round((item.paid_price || item.item_price || 0) * 100),
+        item_price_cents: Math.round((parseFloat(String(item.item_price || 0)) || 0) * 100),
+        paid_price_cents: Math.round((parseFloat(String(item.paid_price || item.item_price || 0)) || 0) * 100),
         status: String(item.status || "pending").toLowerCase(),
         shipment_provider: item.shipment_provider || "Daraz Express",
         tracking_code: item.tracking_code || "",
@@ -558,7 +549,7 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Orders with Pagination & Full Normalized Header Fields (/orders/get)
+   * Fetch Store Orders with Pagination & Normalized Status Mapping (/orders/get)
    */
   async getOrders(offset = 0, limit = 50, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
     const safeUpdateAfter = updateAfter || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
@@ -589,6 +580,9 @@ export class DarazApiClient {
         rawStatus = o.status.trim();
       }
 
+      // Normalize status string (replacing hyphens/spaces with underscore)
+      const normalizedStatus = rawStatus.toLowerCase().replace(/[-\s]+/g, "_");
+
       const exactFirstName = o.customer_first_name || addressShipping.first_name || addressBilling.first_name || "Customer";
       const exactLastName = o.customer_last_name || addressShipping.last_name || addressBilling.last_name || "";
       const exactFullName = `${exactFirstName} ${exactLastName}`.trim();
@@ -617,7 +611,7 @@ export class DarazApiClient {
         shipping_fee_cents: Math.round(parseFloat(String(o.shipping_fee || 0)) * 100),
         voucher_discount_cents: Math.round(parseFloat(String(o.voucher_platform || o.voucher || 0)) * 100),
         seller_discount_cents: Math.round(parseFloat(String(o.voucher_seller || 0)) * 100),
-        statuses: rawStatus.toLowerCase(),
+        statuses: normalizedStatus,
         created_at: o.created_at || new Date().toISOString(),
         updated_at: o.updated_at || new Date().toISOString(),
         items: [],
