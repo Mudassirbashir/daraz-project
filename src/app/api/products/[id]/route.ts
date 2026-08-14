@@ -11,8 +11,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
@@ -114,8 +115,9 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
@@ -267,8 +269,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
 
     // Audit Log
     await supabase.from("audit_logs").insert({
-      user_id: user.id,
-      actor_name: user.email || "Ops Manager",
+      user_id: user?.id || null,
+      actor_name: user?.email || "Ops Manager",
       entity_type: "product",
       entity_id: product.id,
       action: "price_stock_update",

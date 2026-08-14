@@ -199,7 +199,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           }
 
           productOffset += limit;
-        } while (productOffset < totalProducts && productOffset < 500);
+        } while (productOffset < totalProducts && products.length > 0);
 
         // C. Sync Orders using 24-hour safe overlap window to eliminate missing orders
         let orderOffset = 0;
@@ -298,30 +298,17 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 .select("id")
                 .maybeSingle();
 
-              if (orderUpsertErr && orderUpsertErr.message.includes("schema cache")) {
-                const baseOrderPayload = {
-                  store_id: store.id,
-                  daraz_order_id: ord.order_id,
-                  customer_name: exactCustomerName,
-                  customer_city: ord.customer_city,
-                  total_amount_cents: ord.price_cents,
-                  status: mappedStatus,
-                  tracking_number: ord.tracking_code || null,
-                  order_date: ord.created_at || timestamp,
-                };
-
-                const res = await supabase
-                  .from("orders")
-                  .upsert(baseOrderPayload, { onConflict: "daraz_order_id" })
-                  .select("id")
-                  .single();
-
-                upsertedOrder = res.data;
-                orderUpsertErr = res.error;
+              if (orderUpsertErr) {
+                console.error(`[SyncEngine] Error upserting Order ${ord.order_id}:`, orderUpsertErr.message);
               }
 
-              if (orderUpsertErr || !upsertedOrder) {
-                throw new Error(`Order upsert DB error: ${orderUpsertErr?.message || "Unknown error"}`);
+              if (!upsertedOrder) {
+                const { data: existingOrder } = await supabase
+                  .from("orders")
+                  .select("id")
+                  .eq("daraz_order_id", ord.order_id)
+                  .maybeSingle();
+                upsertedOrder = existingOrder;
               }
 
               if (upsertedOrder?.id) {
@@ -358,22 +345,11 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             } catch (ordErr: any) {
               failedCount++;
               console.error(`[SyncEngine] Order error for Order ID ${ord.order_id}:`, ordErr.message);
-
-              await supabase.from("sync_retry_queue").insert({
-                store_id: store.id,
-                operation_type: "order_sync",
-                entity_type: "order",
-                entity_id: ord.order_id,
-                attempt_count: 1,
-                error_message: ordErr.message || "Failed to process Daraz order during sync.",
-                status: "failed",
-                payload: ord.raw || {},
-              });
             }
           }
 
           orderOffset += limit;
-        } while (orderOffset < totalOrders && orderOffset < 500);
+        } while (orderOffset < totalOrders && orders.length > 0);
 
         // Update store last_synced_at
         await supabase
@@ -387,55 +363,44 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           .eq("id", store.id);
 
         storesSynced++;
-
-        await supabase.from("daraz_api_logs").insert({
-          store_id: store.id,
-          sync_type: "full_sync",
-          status: "completed",
-          records_synced: productsSynced + ordersSynced,
-          payload: {
-            startedTime: startedTimeIso,
-            finishedTime: new Date().toISOString(),
-            imported: importedCount,
-            updated: updatedCount,
-            failed: failedCount,
-            productsSynced,
-            ordersSynced,
-            durationMs: Date.now() - startTime,
-            apiErrors: errors,
-          },
-        });
-
       } catch (storeErr: any) {
-        const errorMsg = storeErr.message || String(storeErr);
-        errors.push(`Store [${store.store_code}] Error: ${errorMsg}`);
-        failedCount++;
+        console.error(`[SyncEngine] Sync failed for store ${store.store_code}:`, storeErr.message);
+        errors.push(`Store ${store.store_name} (${store.store_code}): ${storeErr.message}`);
 
         await supabase
           .from("daraz_stores")
           .update({
             sync_status: "error",
-            last_sync_error: errorMsg,
+            last_sync_error: storeErr.message,
             updated_at: timestamp,
           })
           .eq("id", store.id);
-
-        await supabase.from("daraz_api_logs").insert({
-          store_id: store.id,
-          sync_type: "full_sync",
-          status: "failed",
-          error_message: errorMsg,
-          payload: {
-            startedTime: startedTimeIso,
-            finishedTime: new Date().toISOString(),
-            durationMs: Date.now() - startTime,
-            apiErrors: [errorMsg],
-          },
-        });
       } finally {
         storeSyncLocks.delete(store.id);
       }
     }
+
+    const durationMs = Date.now() - startTime;
+
+    // Log global sync job diagnostic
+    await supabase.from("daraz_api_logs").insert({
+      store_id: targetStoreId || connectedStores[0]?.id,
+      sync_type: targetStoreId ? "store_sync" : "cron_sync",
+      status: errors.length > 0 ? "completed_with_errors" : "completed",
+      records_synced: productsSynced + ordersSynced,
+      payload: {
+        durationMs,
+        storesSynced,
+        productsSynced,
+        ordersSynced,
+        importedCount,
+        updatedCount,
+        failedCount,
+        errors,
+        startedTimeIso,
+        completedTimeIso: timestamp,
+      },
+    });
 
     return {
       success: errors.length === 0,
@@ -445,13 +410,14 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
       importedCount,
       updatedCount,
       failedCount,
-      durationMs: Date.now() - startTime,
+      durationMs,
       errors,
       timestamp,
     };
-  } catch (err: any) {
-    const mainError = err.message || String(err);
-    errors.push(mainError);
+  } catch (globalErr: any) {
+    console.error("[SyncEngine Fatal Exception]:", globalErr.message);
+    errors.push(globalErr.message || "Fatal error occurred during Daraz sync execution.");
+
     return {
       success: false,
       storesSynced,

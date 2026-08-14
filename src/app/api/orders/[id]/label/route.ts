@@ -9,6 +9,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
   const { id } = params;
   const { searchParams } = new URL(req.url);
   const docTypeParam = (searchParams.get("doc_type") || "shipping_label") as "shipping_label" | "invoice" | "carrierManifest";
+  const rawFormatParam = searchParams.get("raw") === "true";
 
   try {
     const serverSupabase = createClient();
@@ -50,23 +51,64 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       accessToken: order.daraz_stores.access_token,
       refreshToken: order.daraz_stores.refresh_token || undefined,
       tokenExpiresAt: order.daraz_stores.token_expires_at || undefined,
+      appKey: order.daraz_stores.api_app_key || undefined,
+      appSecret: order.daraz_stores.api_app_secret || undefined,
     });
 
     const orderItems = await darazClient.getOrderItems(order.daraz_order_id);
     const itemIds = orderItems.map((item) => item.order_item_id);
 
     if (itemIds.length === 0) {
-      // Fallback: use order_id as item ID
       itemIds.push(order.daraz_order_id);
     }
 
     // Fetch Official Shipping Document from Daraz REST API /order/document/get
     const shippingDoc = await darazClient.getShippingDocument(itemIds, docTypeParam);
 
+    let decodedContent = shippingDoc.file;
+    let isHtml = false;
+
+    // Decode Base64 string if payload is encoded
+    try {
+      if (!decodedContent.trim().startsWith("<") && !decodedContent.startsWith("%PDF")) {
+        const decodedStr = Buffer.from(decodedContent, "base64").toString("utf-8");
+        if (decodedStr.includes("<") || decodedStr.includes("html") || decodedStr.includes("DOCTYPE") || decodedStr.includes("body")) {
+          decodedContent = decodedStr;
+          isHtml = true;
+        }
+      } else if (decodedContent.trim().startsWith("<")) {
+        isHtml = true;
+      }
+    } catch (e) {
+      // Keep as is if decoding fails
+    }
+
+    // If requested as raw document stream directly for browser preview/printing
+    if (rawFormatParam) {
+      if (isHtml || shippingDoc.mimeType.includes("html")) {
+        return new Response(decodedContent, {
+          headers: {
+            "Content-Type": "text/html; charset=utf-8",
+            "Content-Disposition": `inline; filename="daraz-label-${order.daraz_order_id}.html"`,
+          },
+        });
+      }
+
+      if (shippingDoc.mimeType.includes("pdf") || decodedContent.startsWith("%PDF")) {
+        const pdfBuffer = Buffer.from(shippingDoc.file, "base64");
+        return new Response(pdfBuffer, {
+          headers: {
+            "Content-Type": "application/pdf",
+            "Content-Disposition": `inline; filename="daraz-label-${order.daraz_order_id}.pdf"`,
+          },
+        });
+      }
+    }
+
     return NextResponse.json({
       success: true,
-      file: shippingDoc.file,
-      mimeType: shippingDoc.mimeType,
+      file: decodedContent,
+      mimeType: isHtml ? "text/html" : shippingDoc.mimeType,
       docType: docTypeParam,
       order,
       printTracking: {
@@ -103,7 +145,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const supabase = createAdminClient();
 
-    // Fetch user profile name
     const userId = user?.id || "";
     const { data: profile } = userId
       ? await supabase
@@ -115,7 +156,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const operatorName = profile?.full_name || profile?.employee_id || user?.email || "Shipping Staff";
 
-    // Fetch target order
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
       .select("*, daraz_stores(*)")
@@ -129,7 +169,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const timestamp = new Date().toISOString();
     const newReprintCount = (order.reprint_count || 0) + 1;
 
-    // Record print event in orders table
     const { data: updatedOrder, error: updateErr } = await supabase
       .from("orders")
       .update({
@@ -140,37 +179,32 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         updated_at: timestamp,
       })
       .eq("id", id)
-      .select("*, daraz_stores(id, store_name, store_code, region)")
+      .select()
       .single();
 
     if (updateErr) {
-      throw new Error(`Failed to record label print tracking: ${updateErr.message}`);
+      throw new Error(`Failed to update label print tracking: ${updateErr.message}`);
     }
 
-    // Insert audit log
-    await supabase.from("daraz_api_logs").insert({
-      store_id: order.store_id,
-      sync_type: newReprintCount > 1 ? "label_reprinted" : "label_printed",
-      status: "completed",
-      records_synced: 1,
-      payload: {
-        order_id: order.id,
-        daraz_order_id: order.daraz_order_id,
-        printed_by: operatorName,
-        printed_at: timestamp,
-        reprint_count: newReprintCount,
-      },
+    await supabase.from("order_activities").insert({
+      order_id: order.id,
+      daraz_order_id: order.daraz_order_id,
+      previous_status: order.workflow_status || order.status,
+      new_status: order.workflow_status || order.status,
+      actor: operatorName,
+      source: "Shipping Label Station",
+      notes: `Official shipping label printed (${newReprintCount}x).`,
     });
 
     return NextResponse.json({
       success: true,
-      message: newReprintCount > 1 ? `✓ Label Reprinted (Count: ${newReprintCount})` : "✓ Label Sent to Printer",
+      message: "Shipping label print recorded.",
       order: updatedOrder,
     });
   } catch (err: any) {
     console.error("[POST /api/orders/[id]/label Exception]:", err.message);
     return NextResponse.json(
-      { success: false, error: err.message || "Failed to record print event." },
+      { success: false, error: err.message || "Failed to record label print event." },
       { status: 500 }
     );
   }

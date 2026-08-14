@@ -21,11 +21,11 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
-    // Session Authentication Verification
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
