@@ -14,6 +14,17 @@ export interface WebhookProcessResult {
   isDuplicate?: boolean;
 }
 
+function safeCompareHex(a: string, b: string): boolean {
+  try {
+    const bufA = Buffer.from(a.trim().toUpperCase(), "utf8");
+    const bufB = Buffer.from(b.trim().toUpperCase(), "utf8");
+    if (bufA.length !== bufB.length) return false;
+    return crypto.timingSafeEqual(bufA, bufB);
+  } catch (e) {
+    return false;
+  }
+}
+
 /**
  * Validates incoming Daraz/Lazada Open Platform Webhook signature.
  */
@@ -33,17 +44,16 @@ export function validateDarazWebhookSignature(
   }
 
   try {
-    const targetSign = (signHeader || authHeader.replace(/^Bearer\s+/i, "")).trim().toUpperCase();
+    const targetSign = (signHeader || authHeader.replace(/^Bearer\s+/i, "")).trim();
 
     // Candidate 1: Exact Daraz specification: Authorization = HEX(HMAC-SHA256(app_key + exact_raw_message_body, app_secret))
     const baseWithAppKey = `${appKey.trim()}${rawBody}`;
     const computedAppKeyHmac = crypto
       .createHmac("sha256", appSecret.trim())
       .update(baseWithAppKey, "utf8")
-      .digest("hex")
-      .toUpperCase();
+      .digest("hex");
 
-    if (computedAppKeyHmac === targetSign) {
+    if (safeCompareHex(computedAppKeyHmac, targetSign)) {
       return true;
     }
 
@@ -51,10 +61,9 @@ export function validateDarazWebhookSignature(
     const computedRawHmac = crypto
       .createHmac("sha256", appSecret.trim())
       .update(rawBody, "utf8")
-      .digest("hex")
-      .toUpperCase();
+      .digest("hex");
 
-    if (computedRawHmac === targetSign) {
+    if (safeCompareHex(computedRawHmac, targetSign)) {
       return true;
     }
 
@@ -73,18 +82,17 @@ export function validateDarazWebhookSignature(
       const computedParamHmac = crypto
         .createHmac("sha256", appSecret.trim())
         .update(baseStr, "utf8")
-        .digest("hex")
-        .toUpperCase();
+        .digest("hex");
 
-      if (computedParamHmac === targetSign) {
+      if (safeCompareHex(computedParamHmac, targetSign)) {
         return true;
       }
     }
 
-    console.warn(`[Daraz Webhook Signature Mismatch]: Computed ${computedAppKeyHmac} vs Provided ${targetSign}`);
+    console.warn("[DARAZ WEBHOOK] Signature mismatch for incoming request.");
     return false;
   } catch (err: any) {
-    console.error("[Daraz Webhook Signature Validation Error]:", err.message);
+    console.error("[DARAZ WEBHOOK] Signature validation exception:", err.message);
     return false;
   }
 }
@@ -104,11 +112,11 @@ export function mapDarazWebhookStatus(rawStatus?: string): DarazOrderStatus {
     return "delivered";
   } else if (["canceled", "cancelled"].includes(norm)) {
     return "canceled";
-  } else if (norm === "returned") {
+  } else if (["returned"].includes(norm)) {
     return "returned";
-  } else if (norm === "failed") {
+  } else if (["failed"].includes(norm)) {
     return "failed";
-  } else if (norm === "unpaid") {
+  } else if (["unpaid"].includes(norm)) {
     return "unpaid";
   }
   return "pending";
@@ -121,13 +129,15 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
   const supabase = createAdminClient();
   const timestamp = new Date().toISOString();
 
-  // 1. Extract MessageType (MessageType 4 = Trade Order, MessageType 1 = Fulfillment)
-  const messageType = payload.message_type ?? payload.messageType ?? payload.type ?? payload.MessageType;
+  console.log("[DARAZ WEBHOOK] Received payload");
+
+  // 1. Extract MessageType (MessageType 4 = Trade Order, MessageType 1 = Fulfillment Update, MessageType 14 = Order Status)
+  const messageType = payload.message_type ?? payload.messageType ?? payload.type ?? payload.MessageType ?? 0;
   const numMessageType = parseInt(String(messageType), 10);
 
   // Handle Instant Messaging (MessageType 6) or unhandled types gracefully
   if (numMessageType === 6) {
-    console.log("[Daraz Webhook] Received Instant Messaging (MessageType 6). Ignored as per ERP configuration.");
+    console.log("[DARAZ WEBHOOK] MessageType 6 (Instant Messaging) received and ignored.");
     return {
       success: true,
       message: "Instant Messaging notification received and ignored.",
@@ -136,16 +146,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
     };
   }
 
-  // 2. Extract Event ID for Idempotency
-  const eventId = String(
-    payload.event_id ||
-      payload.eventId ||
-      payload.message_id ||
-      payload.messageId ||
-      `EVT_${payload.seller_id || payload.sellerId}_${payload.order_id || payload.data?.order_id}_${Date.now()}`
-  );
-
-  // 3. Extract Seller ID
+  // 2. Extract Seller ID
   const sellerId = String(
     payload.seller_id ||
       payload.sellerId ||
@@ -155,23 +156,34 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       ""
   ).trim();
 
-  // 4. Extract Order Details
+  // 3. Extract Order Details
   const dataObj = payload.data || payload.result || payload;
   const darazOrderId = String(
-    dataObj.order_id ||
+    dataObj.trade_order_id ||
+      dataObj.order_id ||
       dataObj.orderId ||
+      payload.trade_order_id ||
       payload.order_id ||
       payload.orderId ||
       dataObj.order_number ||
       ""
   ).trim();
 
-  const trackingNumber = dataObj.tracking_number || dataObj.tracking_code || dataObj.trackingNumber || null;
+  const trackingNumber = dataObj.tracking_number || dataObj.tracking_code || dataObj.trackingNumber || dataObj.fulfillment_package_id || null;
   const rawStatus = dataObj.order_status || dataObj.status || dataObj.order_status_code || payload.status || "pending";
   const mappedStatus = mapDarazWebhookStatus(rawStatus);
 
+  // 4. Extract or Generate Deterministic Event ID for Idempotency
+  const eventId = String(
+    payload.event_id ||
+      payload.eventId ||
+      payload.message_id ||
+      payload.messageId ||
+      crypto.createHash("md5").update(`${sellerId}:${numMessageType}:${darazOrderId}:${rawStatus}`).digest("hex")
+  );
+
   console.log(
-    `[Daraz Webhook] Processing Event\nMessageType: ${numMessageType}\nEvent ID: ${eventId}\nSeller ID: ${sellerId || "N/A"}\nOrder ID: ${darazOrderId || "N/A"}\nStatus: ${mappedStatus}`
+    `[DARAZ WEBHOOK] Processing Event details:\nMessageType: ${numMessageType}\nEvent ID: ${eventId}\nSeller ID: ${sellerId || "N/A"}\nOrder ID: ${darazOrderId || "N/A"}\nStatus: ${mappedStatus}`
   );
 
   // 5. Match Connected Store in daraz_stores
@@ -186,11 +198,11 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
 
     if (store) {
       targetStoreId = store.id;
+      console.log(`[DARAZ WEBHOOK] Store matched (Store ID: ${targetStoreId})`);
     }
   }
 
   if (!targetStoreId) {
-    // Fallback: pick single active store if only 1 active store exists in DB
     const { data: activeStores } = await supabase
       .from("daraz_stores")
       .select("id")
@@ -199,11 +211,12 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
 
     if (activeStores && activeStores.length === 1) {
       targetStoreId = activeStores[0].id;
+      console.log(`[DARAZ WEBHOOK] Fallback matched single active store (Store ID: ${targetStoreId})`);
     }
   }
 
-  if (!targetStoreId && (numMessageType === 4 || numMessageType === 1)) {
-    console.warn(`[Daraz Webhook] Could not locate matching connected store for Seller ID '${sellerId}'.`);
+  if (!targetStoreId && [1, 4, 14].includes(numMessageType)) {
+    console.warn(`[DARAZ WEBHOOK] No connected store matched for Seller ID '${sellerId}'. Processing halted.`);
   }
 
   // 6. Idempotency Check & Webhook Event Storage
@@ -216,7 +229,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       .maybeSingle();
 
     if (existingEvent) {
-      console.log(`[Daraz Webhook] Duplicate event detected (Event ID: ${eventId}). Ignoring.`);
+      console.log(`[DARAZ WEBHOOK] Duplicate event ignored (Event ID: ${eventId})`);
       return {
         success: true,
         message: "Duplicate webhook event acknowledged.",
@@ -230,7 +243,6 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       };
     }
 
-    // Insert new event log row into daraz_webhook_events
     await supabase.from("daraz_webhook_events").insert({
       store_id: targetStoreId,
       seller_id: sellerId || null,
@@ -241,8 +253,8 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       status: "processing",
       received_at: timestamp,
     });
+    console.log("[DARAZ WEBHOOK] Event stored");
   } catch (dbErr: any) {
-    // Fallback log to daraz_api_logs if daraz_webhook_events table does not exist
     try {
       await supabase.from("daraz_api_logs").insert({
         store_id: targetStoreId,
@@ -251,15 +263,24 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
         records_synced: 1,
         payload: { eventId, sellerId, darazOrderId, rawStatus },
       });
+      console.log("[DARAZ WEBHOOK] Event stored in fallback daraz_api_logs");
     } catch (e) {
       // ignore
     }
   }
 
-  // 7. Process MessageType 4 (Trade Order Notification) & MessageType 1 (Fulfillment Update)
+  // 7. Process MessageType 4 (Trade Order Notification), MessageType 1 (Fulfillment), & MessageType 14
   let actionTaken = "processed";
 
-  if ((numMessageType === 4 || numMessageType === 1) && darazOrderId && targetStoreId) {
+  if (numMessageType === 4) {
+    console.log("[DARAZ WEBHOOK] Processing MessageType 4 (Trade Order Notification)");
+  } else if (numMessageType === 1) {
+    console.log("[DARAZ WEBHOOK] Processing MessageType 1 (Fulfillment Order Update Notification)");
+  } else if (numMessageType === 14) {
+    console.log("[DARAZ WEBHOOK] Processing MessageType 14 (Order Status Update)");
+  }
+
+  if (([1, 4, 14].includes(numMessageType)) && darazOrderId && targetStoreId) {
     try {
       // Check if order already exists in orders table
       const { data: existingOrder } = await supabase
@@ -293,14 +314,14 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
         .upsert(orderPayload, { onConflict: "daraz_order_id" });
 
       if (upsertErr) {
-        console.error(`[Daraz Webhook] Order upsert error for Order ${darazOrderId}:`, upsertErr.message);
+        console.error(`[DARAZ WEBHOOK] Order upsert error for Order ${darazOrderId}:`, upsertErr.message);
         actionTaken = "error_upserting_order";
       } else {
         actionTaken = existingOrder ? "order_status_updated" : "order_created";
-        console.log(`[Daraz Webhook] Successfully updated Order ${darazOrderId} status to '${mappedStatus}'.`);
+        console.log(`[DARAZ WEBHOOK] Successfully updated Order ${darazOrderId} status to '${mappedStatus}'.`);
       }
     } catch (ordErr: any) {
-      console.error(`[Daraz Webhook] Order processing exception for Order ${darazOrderId}:`, ordErr.message);
+      console.error(`[DARAZ WEBHOOK] Order processing exception for Order ${darazOrderId}:`, ordErr.message);
       actionTaken = "error_processing_order";
     }
   }
@@ -317,6 +338,8 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
   } catch (e) {
     // ignore
   }
+
+  console.log(`[DARAZ WEBHOOK] Processing completed (${actionTaken})`);
 
   return {
     success: !actionTaken.includes("error"),
