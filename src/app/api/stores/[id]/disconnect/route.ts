@@ -59,6 +59,7 @@ export async function POST(
         access_token: null,
         refresh_token: null,
         token_expires_at: null,
+        slot_number: null,
         updated_at: new Date().toISOString(),
       })
       .eq("id", storeId);

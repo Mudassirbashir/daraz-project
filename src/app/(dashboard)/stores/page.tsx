@@ -234,9 +234,14 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                     {initials}
                   </div>
                   <div>
-                    <h3 className="font-bold text-slate-900 dark:text-white text-base leading-snug">
-                      {store.store_name}
-                    </h3>
+                    <div className="flex items-center space-x-2">
+                      <h3 className="font-bold text-slate-900 dark:text-white text-base leading-snug">
+                        {store.store_name}
+                      </h3>
+                      <span className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
+                        Store {store.slot_number || 1}
+                      </span>
+                    </div>
                     <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
                       Seller ID: {store.seller_id}
                     </p>

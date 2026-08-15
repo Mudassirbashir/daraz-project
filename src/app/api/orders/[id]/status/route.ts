@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { DarazApiClient, humanizeDarazApiError } from "@/lib/daraz/client";
+import { DarazApiClient } from "@/lib/daraz/client";
 
 export const dynamic = "force-dynamic";
 
@@ -37,17 +37,36 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
     }
 
+    // 1. Fetch order details without broken order_items relation
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
-      .select("*, daraz_stores(*), order_items(*)")
+      .select("*, daraz_stores(*)")
       .eq("id", id)
       .single();
 
     if (fetchErr || !order) {
-      return NextResponse.json({ success: false, error: "Order not found." }, { status: 404 });
+      return NextResponse.json({ success: false, error: "Order not found in database." }, { status: 404 });
     }
 
-    const store = order.daraz_stores;
+    // Resolve store: check if store is active, or attempt relinking via seller_id
+    let store = order.daraz_stores;
+    if (!store || !store.is_active || !store.access_token) {
+      if (store?.seller_id) {
+        const { data: activeStore } = await supabase
+          .from("daraz_stores")
+          .select("*")
+          .eq("seller_id", store.seller_id)
+          .eq("is_active", true)
+          .not("access_token", "is", null)
+          .maybeSingle();
+
+        if (activeStore) {
+          store = activeStore;
+          // Relink order to active store ID
+          await supabase.from("orders").update({ store_id: activeStore.id }).eq("id", id);
+        }
+      }
+    }
 
     // =========================================================================
     // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
@@ -57,7 +76,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json(
           {
             success: false,
-            error: "Daraz store is not connected. Reconnect store via My Stores page before executing order actions.",
+            error: "Daraz store is not connected or access token expired. Reconnect store via My Stores page before executing order actions.",
           },
           { status: 400 }
         );
@@ -72,9 +91,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         appSecret: store.api_app_secret || undefined,
       });
 
-      const itemIds = Array.isArray(order.order_items) && order.order_items.length > 0
-        ? order.order_items.map((i: any) => i.order_item_id)
-        : [order.daraz_order_id];
+      // Fetch real item IDs directly from Daraz Seller Center
+      let itemIds: string[] = [];
+      try {
+        const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
+        itemIds = liveItems.map((item) => item.order_item_id);
+      } catch (e) {
+        // Fallback
+      }
+
+      if (itemIds.length === 0) {
+        itemIds = [order.daraz_order_id];
+      }
 
       try {
         if (status === "packed") {
@@ -83,7 +111,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             return NextResponse.json(
               {
                 success: false,
-                error: "Daraz rejected packing request on Seller Center.",
+                error: "Daraz rejected packing request: Order is already packed or ineligible on Seller Center.",
                 darazConfirmed: false,
               },
               { status: 400 }
@@ -99,7 +127,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             return NextResponse.json(
               {
                 success: false,
-                error: "Daraz rejected Ready-to-Ship action on Seller Center.",
+                error: "Daraz rejected Ready-to-Ship request: Order must be packed on Seller Center first.",
                 darazConfirmed: false,
               },
               { status: 400 }
@@ -110,7 +138,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json(
           {
             success: false,
-            error: `Daraz did not accept this change: ${apiErr.message}`,
+            error: `Daraz API rejected this action: ${apiErr.message}`,
             darazConfirmed: false,
           },
           { status: 400 }
@@ -126,7 +154,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const updatePayload: Record<string, any> = {
       workflow_status: status,
-      status: status === "shipped" || status === "delivered" || status === "canceled" ? status : order.status,
+      status: ["shipped", "delivered", "canceled", "returned", "failed"].includes(status) ? status : order.status,
       updated_at: timestamp,
     };
 

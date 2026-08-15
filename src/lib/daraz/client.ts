@@ -652,12 +652,17 @@ export class DarazApiClient {
    * Pack Order Action via Official Daraz Open Platform API (/order/fulfill/pack or /order/pack)
    */
   async packOrder(orderItemIds: string[], shippingProvider?: string): Promise<{ success: boolean; packageId?: string; raw?: any }> {
-    const formattedItemIds = orderItemIds.map((id) => parseInt(id, 10) || id);
+    if (!orderItemIds || orderItemIds.length === 0) {
+      throw new Error("Cannot pack order: Missing valid order_item_ids.");
+    }
+
+    const formattedItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
+    const itemPayload = formattedItemIds.length > 0 ? formattedItemIds : orderItemIds;
 
     const packReq = JSON.stringify({
       pack_order_list: [
         {
-          pack_order_items: formattedItemIds.map((id) => ({ order_item_id: id })),
+          pack_order_items: itemPayload.map((id) => ({ order_item_id: id })),
           delivery_type: "dropship",
           shipping_allocate_type: "TFS",
         },
@@ -680,10 +685,15 @@ export class DarazApiClient {
    * Set Order Ready to Ship Action via Official Daraz API (/order/rts or /order/fulfill/rts)
    */
   async setReadyToShip(orderItemIds: string[], trackingNumber?: string, shipmentProvider?: string): Promise<{ success: boolean; raw?: any }> {
-    const formattedItemIds = orderItemIds.map((id) => parseInt(id, 10) || id);
+    if (!orderItemIds || orderItemIds.length === 0) {
+      throw new Error("Cannot set Ready to Ship: Missing valid order_item_ids.");
+    }
+
+    const formattedItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
+    const itemPayload = formattedItemIds.length > 0 ? formattedItemIds : orderItemIds;
 
     const rtsReq = JSON.stringify({
-      order_item_ids: formattedItemIds,
+      order_item_ids: itemPayload,
       shipment_provider: shipmentProvider || "Daraz Express (DEX)",
       tracking_number: trackingNumber || "",
     });
@@ -706,7 +716,12 @@ export class DarazApiClient {
     orderItemIds: string[],
     docType: "shipping_label" | "invoice" | "carrierManifest" = "shipping_label"
   ): Promise<{ file: string; mimeType: string }> {
-    const formattedItemIds = JSON.stringify(orderItemIds.map((id) => parseInt(id, 10) || id));
+    if (!orderItemIds || orderItemIds.length === 0) {
+      throw new Error("Cannot retrieve shipping document: Missing valid order_item_ids.");
+    }
+
+    const numericItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
+    const formattedItemIds = JSON.stringify(numericItemIds.length > 0 ? numericItemIds : orderItemIds);
 
     const response = await this.request<{
       data?: {
@@ -732,3 +747,4 @@ export class DarazApiClient {
     };
   }
 }
+

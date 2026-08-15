@@ -149,10 +149,23 @@ export async function GET(req: NextRequest) {
     const storeName = account || `Daraz Store (${targetSellerId})`;
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    // 5. Store Persistence & Strict Exact seller_id Reconnection Check
+    // 5. Store Persistence & Dynamic Slot Allocation
+    const { data: activeStoresList } = await supabase
+      .from("daraz_stores")
+      .select("id, slot_number")
+      .eq("is_active", true);
+
+    const activeSlots = (activeStoresList || []).map((s: any) => s.slot_number).filter((n: any) => typeof n === "number");
+    let nextSlot = 1;
+    const sorted = [...activeSlots].sort((a, b) => a - b);
+    for (const slot of sorted) {
+      if (slot === nextSlot) nextSlot++;
+      else if (slot > nextSlot) break;
+    }
+
     const { data: existingStores } = await supabase
       .from("daraz_stores")
-      .select("id, store_code, seller_id, is_active")
+      .select("id, store_code, seller_id, is_active, slot_number")
       .eq("seller_id", targetSellerId);
 
     let storeId: string;
@@ -177,6 +190,10 @@ export async function GET(req: NextRequest) {
     if (existingStores && existingStores.length > 0) {
       // Reconnect existing seller record with exact seller_id match
       const targetStore = existingStores[0];
+      const assignedSlot = targetStore.slot_number || nextSlot;
+      baseUpdateData.slot_number = assignedSlot;
+      baseUpdateData.store_code = `DARAZ-${storeRegion}-${String(assignedSlot).padStart(2, "0")}`;
+
       const { data: updated, error: updateErr } = await supabase
         .from("daraz_stores")
         .update(baseUpdateData)
@@ -207,22 +224,14 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      // Generate a unique store code using full targetSellerId to prevent UNIQUE key collisions
-      let storeCode = `DARAZ-${storeRegion}-${targetSellerId}`;
-      const { data: codeCheck } = await supabase
-        .from("daraz_stores")
-        .select("id")
-        .eq("store_code", storeCode)
-        .maybeSingle();
-
-      if (codeCheck) {
-        storeCode = `DARAZ-${storeRegion}-${targetSellerId}-${Date.now().toString().slice(-4)}`;
-      }
+      const formattedSlot = String(nextSlot).padStart(2, "0");
+      const storeCode = `DARAZ-${storeRegion}-${formattedSlot}`;
 
       const { data: inserted, error: insertErr } = await supabase
         .from("daraz_stores")
         .insert({
           ...baseUpdateData,
+          slot_number: nextSlot,
           store_code: storeCode,
           region: storeRegion,
         })

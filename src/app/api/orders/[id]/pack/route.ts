@@ -19,7 +19,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const supabase = createAdminClient();
 
-    // Fetch user profile name if user logged in
     let operatorName = "Team Member (Ops Manager)";
     if (user?.id) {
       const { data: profile } = await supabase
@@ -34,7 +33,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // Fetch order & store credentials
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
-      .select("*, daraz_stores(*), order_items(*)")
+      .select("*, daraz_stores(*)")
       .eq("id", id)
       .single();
 
@@ -42,7 +41,24 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ success: false, error: "Order not found." }, { status: 404 });
     }
 
-    const store = order.daraz_stores;
+    let store = order.daraz_stores;
+    if (!store || !store.is_active || !store.access_token) {
+      if (store?.seller_id) {
+        const { data: activeStore } = await supabase
+          .from("daraz_stores")
+          .select("*")
+          .eq("seller_id", store.seller_id)
+          .eq("is_active", true)
+          .not("access_token", "is", null)
+          .maybeSingle();
+
+        if (activeStore) {
+          store = activeStore;
+          await supabase.from("orders").update({ store_id: activeStore.id }).eq("id", id);
+        }
+      }
+    }
+
     if (!store || !store.access_token) {
       return NextResponse.json(
         {
@@ -65,9 +81,17 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       appSecret: store.api_app_secret || undefined,
     });
 
-    const itemIds = Array.isArray(order.order_items) && order.order_items.length > 0
-      ? order.order_items.map((i: any) => i.order_item_id)
-      : [order.daraz_order_id];
+    let itemIds: string[] = [];
+    try {
+      const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
+      itemIds = liveItems.map((item) => item.order_item_id);
+    } catch (e) {
+      // Fallback
+    }
+
+    if (itemIds.length === 0) {
+      itemIds = [order.daraz_order_id];
+    }
 
     let darazResult;
     try {
@@ -76,7 +100,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json(
         {
           success: false,
-          error: `Daraz did not accept this change: ${apiErr.message}`,
+          error: `Daraz API rejected packing action: ${apiErr.message}`,
           darazConfirmed: false,
         },
         { status: 400 }
@@ -117,7 +141,6 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       throw new Error(`Failed to update packing status in database: ${updateErr.message}`);
     }
 
-    // Log Activity
     await supabase.from("order_activities").insert({
       order_id: order.id,
       daraz_order_id: order.daraz_order_id,
