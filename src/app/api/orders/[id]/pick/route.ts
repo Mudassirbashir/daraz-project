@@ -10,9 +10,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user) {
+    if (!user && !opsUserCookie) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
+    let fallbackUser: any = null;
+    if (opsUserCookie) {
+      try {
+        fallbackUser = JSON.parse(opsUserCookie);
+      } catch (e) {
+        // ignore
+      }
     }
 
     const body = await req.json();
@@ -24,13 +34,16 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const supabase = createAdminClient();
 
     // Fetch user profile name
-    const { data: profile } = await supabase
-      .from("profiles")
-      .select("full_name, employee_id")
-      .eq("id", user.id)
-      .maybeSingle();
+    let operatorName = fallbackUser?.full_name || fallbackUser?.employee_id || "Picking Staff";
+    if (user?.id) {
+      const { data: profile } = await supabase
+        .from("profiles")
+        .select("full_name, employee_id")
+        .eq("id", user.id)
+        .maybeSingle();
 
-    const operatorName = profile?.full_name || profile?.employee_id || user.email || "Picking Staff";
+      operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
+    }
 
     // Fetch target order and items
     const { data: order, error: fetchErr } = await supabase
@@ -54,7 +67,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     let dbItems = existingDbItems || [];
 
     if (dbItems.length === 0) {
-      // Create a real item row in order_items table for this order
+      // Create a real item row in order_items table for this order if possible
       const { data: createdItem } = await supabase
         .from("order_items")
         .insert({
@@ -75,6 +88,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     if (markAllPicked) {
+      if (!dbItems || dbItems.length === 0) {
+        return NextResponse.json(
+          { success: false, error: "Cannot mark order as picked: Order has no items in database." },
+          { status: 400 }
+        );
+      }
+
       // Mark all items as picked in DB
       await supabase
         .from("order_items")
@@ -105,7 +125,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       // Record audit log
       await supabase.from("audit_logs").insert({
-        user_id: user.id,
+        user_id: user?.id || fallbackUser?.id || "00000000-0000-0000-0000-000000000000",
         actor_name: operatorName,
         entity_type: "order",
         entity_id: order.id,
@@ -144,7 +164,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           .eq("order_item_id", item.order_item_id);
       }
 
-      // Check if all items in order are now fully picked
+      // Check if all items in order are now fully picked (must have at least 1 item in DB)
       const { data: allItems } = await supabase
         .from("order_items")
         .select("quantity, picked_quantity, is_picked")

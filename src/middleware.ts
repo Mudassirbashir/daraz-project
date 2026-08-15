@@ -83,12 +83,16 @@ export async function middleware(request: NextRequest) {
         let userRole: AppRole | null = null;
 
         if (isFallbackUser) {
-          // Cookie fallback login: read role directly from user object payload
-          userRole = ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || null;
+          // Cookie fallback login (daraz_ops_user): read role directly from cookie payload
+          userRole =
+            ((user as any)?.role as AppRole) ||
+            ((user as any)?.user_metadata?.role as AppRole) ||
+            ((user as any)?.app_metadata?.role as AppRole) ||
+            null;
         }
 
         if (!userRole && user?.id) {
-          // Real Supabase session login: query profiles table using admin client to bypass RLS
+          // Real Supabase Auth session login: query profiles table using admin client to bypass RLS
           const adminSupabase = createAdminClient();
           const { data: profile } = await adminSupabase
             .from("profiles")
@@ -96,7 +100,12 @@ export async function middleware(request: NextRequest) {
             .eq("id", user.id)
             .maybeSingle();
 
-          userRole = (profile?.role as AppRole) || ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || "ops_manager";
+          userRole =
+            (profile?.role as AppRole) ||
+            ((user as any)?.role as AppRole) ||
+            ((user as any)?.user_metadata?.role as AppRole) ||
+            ((user as any)?.app_metadata?.role as AppRole) ||
+            null;
         }
 
         if (!userRole) {

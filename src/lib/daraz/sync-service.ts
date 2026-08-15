@@ -302,6 +302,22 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               const exactCustomerName = `${exactFirstName} ${exactLastName}`.trim();
               const exactCity = ord.customer_city || shipping.city || billing.city || "Karachi";
 
+              // Fetch existing workflow_status to preserve local picking/picked state
+              const { data: existingOrd } = await supabase
+                .from("orders")
+                .select("workflow_status")
+                .eq("daraz_order_id", ord.order_id)
+                .maybeSingle();
+
+              let targetWorkflowStatus = mappedStatus;
+              if (
+                existingOrd?.workflow_status &&
+                ["picking", "picked"].includes(existingOrd.workflow_status) &&
+                mappedStatus === "pending"
+              ) {
+                targetWorkflowStatus = existingOrd.workflow_status;
+              }
+
               // Schema-safe Orders Upsert (Only include columns existing in physical PostgreSQL table)
               const orderPayload = {
                 store_id: store.id,
@@ -311,7 +327,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 customer_city: exactCity,
                 total_amount_cents: ord.price_cents,
                 status: mappedStatus,
-                workflow_status: mappedStatus,
+                workflow_status: targetWorkflowStatus,
                 is_payout_settled: false,
                 order_date: ord.created_at || timestamp,
               };
