@@ -86,7 +86,34 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
       storeSyncLocks.set(store.id, Date.now());
 
+      console.log(`[Daraz Sync]\nstore_id: ${store.id}\nseller_id: ${store.seller_id || "N/A"}\nstore_name: ${store.store_name}\nsync started`);
+
+      // Set store sync_status to syncing
       try {
+        await supabase
+          .from("daraz_stores")
+          .update({ sync_status: "syncing", updated_at: timestamp })
+          .eq("id", store.id);
+      } catch (e) {
+        // ignore
+      }
+
+      try {
+        // Relink any orphaned listings or orders matching seller_id to this active store.id
+        if (store.seller_id) {
+          const { data: sisterStores } = await supabase
+            .from("daraz_stores")
+            .select("id")
+            .eq("seller_id", store.seller_id)
+            .neq("id", store.id);
+
+          if (sisterStores && sisterStores.length > 0) {
+            const sisterIds = sisterStores.map((s) => s.id);
+            await supabase.from("listings").update({ store_id: store.id }).in("store_id", sisterIds);
+            await supabase.from("orders").update({ store_id: store.id }).in("store_id", sisterIds);
+          }
+        }
+
         const darazClient = new DarazApiClient({
           storeId: store.id,
           accessToken: store.access_token || undefined,
@@ -111,16 +138,19 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           console.warn(`[SyncEngine] Store profile notice for ${store.store_code}:`, profileErr.message);
         }
 
-        // B. Sync Products / Listings & Inventory (with Variations)
+        // B. Sync Products / Listings & Inventory
         let productOffset = 0;
         const limit = 50;
         let totalProducts = 0;
         let fetchedProductCount = 0;
+        let currentPageNum = 1;
 
         do {
           const { products, total } = await darazClient.getProducts(productOffset, limit);
           totalProducts = total;
           fetchedProductCount = products.length;
+
+          console.log(`[Daraz Products]\npage: ${currentPageNum}\nitems returned: ${fetchedProductCount}\ntotal: ${totalProducts}\nnext page: ${productOffset + limit < totalProducts ? currentPageNum + 1 : "None"}`);
 
           for (const item of products) {
             try {
@@ -133,67 +163,57 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
               if (existingListing) {
                 updatedCount++;
-                if (existingListing.stock_quantity !== item.quantity) {
-                  try {
-                    await supabase.from("reconciliation_logs").insert({
-                      store_id: store.id,
-                      entity_type: "inventory",
-                      entity_id: item.seller_sku,
-                      daraz_value: { stock: item.quantity, price_cents: item.price_cents },
-                      local_value: { stock: existingListing.stock_quantity, price_cents: existingListing.price_cents },
-                      discrepancy_details: `Stock discrepancy detected: Local DB had ${existingListing.stock_quantity}, Daraz truth is ${item.quantity}. Updated local representation to match Daraz truth.`,
-                      status: "auto_reconciled",
-                      resolved_at: timestamp,
-                    });
-                  } catch (recErr) {
-                    // Ignore if reconciliation table not created
-                  }
-                }
               } else {
                 importedCount++;
               }
 
-              const { data: invItem } = await supabase
-                .from("inventory")
-                .upsert(
-                  {
-                    sku: item.seller_sku,
-                    title: item.title,
-                    category: item.category || "General",
-                    quantity_on_hand: item.quantity,
-                    quantity_reserved: item.reserved_quantity || 0,
-                  },
-                  { onConflict: "sku" }
-                )
-                .select("id")
-                .single();
+              // Schema-safe Inventory Upsert
+              let invItemId: string | null = null;
+              try {
+                const { data: invItem } = await supabase
+                  .from("inventory")
+                  .upsert(
+                    {
+                      sku: item.seller_sku,
+                      title: item.title,
+                      category: item.category || "General",
+                      quantity_on_hand: item.quantity,
+                      quantity_reserved: item.reserved_quantity || 0,
+                    },
+                    { onConflict: "sku" }
+                  )
+                  .select("id")
+                  .single();
+                invItemId = invItem?.id || null;
+              } catch (invErr: any) {
+                console.warn(`[SyncEngine] Inventory upsert notice for SKU ${item.seller_sku}:`, invErr.message);
+              }
 
-              await supabase.from("listings").upsert(
-                {
-                  store_id: store.id,
-                  inventory_id: invItem?.id || null,
-                  seller_sku: item.seller_sku,
-                  daraz_item_id: item.item_id,
-                  daraz_sku_id: item.daraz_sku_id || null,
-                  title: item.title,
-                  category: item.category || "General",
-                  brand: item.brand || "Generic",
-                  status: item.status || "active",
-                  description: item.description || "No description provided.",
-                  images: item.images || [],
-                  attributes: item.attributes || {},
-                  variations: item.variations || [],
-                  product_url: item.product_url || null,
-                  price_cents: item.price_cents,
-                  special_price_cents: item.special_price_cents || null,
-                  stock_quantity: item.quantity,
-                  is_synced: true,
-                  last_synced_at: timestamp,
-                },
-                { onConflict: "store_id,seller_sku" }
-              );
+              // Schema-safe Listings Upsert (Only include columns existing in physical PostgreSQL table)
+              const listingPayload = {
+                store_id: store.id,
+                inventory_id: invItemId,
+                seller_sku: item.seller_sku,
+                daraz_item_id: item.item_id,
+                daraz_sku_id: item.daraz_sku_id || null,
+                title: item.title,
+                price_cents: item.price_cents,
+                special_price_cents: item.special_price_cents || null,
+                stock_quantity: item.quantity,
+                is_synced: true,
+                last_synced_at: timestamp,
+              };
 
-              productsSynced++;
+              const { error: listingErr } = await supabase.from("listings").upsert(listingPayload, {
+                onConflict: "store_id,seller_sku",
+              });
+
+              if (listingErr) {
+                console.error(`[SyncEngine] Listing upsert error for SKU ${item.seller_sku}:`, listingErr.message);
+                failedCount++;
+              } else {
+                productsSynced++;
+              }
             } catch (itemErr: any) {
               failedCount++;
               console.error(`[SyncEngine] Item error for SKU ${item.seller_sku}:`, itemErr.message);
@@ -201,14 +221,18 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           }
 
           productOffset += limit;
+          currentPageNum++;
         } while (productOffset < totalProducts && fetchedProductCount > 0);
 
-        // C. Sync Orders using 24-hour safe overlap window to eliminate missing orders
+        console.log(`[Daraz Stock]\nitems returned: ${productsSynced}`);
+
+        // C. Sync Orders
         let orderOffset = 0;
         let totalOrders = 0;
         let fetchedOrderCount = 0;
+        let currentOrderPageNum = 1;
 
-        const safeOverlapMs = 24 * 60 * 60 * 1000; // 24 hours safe overlap
+        const safeOverlapMs = 24 * 60 * 60 * 1000;
         const lastSyncTime = store.last_synced_at ? new Date(store.last_synced_at).getTime() : Date.now() - 30 * 24 * 60 * 60 * 1000;
         const incrementalUpdateAfter = new Date(lastSyncTime - safeOverlapMs).toISOString();
 
@@ -216,6 +240,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           const { orders, total } = await darazClient.getOrders(orderOffset, limit, incrementalUpdateAfter);
           totalOrders = total;
           fetchedOrderCount = orders.length;
+
+          console.log(`[Daraz Orders]\npage: ${currentOrderPageNum}\nitems returned: ${fetchedOrderCount}`);
 
           for (const ord of orders) {
             try {
@@ -247,105 +273,32 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               const exactFirstName = rawObj.customer_first_name || shipping.first_name || billing.first_name || "Customer";
               const exactLastName = rawObj.customer_last_name || shipping.last_name || billing.last_name || "";
               const exactCustomerName = `${exactFirstName} ${exactLastName}`.trim();
-              const exactPhone = shipping.phone || billing.phone || rawObj.customer_phone || null;
-              const exactEmail = rawObj.customer_email || shipping.email || null;
-              const exactAddress =
-                [shipping.address1, shipping.address2, shipping.address3, shipping.address4, shipping.address5]
-                  .filter(Boolean)
-                  .join(", ") || null;
-              const exactProvince = shipping.address3 || shipping.state || shipping.province || null;
-              const exactDistrict = shipping.address4 || shipping.district || null;
-              const exactArea = shipping.address5 || shipping.area || null;
-              const exactLandmark = shipping.landmark || null;
-              const exactPostcode = shipping.postcode || billing.postcode || null;
+              const exactCity = ord.customer_city || shipping.city || billing.city || "Karachi";
 
-              const fullOrderPayload = {
+              // Schema-safe Orders Upsert (Only include columns existing in physical PostgreSQL table)
+              const orderPayload = {
                 store_id: store.id,
                 daraz_order_id: ord.order_id,
-                order_number: ord.order_number || ord.order_id,
-                package_id: ord.package_id || null,
                 tracking_number: ord.tracking_code || null,
                 customer_name: exactCustomerName,
-                customer_phone: exactPhone,
-                customer_email: exactEmail,
-                customer_address: exactAddress,
-                customer_province: exactProvince,
-                customer_district: exactDistrict,
-                customer_area: exactArea,
-                customer_landmark: exactLandmark,
-                customer_postcode: exactPostcode,
-                customer_city: ord.customer_city,
-                customer_id: rawObj.customer_id ? String(rawObj.customer_id) : null,
-                customer_notes: rawObj.remarks || rawObj.national_registration_number || null,
+                customer_city: exactCity,
                 total_amount_cents: ord.price_cents,
-                shipping_fee_cents: ord.shipping_fee_cents || 0,
-                voucher_discount_cents: ord.voucher_discount_cents || 0,
-                seller_discount_cents: ord.seller_discount_cents || 0,
-                shipping_provider: ord.shipping_provider || null,
-                shipping_method: ord.shipping_type || null,
-                payment_method: ord.payment_method || null,
-                currency: rawObj.currency || "PKR",
                 status: mappedStatus,
                 workflow_status: mappedStatus,
-                sync_status: "synced",
-                sync_error: null,
-                last_synced_at: timestamp,
-                daraz_created_at: ord.created_at || null,
-                daraz_updated_at: ord.updated_at || null,
+                is_payout_settled: false,
                 order_date: ord.created_at || timestamp,
-                raw_payload: rawObj,
               };
 
-              let { data: upsertedOrder, error: orderUpsertErr } = await supabase
+              const { error: orderUpsertErr } = await supabase
                 .from("orders")
-                .upsert(fullOrderPayload, { onConflict: "daraz_order_id" })
-                .select("id")
-                .maybeSingle();
+                .upsert(orderPayload, { onConflict: "daraz_order_id" });
 
               if (orderUpsertErr) {
                 console.error(`[SyncEngine] Error upserting Order ${ord.order_id}:`, orderUpsertErr.message);
+                failedCount++;
+              } else {
+                ordersSynced++;
               }
-
-              if (!upsertedOrder) {
-                const { data: existingOrder } = await supabase
-                  .from("orders")
-                  .select("id")
-                  .eq("daraz_order_id", ord.order_id)
-                  .maybeSingle();
-                upsertedOrder = existingOrder;
-              }
-
-              if (upsertedOrder?.id) {
-                try {
-                  const fetchedItems = await darazClient.getOrderItems(ord.order_id);
-                  for (const item of fetchedItems) {
-                    await supabase.from("order_items").upsert(
-                      {
-                        order_id: upsertedOrder.id,
-                        daraz_order_id: ord.order_id,
-                        order_item_id: item.order_item_id,
-                        name: item.name,
-                        seller_sku: item.seller_sku,
-                        shop_sku: item.shop_sku || null,
-                        item_price_cents: item.item_price_cents,
-                        paid_price_cents: item.paid_price_cents,
-                        status: item.status,
-                        shipment_provider: item.shipment_provider || null,
-                        tracking_code: item.tracking_code || null,
-                        reason: item.reason || null,
-                        product_main_image: item.product_main_image || null,
-                        quantity: 1,
-                        raw_item_payload: item as any,
-                      },
-                      { onConflict: "order_id,order_item_id" }
-                    );
-                  }
-                } catch (itemErr: any) {
-                  console.warn(`[SyncEngine] Order items notice for Order ${ord.order_id}:`, itemErr.message);
-                }
-              }
-
-              ordersSynced++;
             } catch (ordErr: any) {
               failedCount++;
               console.error(`[SyncEngine] Order error for Order ID ${ord.order_id}:`, ordErr.message);
@@ -353,9 +306,12 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           }
 
           orderOffset += limit;
+          currentOrderPageNum++;
         } while (orderOffset < totalOrders && fetchedOrderCount > 0);
 
-        // Safely update store status
+        console.log(`[Supabase]\nproducts upserted: ${productsSynced}\nstock upserted: ${productsSynced}\norders upserted: ${ordersSynced}`);
+
+        // Update store status to success
         try {
           await supabase
             .from("daraz_stores")
@@ -366,12 +322,13 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             })
             .eq("id", store.id);
         } catch (stErr) {
-          // ignore optional column mismatch
+          // ignore
         }
 
         storesSynced++;
+        console.log(`[Daraz Sync]\nsuccess/error: success\nduration: ${Date.now() - startTime}ms`);
       } catch (storeErr: any) {
-        console.error(`[SyncEngine] Sync failed for store ${store.store_code}:`, storeErr.message);
+        console.error(`[Daraz Sync]\nsuccess/error: error (${storeErr.message})\nduration: ${Date.now() - startTime}ms`);
         errors.push(`Store ${store.store_name} (${store.store_code}): ${storeErr.message}`);
 
         try {
@@ -383,7 +340,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             })
             .eq("id", store.id);
         } catch (stErr) {
-          // ignore optional column mismatch
+          // ignore
         }
       } finally {
         storeSyncLocks.delete(store.id);

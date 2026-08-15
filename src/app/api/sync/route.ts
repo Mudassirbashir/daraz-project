@@ -17,11 +17,19 @@ export async function POST(req: NextRequest) {
 
     const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user && !isCronAuthorized && !opsUserCookie) {
-      console.warn("[API Sync]: Triggering sync via system operation.");
+    const requestUrl = new URL(req.url);
+    let targetStoreId = requestUrl.searchParams.get("store_id") || undefined;
+
+    if (!targetStoreId && req.method === "POST") {
+      try {
+        const body = await req.clone().json();
+        targetStoreId = body?.store_id || undefined;
+      } catch (e) {
+        // ignore JSON parse error
+      }
     }
 
-    const result = await executeDarazSync();
+    const result = await executeDarazSync(targetStoreId);
 
     return NextResponse.json({
       success: result.success,

@@ -4,12 +4,14 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { StoreCardActions } from "@/components/stores/StoreCardActions";
+import { StoreAutoSyncTrigger } from "@/components/stores/StoreAutoSyncTrigger";
 
 export const dynamic = "force-dynamic";
 
 interface StoresPageProps {
   searchParams?: {
     connected?: string;
+    store_id?: string;
     error?: string;
     message?: string;
   };
@@ -18,6 +20,7 @@ interface StoresPageProps {
 export default async function StoresPage({ searchParams }: StoresPageProps) {
   const supabase = createAdminClient();
   const isConnectedSuccess = searchParams?.connected === "true";
+  const redirectStoreId = searchParams?.store_id;
   const errorMessage = searchParams?.message;
   const errorCode = searchParams?.error;
 
@@ -124,8 +127,13 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   const disconnectedCount = enrichedStores.filter((s) => !s.isConnected).length;
   const isMaxStoresReached = enrichedStores.length >= 3;
 
+  const syncingStore = enrichedStores.find((s) => s.sync_status === "syncing");
+  const autoSyncStoreId = redirectStoreId || syncingStore?.id;
+
   return (
     <div className="space-y-6">
+      {autoSyncStoreId && <StoreAutoSyncTrigger storeId={autoSyncStoreId} />}
+
       {/* Dynamic OAuth Alert Banners */}
       {isConnectedSuccess && (
         <div className="flex items-center space-x-3 p-4 rounded-2xl bg-emerald-50 dark:bg-emerald-500/10 border border-emerald-200 dark:border-emerald-500/20 text-emerald-800 dark:text-emerald-300 text-xs font-bold shadow-sm">
