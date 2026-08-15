@@ -211,20 +211,48 @@ export async function GET(req: NextRequest) {
       nextSlot = 3;
     }
 
-    // 7. Check for existing store matching verified seller_id (active or inactive)
-    let existingStores: any[] = [];
+    // 7. Deterministic Store Code for Seller
+    const formattedSlot = String(nextSlot).padStart(2, "0");
+    const incomingStoreCode = `DARAZ-${storeRegion}-${verifiedSellerId}`;
+
+    // 8. 3-Tier Reconciliation Algorithm:
+    // Lookup existing store by seller_id first, then fallback to lookup by store_code
+    let targetStore: any = null;
+
     try {
-      const { data } = await supabase
+      const { data: storeBySeller } = await supabase
         .from("daraz_stores")
-        .select("id, store_code, seller_id, is_active, slot_number")
-        .eq("seller_id", verifiedSellerId);
-      existingStores = data || [];
-    } catch (e) {
-      const { data } = await supabase
-        .from("daraz_stores")
-        .select("id, store_code, seller_id, is_active")
-        .eq("seller_id", verifiedSellerId);
-      existingStores = data || [];
+        .select("*")
+        .eq("seller_id", verifiedSellerId)
+        .maybeSingle();
+
+      if (storeBySeller) {
+        targetStore = storeBySeller;
+      } else {
+        // Fallback: Lookup by store_code or default slot store_code
+        const { data: storeByCode } = await supabase
+          .from("daraz_stores")
+          .select("*")
+          .or(`store_code.eq.${incomingStoreCode},store_code.eq.DARAZ-${storeRegion}-${formattedSlot}`)
+          .maybeSingle();
+
+        if (storeByCode) {
+          // Check seller ownership of the store_code
+          if (!storeByCode.seller_id || storeByCode.seller_id === verifiedSellerId) {
+            targetStore = storeByCode;
+          } else {
+            // Occupied by a different seller! Return clear conflict error without touching existing store
+            console.warn(`[Daraz OAuth Callback] Store code conflict: '${storeByCode.store_code}' belongs to seller '${storeByCode.seller_id}', not '${verifiedSellerId}'.`);
+            return NextResponse.redirect(
+              `${baseUrl}/stores?error=store_code_conflict&message=${encodeURIComponent(
+                "This Daraz store identifier is already associated with another seller account."
+              )}`
+            );
+          }
+        }
+      }
+    } catch (e: any) {
+      console.warn("[Daraz OAuth Callback] Store lookup notice:", e.message);
     }
 
     let storeId: string;
@@ -246,12 +274,11 @@ export async function GET(req: NextRequest) {
       baseUpdateData.user_id = currentUserId;
     }
 
-    if (existingStores && existingStores.length > 0) {
-      // Reconnect existing seller record without creating duplicate store row
-      const targetStore = existingStores[0];
+    if (targetStore) {
+      // CASE B / CASE C: Reconnect existing seller/store record without creating duplicate row
       const assignedSlot = (targetStore.is_active && targetStore.slot_number) ? targetStore.slot_number : nextSlot;
       baseUpdateData.slot_number = assignedSlot;
-      baseUpdateData.store_code = `DARAZ-${storeRegion}-${String(assignedSlot).padStart(2, "0")}`;
+      baseUpdateData.store_code = targetStore.store_code || incomingStoreCode;
 
       let updatedStore: any = null;
       try {
@@ -282,7 +309,7 @@ export async function GET(req: NextRequest) {
       }
       storeId = updatedStore.id;
     } else {
-      // New store connection -> Enforce 3 ACTIVE Store Limit!
+      // CASE A: New store connection -> Enforce 3 ACTIVE Store Limit!
       let storeQuery = supabase
         .from("daraz_stores")
         .select("id", { count: "exact", head: true })
@@ -302,13 +329,10 @@ export async function GET(req: NextRequest) {
         );
       }
 
-      const formattedSlot = String(nextSlot).padStart(2, "0");
-      const storeCode = `DARAZ-${storeRegion}-${formattedSlot}`;
-
-      const insertPayload = {
+      const insertPayload: Record<string, any> = {
         ...baseUpdateData,
         slot_number: nextSlot,
-        store_code: storeCode,
+        store_code: incomingStoreCode,
         region: storeRegion,
       };
 
@@ -320,8 +344,38 @@ export async function GET(req: NextRequest) {
           .select()
           .single();
 
-        if (insertErr) throw insertErr;
-        insertedStore = inserted;
+        if (insertErr) {
+          // If duplicate key race condition occurs, catch and fallback to atomic update
+          if (insertErr.message?.includes("duplicate key") || insertErr.code === "23505") {
+            console.warn(`[Daraz OAuth Callback] Duplicate key during insert (${insertErr.message}). Falling back to atomic update.`);
+            const { data: existingConflict } = await supabase
+              .from("daraz_stores")
+              .select("*")
+              .or(`seller_id.eq.${verifiedSellerId},store_code.eq.${incomingStoreCode}`)
+              .maybeSingle();
+
+            if (existingConflict) {
+              const { data: updatedConflict, error: updateConflictErr } = await supabase
+                .from("daraz_stores")
+                .update(insertPayload)
+                .eq("id", existingConflict.id)
+                .select()
+                .single();
+
+              if (!updateConflictErr && updatedConflict) {
+                insertedStore = updatedConflict;
+              } else {
+                throw insertErr;
+              }
+            } else {
+              throw insertErr;
+            }
+          } else {
+            throw insertErr;
+          }
+        } else {
+          insertedStore = inserted;
+        }
       } catch (insertErr: any) {
         if (insertErr.message?.includes("slot_number")) {
           console.warn("[Daraz OAuth Callback] 'slot_number' column missing in Supabase schema cache. Inserting fallback row...");
