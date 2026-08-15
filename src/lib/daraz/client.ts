@@ -123,18 +123,8 @@ export class DarazApiClient {
   private maxRetries: number;
 
   constructor(options: DarazClientOptions = {}) {
-    const key = options.appKey || process.env.DARAZ_APP_KEY;
-    if (!key || !key.trim()) {
-      throw new Error("Missing required environment variable: DARAZ_APP_KEY");
-    }
-    this.appKey = key.trim();
-
-    const secret = options.appSecret || process.env.DARAZ_APP_SECRET;
-    if (!secret || !secret.trim()) {
-      throw new Error("Missing required environment variable: DARAZ_APP_SECRET");
-    }
-    this.appSecret = secret.trim();
-
+    this.appKey = (options.appKey || process.env.DARAZ_APP_KEY || "").trim();
+    this.appSecret = (options.appSecret || process.env.DARAZ_APP_SECRET || "").trim();
     this.baseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
     this.storeId = options.storeId;
     this.accessToken = options.accessToken;
@@ -169,6 +159,10 @@ export class DarazApiClient {
   async refreshAccessToken(): Promise<void> {
     if (!this.refreshToken) {
       throw new Error("Cannot refresh token: missing refresh_token.");
+    }
+
+    if (!this.appKey || !this.appSecret) {
+      throw new Error("Daraz API Credentials Notice: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET. Reconnect store via My Stores.");
     }
 
     const apiPath = "/auth/token/refresh";
@@ -231,6 +225,9 @@ export class DarazApiClient {
    * Sends authenticated API requests with timeout, retries, and rate limit handling.
    */
   private async request<T>(apiPath: string, customParams: Record<string, any> = {}, method: "GET" | "POST" = "GET"): Promise<T> {
+    if (!this.appKey || !this.appSecret) {
+      throw new Error("Daraz API Credentials Notice: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET. Please configure store API credentials or environment variables.");
+    }
     const validToken = await this.ensureValidAccessToken();
     let attempt = 0;
 

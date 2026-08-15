@@ -46,6 +46,15 @@ export async function GET(req: NextRequest) {
   }
 
   try {
+    if (!appKey || !appSecret) {
+      console.error("[Daraz OAuth Callback]: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET in environment variables.");
+      return NextResponse.redirect(
+        `${baseUrl}/stores?error=missing_credentials&message=${encodeURIComponent(
+          "Daraz APP_KEY or APP_SECRET environment variables are not configured in production."
+        )}`
+      );
+    }
+
     // Determine authenticated app user ID if logged in
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();

@@ -12,6 +12,13 @@ export async function GET(req: NextRequest) {
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
   const redirectUri = `${baseUrl}/api/daraz/callback`;
 
+  if (!appKey) {
+    console.error("[Daraz Auth Login]: Missing DARAZ_APP_KEY in environment variables.");
+    const loginErrorUrl = new URL("/stores", baseUrl);
+    loginErrorUrl.searchParams.set("error", "Daraz APP_KEY is not configured in production environment variables.");
+    return NextResponse.redirect(loginErrorUrl);
+  }
+
   // Generate cryptographically secure state token to prevent CSRF
   const csrfStateToken = crypto.randomBytes(32).toString("hex");
 

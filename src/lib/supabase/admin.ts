@@ -3,22 +3,24 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   if (!envUrl || !envUrl.trim()) {
-    throw new Error("Missing required environment variable: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL");
+    console.warn("[AdminClient] Notice: NEXT_PUBLIC_SUPABASE_URL environment variable is not configured.");
+    return "https://placeholder.supabase.co";
   }
   return envUrl.trim();
 }
 
 function getValidServiceRoleKey(): string {
-  const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!envKey || !envKey.trim()) {
-    throw new Error("Missing required environment variable: SUPABASE_SERVICE_ROLE_KEY");
+    console.warn("[AdminClient] Notice: SUPABASE_SERVICE_ROLE_KEY environment variable is not configured.");
+    return "placeholder-key";
   }
   return envKey.trim();
 }
 
 /**
  * Administrative Supabase Client utilizing the SUPABASE_SERVICE_ROLE_KEY.
- * WARNING: This client bypasses Row Level Security (RLS).
+ * WARNING: This client bypasses Row Level Security (RLS) when service role key is present.
  * Only use in secure server-side routes or actions requiring system-level access.
  */
 export function createAdminClient() {
