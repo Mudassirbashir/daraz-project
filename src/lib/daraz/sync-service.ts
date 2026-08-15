@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DarazApiClient } from "./client";
+import { DarazApiClient, sanitizeLogPayload } from "./client";
 import { DarazOrderStatus } from "@/types/database.types";
 
 export interface SyncResult {
@@ -383,7 +383,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         sync_type: targetStoreId ? "store_sync" : "cron_sync",
         status: errors.length > 0 ? "completed_with_errors" : "completed",
         records_synced: productsSynced + ordersSynced,
-        payload: {
+        payload: sanitizeLogPayload({
           durationMs,
           storesSynced,
           productsSynced,
@@ -394,7 +394,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           errors,
           startedTimeIso,
           completedTimeIso: timestamp,
-        },
+        }),
       });
     } catch (logErr) {
       // ignore

@@ -710,6 +710,31 @@ export class DarazApiClient {
   }
 
   /**
+   * Cancel Order Action via Official Daraz Open Platform API (/order/cancel)
+   */
+  async cancelOrder(orderItemIds: string[], reasonId?: string, reasonDetail?: string): Promise<{ success: boolean; raw?: any }> {
+    if (!orderItemIds || orderItemIds.length === 0) {
+      throw new Error("Cannot cancel order: Missing valid order_item_ids.");
+    }
+
+    const formattedItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
+    const itemPayload = formattedItemIds.length > 0 ? formattedItemIds : orderItemIds;
+
+    const cancelReq = JSON.stringify({
+      order_item_id_list: itemPayload,
+      reason_id: reasonId || "1",
+      reason_detail: reasonDetail || "Out of Stock / Canceled by Seller",
+    });
+
+    const response = await this.request<{ code: string; message?: string }>("/order/cancel", {
+      cancel_req: cancelReq,
+    }, "POST");
+
+    const success = !response.code || response.code === "0";
+    return { success, raw: response };
+  }
+
+  /**
    * Fetch Official Original Shipping Label Document (/order/document/get)
    */
   async getShippingDocument(
@@ -745,6 +770,58 @@ export class DarazApiClient {
       file: doc.file,
       mimeType: doc.mime_type || "text/html",
     };
+  }
+}
+
+/**
+ * Factory helper resolving a store-isolated DarazApiClient instance from store_id UUID.
+ */
+export async function getDarazClient(storeId: string): Promise<DarazApiClient> {
+  const supabase = createAdminClient();
+  const { data: store, error } = await supabase
+    .from("daraz_stores")
+    .select("*")
+    .eq("id", storeId)
+    .single();
+
+  if (error || !store) {
+    throw new Error(`Daraz store with ID '${storeId}' was not found in database.`);
+  }
+
+  if (!store.is_active || !store.access_token) {
+    throw new Error(`Daraz store '${store.store_name}' (${store.store_code}) is disconnected. Reconnect store via My Stores.`);
+  }
+
+  return new DarazApiClient({
+    storeId: store.id,
+    accessToken: store.access_token,
+    refreshToken: store.refresh_token || undefined,
+    tokenExpiresAt: store.token_expires_at || undefined,
+    appKey: store.api_app_key || undefined,
+    appSecret: store.api_app_secret || undefined,
+  });
+}
+
+/**
+ * Sanitizes diagnostic log objects to ensure sensitive tokens and credentials are never logged.
+ */
+export function sanitizeLogPayload(payload: any): any {
+  if (!payload || typeof payload !== "object") return payload;
+  try {
+    const copy = JSON.parse(JSON.stringify(payload));
+    const mask = (obj: any) => {
+      for (const key in obj) {
+        if (typeof obj[key] === "string" && (key.toLowerCase().includes("token") || key.toLowerCase().includes("secret") || key.toLowerCase().includes("password"))) {
+          obj[key] = "[REDACTED]";
+        } else if (typeof obj[key] === "object" && obj[key] !== null) {
+          mask(obj[key]);
+        }
+      }
+    };
+    mask(copy);
+    return copy;
+  } catch (e) {
+    return { sanitized: true };
   }
 }
 

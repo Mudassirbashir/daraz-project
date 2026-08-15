@@ -92,6 +92,34 @@ export function OrderDetailsModal({
     }
   };
 
+  const handleUpdateStatus = async (targetStatus: string) => {
+    setIsProcessing(true);
+    setActionError(null);
+    setActionSuccess(null);
+
+    try {
+      const res = await fetch(`/api/orders/${order.id}/status`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ status: targetStatus }),
+      });
+      const data = await res.json();
+
+      if (data.success) {
+        setActionSuccess(data.message || `✓ Daraz Confirmed: Order status updated to '${targetStatus}'`);
+        if (onOrderUpdated) onOrderUpdated();
+      } else {
+        setActionError(data.error || `Daraz rejected status update to '${targetStatus}'.`);
+      }
+    } catch (err: any) {
+      setActionError(`Network error: ${err.message}`);
+    } finally {
+      setIsProcessing(false);
+    }
+  };
+
+  const currentOrdStatus = (order.workflow_status || order.status || "pending").toLowerCase();
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4 overflow-y-auto">
       <div className="relative w-full max-w-4xl rounded-2xl bg-white p-6 shadow-2xl space-y-6 max-h-[92vh] overflow-y-auto">
@@ -252,18 +280,31 @@ export function OrderDetailsModal({
         )}
 
         {/* Footer Actions */}
-        <div className="flex items-center justify-between pt-2 border-t border-slate-100">
-          <div className="flex items-center space-x-2">
-            {!order.is_packed ? (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-3 pt-3 border-t border-slate-100">
+          <div className="flex flex-wrap items-center gap-2">
+            {(currentOrdStatus === "pending" || currentOrdStatus === "unpaid") && (
               <button
                 onClick={handlePackOrder}
                 disabled={isProcessing}
                 className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-orange-700 disabled:opacity-50 transition-all"
               >
                 {isProcessing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Package className="h-4 w-4" />}
-                <span>{isProcessing ? "Sending Request to Daraz..." : "Pack Order on Daraz"}</span>
+                <span>{isProcessing ? "Sending..." : "Pack Order on Daraz"}</span>
               </button>
-            ) : (
+            )}
+
+            {(currentOrdStatus === "pending" || currentOrdStatus === "packed") && (
+              <button
+                onClick={() => handleUpdateStatus("ready_to_ship")}
+                disabled={isProcessing}
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-blue-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-blue-700 disabled:opacity-50 transition-all"
+              >
+                {isProcessing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                <span>Ready to Ship</span>
+              </button>
+            )}
+
+            {(currentOrdStatus === "ready_to_ship" || currentOrdStatus === "packed" || currentOrdStatus === "shipped") && (
               <button
                 onClick={() => {
                   onClose();
@@ -271,15 +312,36 @@ export function OrderDetailsModal({
                 }}
                 className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all"
               >
-                <Truck className="h-4 w-4" />
-                <span>Print Official Shipping Label</span>
+                <Package className="h-4 w-4" />
+                <span>Print Shipping Label</span>
+              </button>
+            )}
+
+            {currentOrdStatus === "ready_to_ship" && (
+              <button
+                onClick={() => handleUpdateStatus("shipped")}
+                disabled={isProcessing}
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-indigo-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-indigo-700 disabled:opacity-50 transition-all"
+              >
+                {isProcessing ? <RefreshCw className="h-4 w-4 animate-spin" /> : <Truck className="h-4 w-4" />}
+                <span>Mark Shipped</span>
+              </button>
+            )}
+
+            {["pending", "unpaid", "packed", "ready_to_ship"].includes(currentOrdStatus) && (
+              <button
+                onClick={() => handleUpdateStatus("canceled")}
+                disabled={isProcessing}
+                className="inline-flex items-center space-x-1.5 rounded-xl border border-red-300 bg-red-50 px-3.5 py-2 text-xs font-bold text-red-700 hover:bg-red-100 disabled:opacity-50 transition-all"
+              >
+                <span>Cancel Order</span>
               </button>
             )}
           </div>
 
           <button
             onClick={onClose}
-            className="rounded-xl bg-slate-900 px-5 py-2.5 text-xs font-bold text-white hover:bg-slate-800 transition-all"
+            className="rounded-xl bg-slate-900 px-5 py-2 text-xs font-bold text-white hover:bg-slate-800 transition-all shrink-0"
           >
             Close Order
           </button>

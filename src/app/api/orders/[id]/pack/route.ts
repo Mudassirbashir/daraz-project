@@ -72,14 +72,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // =========================================================================
     // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API /order/fulfill/pack FIRST
     // =========================================================================
-    const darazClient = new DarazApiClient({
-      storeId: store.id,
-      accessToken: store.access_token,
-      refreshToken: store.refresh_token || undefined,
-      tokenExpiresAt: store.token_expires_at || undefined,
-      appKey: store.api_app_key || undefined,
-      appSecret: store.api_app_secret || undefined,
-    });
+    const { getDarazClient } = await import("@/lib/daraz/client");
+    const darazClient = await getDarazClient(store.id);
 
     let itemIds: string[] = [];
     try {

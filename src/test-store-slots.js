@@ -163,7 +163,7 @@ async function runTests() {
     passedCount++;
   } else console.error("❌ Test 10 FAILED: Store UUID mismatch in listings or orders.");
 
-  console.log("\n==================================================");
+  console.log("==================================================");
   console.log(` SUMMARY: ${passedCount} / 10 TESTS PASSED`);
   console.log("==================================================\n");
 
@@ -172,4 +172,12 @@ async function runTests() {
   }
 }
 
-runTests();
+module.exports = {
+  calculateLowestAvailableSlot,
+  evaluateStoreConnectionLimit,
+  runTests,
+};
+
+if (require.main === module) {
+  runTests();
+}

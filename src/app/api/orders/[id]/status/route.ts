@@ -69,9 +69,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     // =========================================================================
-    // LIFECYCLE TRANSITION VALIDATION
+    // LIFECYCLE TRANSITION & IDEMPOTENCY VALIDATION
     // =========================================================================
     const currentStatus = (order.workflow_status || order.status || "pending").toLowerCase();
+    
+    // Idempotency: If order is already in target status, return clean success immediately
+    if (currentStatus === status.toLowerCase()) {
+      return NextResponse.json({
+        success: true,
+        message: `Order #${order.daraz_order_id} is already in '${status}' status.`,
+        order,
+        darazConfirmed: true,
+      });
+    }
+
     const ALLOWED_TRANSITIONS: Record<string, string[]> = {
       pending: ["packed", "ready_to_ship", "canceled"],
       unpaid: ["pending", "canceled"],
@@ -98,7 +109,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     // =========================================================================
     // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
     // =========================================================================
-    if (["ready_to_ship", "shipped", "packed"].includes(status)) {
+    if (["ready_to_ship", "shipped", "packed", "canceled"].includes(status)) {
       if (!store || !store.access_token) {
         return NextResponse.json(
           {
@@ -109,14 +120,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         );
       }
 
-      const darazClient = new DarazApiClient({
-        storeId: store.id,
-        accessToken: store.access_token,
-        refreshToken: store.refresh_token || undefined,
-        tokenExpiresAt: store.token_expires_at || undefined,
-        appKey: store.api_app_key || undefined,
-        appSecret: store.api_app_secret || undefined,
-      });
+      const { getDarazClient } = await import("@/lib/daraz/client");
+      const darazClient = await getDarazClient(store.id);
 
       let itemIds: string[] = [];
       if (Array.isArray(order.order_items) && order.order_items.length > 0) {
@@ -163,6 +168,18 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
               {
                 success: false,
                 error: "Daraz rejected Ready-to-Ship action on Seller Center.",
+                darazConfirmed: false,
+              },
+              { status: 400 }
+            );
+          }
+        } else if (status === "canceled") {
+          const res = await darazClient.cancelOrder(itemIds);
+          if (!res.success) {
+            return NextResponse.json(
+              {
+                success: false,
+                error: "Daraz rejected cancellation request on Seller Center.",
                 darazConfirmed: false,
               },
               { status: 400 }
