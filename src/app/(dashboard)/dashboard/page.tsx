@@ -4,18 +4,11 @@ import {
   ShoppingCart,
   Package,
   ArrowRight,
-  ShieldCheck,
   AlertTriangle,
   DollarSign,
   AlertCircle,
-  Clock,
   ExternalLink,
-  RefreshCw,
-  Truck,
   Flame,
-  CheckCircle2,
-  PackageCheck,
-  Printer,
   Plus
 } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
@@ -162,46 +155,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     currency: "PKR",
   });
 
-  // Action Center Metrics
-  const nowMs = Date.now();
-  const ordersWaitingCount = ordersList.filter((o: any) => {
-    const st = String(o.status || o.workflow_status || "").toLowerCase();
-    return ["pending", "unpaid"].includes(st);
-  }).length;
-
-  const ordersAtRiskCount = ordersList.filter((o: any) => {
-    const st = String(o.status || o.workflow_status || "").toLowerCase();
-    if (!["pending", "unpaid"].includes(st)) return false;
-    const ageHours = (nowMs - new Date(o.order_date || o.created_at).getTime()) / (1000 * 60 * 60);
-    return ageHours >= 12 && ageHours < 24;
-  }).length;
-
-  const ordersDelayedCount = ordersList.filter((o: any) => {
-    const st = String(o.status || o.workflow_status || "").toLowerCase();
-    if (!["pending", "unpaid"].includes(st)) return false;
-    const ageHours = (nowMs - new Date(o.order_date || o.created_at).getTime()) / (1000 * 60 * 60);
-    return ageHours >= 24;
-  }).length;
-
-  // Order Aging Bucket Counts
-  let bucketUnder2h = 0;
-  let bucket2to6h = 0;
-  let bucket6to12h = 0;
-  let bucket12to24h = 0;
-  let bucketOver24h = 0;
-
-  ordersList.forEach((o: any) => {
-    const st = String(o.status || o.workflow_status || "").toLowerCase();
-    if (!["pending", "unpaid", "ready_to_ship"].includes(st)) return;
-
-    const ageHours = (nowMs - new Date(o.order_date || o.created_at).getTime()) / (1000 * 60 * 60);
-    if (ageHours < 2) bucketUnder2h++;
-    else if (ageHours < 6) bucket2to6h++;
-    else if (ageHours < 12) bucket6to12h++;
-    else if (ageHours < 24) bucket12to24h++;
-    else bucketOver24h++;
-  });
-
   return (
     <div className="space-y-6">
       {/* Welcome Banner */}
@@ -284,57 +237,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
           <p className="text-2xl font-extrabold text-amber-600 dark:text-amber-400 leading-none pt-1">
             {lowStockCount} SKUs
           </p>
-          <p className="text-[10px] text-slate-400 font-medium">Quantity $\le$ 10 units</p>
+          <p className="text-[10px] text-slate-400 font-medium">Quantity ≤ 10 units</p>
         </a>
-      </div>
-
-      {/* ORDER AGING DIAGNOSTICS */}
-      <div className="rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm space-y-4 text-xs">
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-4">
-          <div className="flex items-center space-x-2">
-            <Clock className="h-4 w-4 text-orange-500" />
-            <h2 className="font-bold text-slate-900 dark:text-white text-base">ORDER AGING DIAGNOSTICS</h2>
-          </div>
-
-          <div className="flex items-center space-x-2 text-[11px] font-bold">
-            <span className="px-3 py-1 rounded-xl bg-blue-50 text-blue-700 border border-blue-200">
-              Orders Waiting: {ordersWaitingCount}
-            </span>
-            <span className="px-3 py-1 rounded-xl bg-amber-50 text-amber-800 border border-amber-200">
-              At Risk: {ordersAtRiskCount}
-            </span>
-            <span className="px-3 py-1 rounded-xl bg-red-50 text-red-800 border border-red-200">
-              Delayed: {ordersDelayedCount}
-            </span>
-          </div>
-        </div>
-
-        <div className="grid grid-cols-2 md:grid-cols-5 gap-3">
-          <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 p-4 text-center border border-slate-100 dark:border-slate-800">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">&lt; 2 Hours</span>
-            <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">{bucketUnder2h}</p>
-          </div>
-
-          <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 p-4 text-center border border-slate-100 dark:border-slate-800">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">2–6 Hours</span>
-            <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">{bucket2to6h}</p>
-          </div>
-
-          <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 p-4 text-center border border-slate-100 dark:border-slate-800">
-            <span className="text-[10px] font-bold text-slate-400 uppercase tracking-wider">6–12 Hours</span>
-            <p className="text-2xl font-extrabold text-slate-900 dark:text-white mt-1">{bucket6to12h}</p>
-          </div>
-
-          <div className="rounded-2xl bg-amber-50/50 dark:bg-amber-500/10 p-4 text-center border border-amber-200/80 dark:border-amber-500/20">
-            <span className="text-[10px] font-bold text-amber-700 dark:text-amber-400 uppercase tracking-wider">12–24 Hours (At Risk)</span>
-            <p className="text-2xl font-extrabold text-amber-700 dark:text-amber-400 mt-1">{bucket12to24h}</p>
-          </div>
-
-          <div className="rounded-2xl bg-red-50/50 dark:bg-red-500/10 p-4 text-center border border-red-200/80 dark:border-red-500/20">
-            <span className="text-[10px] font-bold text-red-700 dark:text-red-400 uppercase tracking-wider">24+ Hours (Delayed)</span>
-            <p className="text-2xl font-extrabold text-red-700 dark:text-red-400 mt-1">{bucketOver24h}</p>
-          </div>
-        </div>
       </div>
 
       {/* Store Cards Overview Grid */}
