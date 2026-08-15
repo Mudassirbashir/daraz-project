@@ -358,8 +358,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               updated_at: timestamp,
             })
             .eq("id", store.id);
-        } catch (stErr) {
-          // ignore
+        } catch (stErr: any) {
+          console.error(`[SyncEngine] Failed to update store success status:`, stErr?.message || stErr);
         }
 
         storesSynced++;
@@ -376,8 +376,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               updated_at: timestamp,
             })
             .eq("id", store.id);
-        } catch (stErr) {
-          console.error(`[SyncEngine] Failed to update store error status: ${stErr.message}`);
+        } catch (stErr: any) {
+          console.error(`[SyncEngine] Failed to update store error status: ${stErr?.message || stErr}`);
         }
       }
     }
@@ -404,8 +404,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           completedTimeIso: timestamp,
         }),
       });
-    } catch (logErr) {
-      // ignore
+    } catch (logErr: any) {
+      console.error(`[SyncEngine] Failed to write API diagnostic log:`, logErr?.message || logErr);
     }
 
     return {
