@@ -22,47 +22,43 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     const supabase = createAdminClient();
 
-    // 1. Fetch order details without broken order_items relation
+    // Fetch order, store, and order items
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
-      .select("*, daraz_stores(*)")
+      .select("*, daraz_stores(*), order_items(*)")
       .eq("id", id)
       .single();
 
     if (fetchErr || !order) {
-      return NextResponse.json({ success: false, error: "Order not found in database." }, { status: 404 });
+      return NextResponse.json({ success: false, error: "Order not found." }, { status: 404 });
     }
 
-    // Resolve store: check if store is active, or attempt relinking via seller_id
-    let store = order.daraz_stores;
-    if (!store || !store.is_active || !store.access_token) {
-      if (store?.seller_id) {
-        const { data: activeStore } = await supabase
-          .from("daraz_stores")
-          .select("*")
-          .eq("seller_id", store.seller_id)
-          .eq("is_active", true)
-          .not("access_token", "is", null)
-          .maybeSingle();
+    const store = order.daraz_stores;
 
-        if (activeStore) {
-          store = activeStore;
-          await supabase.from("orders").update({ store_id: activeStore.id }).eq("id", id);
-        }
-      }
-    }
-
-    if (!store || !store.access_token) {
+    // 1. Enforce Daraz Status Prerequisite for Shipping Document Generation
+    const orderStatus = (order.workflow_status || order.status || "pending").toLowerCase();
+    if (["pending", "unpaid"].includes(orderStatus)) {
       return NextResponse.json(
         {
           success: false,
-          error: "Daraz store is not connected. Reconnect store via My Stores page before fetching shipping labels.",
+          error: `Official Daraz shipping label can only be generated after the order is Packed or Ready to Ship on Seller Center (Current status: '${orderStatus}'). Please update the order status first.`,
         },
         { status: 400 }
       );
     }
 
-    // 2. Instantiate Daraz Client with Store Credentials
+    // 2. Validate Store API Credentials
+    if (!store || !store.access_token || !store.is_active) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Daraz store is not connected. Reconnect store via My Stores page before requesting official shipping labels.",
+        },
+        { status: 400 }
+      );
+    }
+
+    // 3. Attempt Official Daraz Document Retrieval
     const darazClient = new DarazApiClient({
       storeId: store.id,
       accessToken: store.access_token,
@@ -72,39 +68,26 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       appSecret: store.api_app_secret || undefined,
     });
 
-    // 3. Retrieve Real Order Items from Daraz API
-    let itemIds: string[] = [];
-    try {
-      const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
-      itemIds = liveItems.map((item) => item.order_item_id);
-    } catch (itemErr: any) {
-      console.warn(`[API Order Label]: Failed to fetch live items for Order ${order.daraz_order_id}:`, itemErr.message);
+    let orderItems = Array.isArray(order.order_items) && order.order_items.length > 0
+      ? order.order_items
+      : [];
+
+    if (orderItems.length === 0) {
+      orderItems = await darazClient.getOrderItems(order.daraz_order_id);
     }
 
+    const itemIds = orderItems.map((item: any) => String(item.order_item_id)).filter(Boolean);
     if (itemIds.length === 0) {
       return NextResponse.json(
         {
           success: false,
-          error: "Could not retrieve order items from Daraz Seller Center to generate shipping label.",
+          error: `Daraz API Error: No valid order item IDs found for Order #${order.daraz_order_id}.`,
         },
         { status: 400 }
       );
     }
 
-    // 4. Fetch Official Original Shipping Label Document from Daraz REST API (/order/document/get)
-    let officialDocResult: { file: string; mimeType: string };
-    try {
-      officialDocResult = await darazClient.getShippingDocument(itemIds, docTypeParam);
-    } catch (apiErr: any) {
-      console.error(`[API Order Label]: Official document API rejected for Order ${order.daraz_order_id}:`, apiErr.message);
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Daraz rejected shipping label: ${apiErr.message}`,
-        },
-        { status: 400 }
-      );
-    }
+    const officialDocResult = await darazClient.getShippingDocument(itemIds, docTypeParam);
 
     let decodedContent = officialDocResult.file;
     let mimeType = officialDocResult.mimeType || "text/html";
@@ -165,9 +148,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json(
       {
         success: false,
-        error: `Daraz API Error: ${err.message || "Failed to retrieve shipping label."}`,
+        error: `Daraz API Error: ${err.message || "Failed to retrieve official shipping label."}`,
       },
-      { status: 500 }
+      { status: 400 }
     );
   }
 }

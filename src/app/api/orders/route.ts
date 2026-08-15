@@ -32,8 +32,8 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Query authorized stores (if logged in via Supabase Auth, filter user_id or system stores; else return all stores)
-    let storeQuery = supabase.from("daraz_stores").select("id");
+    // Query authorized active stores
+    let storeQuery = supabase.from("daraz_stores").select("id").eq("is_active", true);
     if (user?.id) {
       storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
     }

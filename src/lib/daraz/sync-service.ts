@@ -144,6 +144,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         let totalProducts = 0;
         let fetchedProductCount = 0;
         let currentPageNum = 1;
+        const syncedSellerSkus = new Set<string>();
 
         do {
           const { products, total } = await darazClient.getProducts(productOffset, limit);
@@ -154,6 +155,10 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
           for (const item of products) {
             try {
+              if (item.seller_sku) {
+                syncedSellerSkus.add(item.seller_sku);
+              }
+
               const { data: existingListing } = await supabase
                 .from("listings")
                 .select("id, stock_quantity, price_cents")
@@ -223,6 +228,28 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           productOffset += limit;
           currentPageNum++;
         } while (productOffset < totalProducts && fetchedProductCount > 0);
+
+        // Catalog Reconciliation: mark old listings for this store that were not returned by Daraz as is_synced = false
+        if (syncedSellerSkus.size > 0) {
+          try {
+            const { data: allStoreListings } = await supabase
+              .from("listings")
+              .select("id, seller_sku")
+              .eq("store_id", store.id);
+
+            const missingListings = (allStoreListings || []).filter((l) => !syncedSellerSkus.has(l.seller_sku));
+            if (missingListings.length > 0) {
+              const missingIds = missingListings.map((l) => l.id);
+              await supabase
+                .from("listings")
+                .update({ is_synced: false, updated_at: timestamp })
+                .in("id", missingIds);
+              console.log(`[SyncEngine Reconciliation] Marked ${missingListings.length} missing listing(s) as inactive/unsynced for store ${store.store_name}.`);
+            }
+          } catch (recErr: any) {
+            console.warn(`[SyncEngine Reconciliation notice for ${store.store_name}]:`, recErr.message);
+          }
+        }
 
         console.log(`[Daraz Stock]\nitems returned: ${productsSynced}`);
 

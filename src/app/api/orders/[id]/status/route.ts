@@ -69,6 +69,33 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     }
 
     // =========================================================================
+    // LIFECYCLE TRANSITION VALIDATION
+    // =========================================================================
+    const currentStatus = (order.workflow_status || order.status || "pending").toLowerCase();
+    const ALLOWED_TRANSITIONS: Record<string, string[]> = {
+      pending: ["packed", "ready_to_ship", "canceled"],
+      unpaid: ["pending", "canceled"],
+      packed: ["ready_to_ship", "canceled"],
+      ready_to_ship: ["shipped", "canceled"],
+      shipped: ["delivered", "returned", "failed"],
+      delivered: [],
+      canceled: [],
+      returned: [],
+      failed: [],
+    };
+
+    const allowedNext = ALLOWED_TRANSITIONS[currentStatus] || [];
+    if (!allowedNext.includes(status)) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Invalid action: Order currently in '${currentStatus}' state cannot be changed to '${status}'. Supported actions: [${allowedNext.join(", ") || "None"}].`,
+        },
+        { status: 400 }
+      );
+    }
+
+    // =========================================================================
     // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
     // =========================================================================
     if (["ready_to_ship", "shipped", "packed"].includes(status)) {
@@ -76,7 +103,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json(
           {
             success: false,
-            error: "Daraz store is not connected or access token expired. Reconnect store via My Stores page before executing order actions.",
+            error: "Daraz store is not connected. Reconnect store via My Stores page before executing order actions.",
           },
           { status: 400 }
         );
@@ -91,17 +118,25 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         appSecret: store.api_app_secret || undefined,
       });
 
-      // Fetch real item IDs directly from Daraz Seller Center
       let itemIds: string[] = [];
-      try {
-        const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
-        itemIds = liveItems.map((item) => item.order_item_id);
-      } catch (e) {
-        // Fallback
+      if (Array.isArray(order.order_items) && order.order_items.length > 0) {
+        itemIds = order.order_items.map((i: any) => String(i.order_item_id)).filter(Boolean);
       }
 
       if (itemIds.length === 0) {
-        itemIds = [order.daraz_order_id];
+        const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
+        itemIds = liveItems.map((i) => String(i.order_item_id)).filter(Boolean);
+      }
+
+      if (itemIds.length === 0) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Daraz API Error: No valid order item IDs found for Order #${order.daraz_order_id}.`,
+            darazConfirmed: false,
+          },
+          { status: 400 }
+        );
       }
 
       try {
@@ -111,7 +146,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             return NextResponse.json(
               {
                 success: false,
-                error: "Daraz rejected packing request: Order is already packed or ineligible on Seller Center.",
+                error: "Daraz rejected packing request on Seller Center.",
                 darazConfirmed: false,
               },
               { status: 400 }
@@ -127,7 +162,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
             return NextResponse.json(
               {
                 success: false,
-                error: "Daraz rejected Ready-to-Ship request: Order must be packed on Seller Center first.",
+                error: "Daraz rejected Ready-to-Ship action on Seller Center.",
                 darazConfirmed: false,
               },
               { status: 400 }
@@ -138,17 +173,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         return NextResponse.json(
           {
             success: false,
-            error: `Daraz API rejected this action: ${apiErr.message}`,
+            error: `Daraz did not accept this change: ${apiErr.message}`,
             darazConfirmed: false,
           },
           { status: 400 }
         );
       }
     }
-
-    // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 2 - UPDATE LOCAL DB ONLY AFTER CONFIRMED SUCCESS
-    // =========================================================================
     const previousStatus = order.workflow_status || order.status;
     const timestamp = new Date().toISOString();
 

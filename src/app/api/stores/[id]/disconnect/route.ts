@@ -50,7 +50,7 @@ export async function POST(
       });
     }
 
-    // Execute Store Disconnect (removes API tokens, sets inactive, preserves historical order/product data)
+    // Execute Store Disconnect (removes API tokens, sets inactive, clears slot_number for reuse, preserves historical order/product data)
     const { error: updateErr } = await supabase
       .from("daraz_stores")
       .update({

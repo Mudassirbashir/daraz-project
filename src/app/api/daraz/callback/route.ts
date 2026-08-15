@@ -145,34 +145,63 @@ export async function GET(req: NextRequest) {
     const expiresInSeconds = typeof expires_in === "number" ? expires_in : parseInt(expires_in || "2592000", 10);
     const tokenExpiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
 
-    const targetSellerId = String(seller_id || account || `SELLER_${Date.now()}`);
-    const storeName = account || `Daraz Store (${targetSellerId})`;
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    // 5. Store Persistence & Dynamic Slot Allocation
+    // 5. Fetch Live Seller Profile First to get verified Seller ID & Name
+    let verifiedSellerId = String(seller_id || account || "");
+    let verifiedStoreName = account || "Daraz Store";
+
+    try {
+      const tempClient = new DarazApiClient({
+        accessToken: access_token,
+        refreshToken: refresh_token,
+        tokenExpiresAt,
+        appKey,
+        appSecret,
+      });
+      const liveProfile = await tempClient.getStoreProfile();
+      if (liveProfile.seller_id && liveProfile.seller_id !== "SELLER_UNKNOWN") {
+        verifiedSellerId = liveProfile.seller_id;
+      }
+      if (liveProfile.name) {
+        verifiedStoreName = liveProfile.name;
+      }
+    } catch (profileErr: any) {
+      console.warn("[Daraz OAuth Callback] Pre-verification profile notice:", profileErr.message);
+    }
+
+    if (!verifiedSellerId) {
+      verifiedSellerId = `SELLER_${Date.now()}`;
+    }
+
+    // 6. Compute Deterministic Lowest Available Slot Number (1, 2, 3...)
     const { data: activeStoresList } = await supabase
       .from("daraz_stores")
-      .select("id, slot_number")
+      .select("id, slot_number, store_code")
       .eq("is_active", true);
 
-    const activeSlots = (activeStoresList || []).map((s: any) => s.slot_number).filter((n: any) => typeof n === "number");
+    const activeSlots = (activeStoresList || [])
+      .map((s: any) => s.slot_number)
+      .filter((n: any) => typeof n === "number" && n > 0);
+
     let nextSlot = 1;
-    const sorted = [...activeSlots].sort((a, b) => a - b);
-    for (const slot of sorted) {
+    const sortedSlots = [...activeSlots].sort((a, b) => a - b);
+    for (const slot of sortedSlots) {
       if (slot === nextSlot) nextSlot++;
       else if (slot > nextSlot) break;
     }
 
+    // 7. Check for existing store matching verified seller_id (active or inactive)
     const { data: existingStores } = await supabase
       .from("daraz_stores")
       .select("id, store_code, seller_id, is_active, slot_number")
-      .eq("seller_id", targetSellerId);
+      .eq("seller_id", verifiedSellerId);
 
     let storeId: string;
 
     const baseUpdateData: Record<string, any> = {
-      seller_id: targetSellerId,
-      store_name: storeName,
+      seller_id: verifiedSellerId,
+      store_name: verifiedStoreName,
       access_token,
       refresh_token,
       token_expires_at: tokenExpiresAt,
@@ -188,7 +217,7 @@ export async function GET(req: NextRequest) {
     }
 
     if (existingStores && existingStores.length > 0) {
-      // Reconnect existing seller record with exact seller_id match
+      // Reconnect existing seller record without creating duplicate store row
       const targetStore = existingStores[0];
       const assignedSlot = targetStore.slot_number || nextSlot;
       baseUpdateData.slot_number = assignedSlot;
@@ -242,30 +271,6 @@ export async function GET(req: NextRequest) {
       storeId = inserted.id;
     }
 
-    // 6. Verify Seller Profile
-    const client = new DarazApiClient({
-      storeId,
-      accessToken: access_token,
-      refreshToken: refresh_token,
-      tokenExpiresAt,
-      appKey,
-      appSecret,
-    });
-
-    try {
-      const liveProfile = await client.getStoreProfile();
-      await supabase
-        .from("daraz_stores")
-        .update({
-          store_name: liveProfile.name,
-          seller_id: liveProfile.seller_id,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", storeId);
-    } catch (profileErr: any) {
-      console.warn("[Daraz OAuth Callback] Seller profile verification notice:", profileErr.message);
-    }
-
     // 7. Non-Blocking Async Background Sync Execution
     console.log(`[Daraz OAuth Callback] Triggering non-blocking background sync for storeId ${storeId}...`);
     executeDarazSync(storeId).catch((syncErr: any) => {
@@ -279,7 +284,7 @@ export async function GET(req: NextRequest) {
         sync_type: "oauth_login",
         status: "completed",
         records_synced: 1,
-        payload: { storeId, sellerId: targetSellerId, storeName, userId: currentUserId },
+        payload: { storeId, sellerId: verifiedSellerId, storeName: verifiedStoreName, userId: currentUserId },
       });
     } catch (logErr) {
       // Ignore logging failure
@@ -290,8 +295,8 @@ export async function GET(req: NextRequest) {
           success: true,
           message: "Daraz OAuth Seller Account Connected Successfully!",
           storeId,
-          sellerId: targetSellerId,
-          storeName,
+          sellerId: verifiedSellerId,
+          storeName: verifiedStoreName,
         })
       : NextResponse.redirect(`${baseUrl}/stores?connected=true&store_id=${storeId}`);
 
