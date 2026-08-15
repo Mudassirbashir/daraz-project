@@ -21,20 +21,33 @@ export function validateDarazWebhookSignature(
   rawBody: string,
   headers: Headers,
   searchParams: URLSearchParams,
-  appSecret: string = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx"
+  appSecret: string = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
+  appKey: string = process.env.DARAZ_APP_KEY || "504904"
 ): boolean {
   const authHeader = headers.get("authorization") || headers.get("Authorization") || "";
   const signHeader = headers.get("x-daraz-signature") || headers.get("x-signature") || searchParams.get("sign") || "";
 
   if (!authHeader && !signHeader) {
-    // If no signature headers are sent by Daraz test harness, log warning and allow for verification
+    // Allow verification probe requests if no signature header is supplied by Daraz console
     return true;
   }
 
   try {
     const targetSign = (signHeader || authHeader.replace(/^Bearer\s+/i, "")).trim().toUpperCase();
 
-    // Compute HMAC-SHA256 of raw body
+    // Candidate 1: Exact Daraz specification: Authorization = HEX(HMAC-SHA256(app_key + exact_raw_message_body, app_secret))
+    const baseWithAppKey = `${appKey.trim()}${rawBody}`;
+    const computedAppKeyHmac = crypto
+      .createHmac("sha256", appSecret.trim())
+      .update(baseWithAppKey, "utf8")
+      .digest("hex")
+      .toUpperCase();
+
+    if (computedAppKeyHmac === targetSign) {
+      return true;
+    }
+
+    // Candidate 2: HMAC-SHA256 of raw body directly
     const computedRawHmac = crypto
       .createHmac("sha256", appSecret.trim())
       .update(rawBody, "utf8")
@@ -45,7 +58,7 @@ export function validateDarazWebhookSignature(
       return true;
     }
 
-    // Alternative: check parameter-sorted HMAC if parameters were passed via query string
+    // Candidate 3: Parameter-sorted HMAC if parameters were passed via query string
     const paramObj: Record<string, string> = {};
     searchParams.forEach((val, key) => {
       if (key !== "sign") paramObj[key] = val;
@@ -68,7 +81,7 @@ export function validateDarazWebhookSignature(
       }
     }
 
-    console.warn(`[Daraz Webhook Signature Mismatch]: Computed ${computedRawHmac} vs Provided ${targetSign}`);
+    console.warn(`[Daraz Webhook Signature Mismatch]: Computed ${computedAppKeyHmac} vs Provided ${targetSign}`);
     return false;
   } catch (err: any) {
     console.error("[Daraz Webhook Signature Validation Error]:", err.message);

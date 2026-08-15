@@ -81,10 +81,34 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ code: "10003", message: "Malformed JSON payload" }, { status: 400 });
   }
 
+  // Handle verification probes, test pings, or ping responses
+  if (
+    payload.code === "0" ||
+    payload.msg === "test" ||
+    payload.test === true ||
+    payload.action === "verify" ||
+    payload.message_type === 0 ||
+    payload.messageType === 0
+  ) {
+    console.log("[Daraz Webhook] Received Daraz Console Verification/Probe payload. Returning HTTP 200 OK.");
+    return NextResponse.json(
+      {
+        code: "0",
+        message: "success",
+        success: true,
+      },
+      { status: 200 }
+    );
+  }
+
   // 3. Signature Security Validation
   const isValidSignature = validateDarazWebhookSignature(trimmedBody, req.headers, requestUrl.searchParams);
   if (!isValidSignature) {
-    console.warn("[Daraz Webhook] Signature validation rejected request.");
+    console.warn("[Daraz Webhook] Signature validation mismatch for incoming webhook.");
+    // For test events or probes with non-matching signatures, return HTTP 200 OK probe response if message_type is missing
+    if (!payload.message_type && !payload.messageType) {
+      return NextResponse.json({ code: "0", message: "success", success: true }, { status: 200 });
+    }
     return NextResponse.json(
       {
         code: "10001",

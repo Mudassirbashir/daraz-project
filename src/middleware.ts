@@ -8,6 +8,8 @@ const PUBLIC_API_ROUTES = [
   "/api/auth/daraz/login",
   "/api/auth/daraz/callback",
   "/api/auth/logout",
+  "/api/daraz/callback",
+  "/api/daraz/webhook",
 ];
 
 export async function middleware(request: NextRequest) {
