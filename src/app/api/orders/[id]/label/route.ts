@@ -58,68 +58,65 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       );
     }
 
-    // 3. Attempt Official Daraz Document Retrieval
+    // 3. Attempt Official Daraz Document Retrieval with Custom Label Engine Fallback
     const { getDarazClient } = await import("@/lib/daraz/client");
+    const { normalizeShippingLabelData, generateShippingLabelHtml } = await import("@/lib/shipping-label/generator");
     const darazClient = await getDarazClient(store.id);
 
-    let orderItems = Array.isArray(order.order_items) && order.order_items.length > 0
-      ? order.order_items
-      : [];
-
-    if (orderItems.length === 0) {
-      orderItems = await darazClient.getOrderItems(order.daraz_order_id);
-    }
-
-    const itemIds = orderItems.map((item: any) => String(item.order_item_id)).filter(Boolean);
-    if (itemIds.length === 0) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Daraz API Error: No valid order item IDs found for Order #${order.daraz_order_id}.`,
-        },
-        { status: 400 }
-      );
-    }
-
-    const officialDocResult = await darazClient.getShippingDocument(itemIds, docTypeParam);
-
-    let decodedContent = officialDocResult.file;
-    let mimeType = officialDocResult.mimeType || "text/html";
-    let isHtml = true;
+    let decodedContent = "";
+    let mimeType = "text/html";
+    let isOfficial = false;
+    let sourceMessage = "";
 
     try {
-      if (!decodedContent.trim().startsWith("<") && !decodedContent.startsWith("%PDF")) {
-        const decodedStr = Buffer.from(decodedContent, "base64").toString("utf-8");
-        if (decodedStr.includes("<") || decodedStr.includes("html") || decodedStr.includes("DOCTYPE")) {
-          decodedContent = decodedStr;
-          isHtml = true;
-        } else {
-          isHtml = false;
+      let orderItems = Array.isArray(order.order_items) && order.order_items.length > 0
+        ? order.order_items
+        : [];
+
+      if (orderItems.length === 0) {
+        orderItems = await darazClient.getOrderItems(order.daraz_order_id);
+      }
+
+      const itemIds = orderItems.map((item: any) => String(item.order_item_id)).filter(Boolean);
+
+      if (itemIds.length > 0) {
+        const officialDocResult = await darazClient.getShippingDocument(itemIds, docTypeParam);
+        decodedContent = officialDocResult.file;
+        mimeType = officialDocResult.mimeType || "text/html";
+        isOfficial = true;
+        sourceMessage = "Official Daraz shipping document retrieved from Daraz Open Platform API";
+
+        try {
+          if (!decodedContent.trim().startsWith("<") && !decodedContent.startsWith("%PDF")) {
+            const decodedStr = Buffer.from(decodedContent, "base64").toString("utf-8");
+            if (decodedStr.includes("<") || decodedStr.includes("html") || decodedStr.includes("DOCTYPE")) {
+              decodedContent = decodedStr;
+            }
+          }
+        } catch (e) {
+          // Keep raw
         }
       }
-    } catch (e) {
-      // Keep raw
+    } catch (apiErr: any) {
+      console.warn(`[Order Label API] Official Daraz document API notice for order ${id}: ${apiErr.message}. Generating custom ERP shipping label.`);
+    }
+
+    // Fallback: Custom ERP Shipping Label Engine compiled from real PostgreSQL order data
+    if (!decodedContent) {
+      const normalizedData = normalizeShippingLabelData(order, store);
+      decodedContent = generateShippingLabelHtml(normalizedData);
+      mimeType = "text/html";
+      isOfficial = false;
+      sourceMessage = "Custom Daraz-Style Shipping Label generated inside ERP from real synchronized order data";
     }
 
     if (rawFormatParam) {
-      if (isHtml || mimeType.includes("html")) {
-        return new Response(decodedContent, {
-          headers: {
-            "Content-Type": "text/html; charset=utf-8",
-            "Content-Disposition": `inline; filename="daraz-label-${order.daraz_order_id}.html"`,
-          },
-        });
-      }
-
-      if (mimeType.includes("pdf") || decodedContent.startsWith("%PDF")) {
-        const pdfBuffer = Buffer.from(officialDocResult.file, "base64");
-        return new Response(pdfBuffer, {
-          headers: {
-            "Content-Type": "application/pdf",
-            "Content-Disposition": `inline; filename="daraz-label-${order.daraz_order_id}.pdf"`,
-          },
-        });
-      }
+      return new Response(decodedContent, {
+        headers: {
+          "Content-Type": "text/html; charset=utf-8",
+          "Content-Disposition": `inline; filename="daraz-label-${order.daraz_order_id}.html"`,
+        },
+      });
     }
 
     return NextResponse.json({
@@ -127,8 +124,9 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       file: decodedContent,
       mimeType,
       docType: docTypeParam,
-      isOfficial: true,
-      sourceMessage: "Official Daraz shipping document retrieved from Daraz Open Platform API",
+      isOfficial,
+      isErpGenerated: !isOfficial,
+      sourceMessage,
       order,
       printTracking: {
         isLabelPrinted: order.is_label_printed || false,
@@ -142,7 +140,8 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     return NextResponse.json(
       {
         success: false,
-        error: `Daraz API Error: ${err.message || "Failed to retrieve official shipping label."}`,
+        error: err.message || "Failed to generate shipping label.",
+        field: err.field || undefined,
       },
       { status: 400 }
     );
