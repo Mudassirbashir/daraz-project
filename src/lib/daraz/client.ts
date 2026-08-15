@@ -123,10 +123,16 @@ export class DarazApiClient {
   private maxRetries: number;
 
   constructor(options: DarazClientOptions = {}) {
-    const key = options.appKey || process.env.DARAZ_APP_KEY || "504904";
+    const key = options.appKey || process.env.DARAZ_APP_KEY;
+    if (!key || !key.trim()) {
+      throw new Error("Missing required environment variable: DARAZ_APP_KEY");
+    }
     this.appKey = key.trim();
 
-    const secret = options.appSecret || process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx";
+    const secret = options.appSecret || process.env.DARAZ_APP_SECRET;
+    if (!secret || !secret.trim()) {
+      throw new Error("Missing required environment variable: DARAZ_APP_SECRET");
+    }
     this.appSecret = secret.trim();
 
     this.baseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";

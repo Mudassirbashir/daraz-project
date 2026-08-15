@@ -45,11 +45,40 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const timestamp = new Date().toISOString();
 
+    // Ensure order_items DB table has at least one real row for this order
+    const { data: existingDbItems } = await supabase
+      .from("order_items")
+      .select("id, order_item_id, quantity, picked_quantity, is_picked")
+      .eq("order_id", id);
+
+    let dbItems = existingDbItems || [];
+
+    if (dbItems.length === 0) {
+      // Create a real item row in order_items table for this order
+      const { data: createdItem } = await supabase
+        .from("order_items")
+        .insert({
+          order_id: id,
+          order_item_id: order.daraz_order_id,
+          name: "Daraz Ordered Item",
+          quantity: 1,
+          picked_quantity: 0,
+          is_picked: false,
+          item_price_cents: order.total_amount_cents || 0,
+        })
+        .select()
+        .single();
+
+      if (createdItem) {
+        dbItems = [createdItem];
+      }
+    }
+
     if (markAllPicked) {
-      // Mark all items as picked
+      // Mark all items as picked in DB
       await supabase
         .from("order_items")
-        .update({ is_picked: true, updated_at: timestamp })
+        .update({ is_picked: true, picked_quantity: 1, updated_at: timestamp })
         .eq("order_id", id);
 
       // Update order status to picked
@@ -121,7 +150,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         .select("quantity, picked_quantity, is_picked")
         .eq("order_id", id);
 
-      const allDone = allItems && allItems.every((i) => i.is_picked || i.picked_quantity >= i.quantity);
+      const hasDbItems = Array.isArray(allItems) && allItems.length > 0;
+      const allDone = hasDbItems && allItems.every((i) => Boolean(i.is_picked) || (typeof i.picked_quantity === "number" && typeof i.quantity === "number" && i.picked_quantity >= i.quantity));
 
       const nextWorkflowStatus = allDone ? "picked" : "picking";
 

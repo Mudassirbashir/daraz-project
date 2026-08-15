@@ -2,16 +2,16 @@ import { createClient as createSupabaseClient } from "@supabase/supabase-js";
 
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
-  if (!envUrl || !envUrl.trim() || envUrl.includes("placeholder")) {
-    return "https://wpmeihwfxahifdidgiac.supabase.co";
+  if (!envUrl || !envUrl.trim()) {
+    throw new Error("Missing required environment variable: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL");
   }
   return envUrl.trim();
 }
 
 function getValidServiceRoleKey(): string {
   const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  if (!envKey || !envKey.trim() || envKey.includes("placeholder")) {
-    return Buffer.from("c2Jfc2VjcmV0X0VYYmpyRUxkZ1JuWm14MXcySjlGdGdfYWpTYV9OdUo=", "base64").toString("utf-8");
+  if (!envKey || !envKey.trim()) {
+    throw new Error("Missing required environment variable: SUPABASE_SERVICE_ROLE_KEY");
   }
   return envKey.trim();
 }

@@ -32,9 +32,18 @@ export function validateDarazWebhookSignature(
   rawBody: string,
   headers: Headers,
   searchParams: URLSearchParams,
-  appSecret: string = process.env.DARAZ_APP_SECRET || "cPQFbmldQEw4X39ccnnpZNQpH9PEUhTx",
-  appKey: string = process.env.DARAZ_APP_KEY || "504904"
+  appSecret?: string,
+  appKey?: string
 ): boolean {
+  const secret = appSecret || process.env.DARAZ_APP_SECRET;
+  if (!secret || !secret.trim()) {
+    throw new Error("Missing required environment variable: DARAZ_APP_SECRET");
+  }
+
+  const key = appKey || process.env.DARAZ_APP_KEY;
+  if (!key || !key.trim()) {
+    throw new Error("Missing required environment variable: DARAZ_APP_KEY");
+  }
   const authHeader = headers.get("authorization") || headers.get("Authorization") || "";
   const signHeader = headers.get("x-daraz-signature") || headers.get("x-signature") || searchParams.get("sign") || "";
 
@@ -47,9 +56,9 @@ export function validateDarazWebhookSignature(
     const targetSign = (signHeader || authHeader.replace(/^Bearer\s+/i, "")).trim();
 
     // Candidate 1: Exact Daraz specification: Authorization = HEX(HMAC-SHA256(app_key + exact_raw_message_body, app_secret))
-    const baseWithAppKey = `${appKey.trim()}${rawBody}`;
+    const baseWithAppKey = `${key.trim()}${rawBody}`;
     const computedAppKeyHmac = crypto
-      .createHmac("sha256", appSecret.trim())
+      .createHmac("sha256", secret.trim())
       .update(baseWithAppKey, "utf8")
       .digest("hex");
 
@@ -59,7 +68,7 @@ export function validateDarazWebhookSignature(
 
     // Candidate 2: HMAC-SHA256 of raw body directly
     const computedRawHmac = crypto
-      .createHmac("sha256", appSecret.trim())
+      .createHmac("sha256", secret.trim())
       .update(rawBody, "utf8")
       .digest("hex");
 
@@ -69,8 +78,8 @@ export function validateDarazWebhookSignature(
 
     // Candidate 3: Parameter-sorted HMAC if parameters were passed via query string
     const paramObj: Record<string, string> = {};
-    searchParams.forEach((val, key) => {
-      if (key !== "sign") paramObj[key] = val;
+    searchParams.forEach((val, k) => {
+      if (k !== "sign") paramObj[k] = val;
     });
 
     if (Object.keys(paramObj).length > 0) {
@@ -80,7 +89,7 @@ export function validateDarazWebhookSignature(
         baseStr += `${k}${paramObj[k]}`;
       }
       const computedParamHmac = crypto
-        .createHmac("sha256", appSecret.trim())
+        .createHmac("sha256", secret.trim())
         .update(baseStr, "utf8")
         .digest("hex");
 
