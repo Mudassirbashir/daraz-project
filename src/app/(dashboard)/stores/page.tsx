@@ -125,7 +125,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
 
   const connectedCount = enrichedStores.filter((s) => s.isConnected).length;
   const disconnectedCount = enrichedStores.filter((s) => !s.isConnected).length;
-  const isMaxStoresReached = enrichedStores.length >= 3;
+  const isMaxStoresReached = connectedCount >= 3;
 
   const syncingStore = enrichedStores.find((s) => s.sync_status === "syncing");
   const autoSyncStoreId = redirectStoreId || syncingStore?.id;
@@ -160,11 +160,11 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
           <div className="flex items-center space-x-2">
             <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Your Daraz Stores</h1>
             <span className="rounded-xl bg-orange-100 dark:bg-orange-500/10 px-2.5 py-0.5 text-xs font-bold text-orange-700 dark:text-orange-300 border border-orange-200/80 dark:border-orange-500/20">
-              {enrichedStores.length} / 3 Stores Max
+              {connectedCount} / 3 Active Stores
             </span>
           </div>
           <p className="text-xs text-slate-500 dark:text-slate-400 mt-1 font-medium">
-            Manage your connected Daraz seller accounts. Maximum 3 stores allowed per user.
+            Manage your connected Daraz seller accounts. Maximum 3 active stores allowed per user.
           </p>
         </div>
 
@@ -239,7 +239,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                         {store.store_name}
                       </h3>
                       <span className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                        Store {store.slot_number || 1}
+                        {store.slot_number ? `Store ${store.slot_number}` : store.isConnected ? "Store 1" : "Disconnected"}
                       </span>
                     </div>
                     <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">

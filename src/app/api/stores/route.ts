@@ -18,17 +18,32 @@ export async function GET(req: NextRequest) {
     const supabase = createAdminClient();
 
     // Fetch user-scoped configured real stores
-    const { data: stores, error: storesErr } = await supabase
-      .from("daraz_stores")
-      .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at")
-      .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
-      .order("created_at", { ascending: true });
+    let storesList: any[] = [];
+    try {
+      const { data, error } = await supabase
+        .from("daraz_stores")
+        .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at, slot_number")
+        .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
+        .order("created_at", { ascending: true });
 
-    if (storesErr) {
-      throw new Error(`Failed to fetch stores: ${storesErr.message}`);
+      if (error) {
+        if (error.message?.includes("slot_number")) {
+          const { data: fallback, error: fallbackErr } = await supabase
+            .from("daraz_stores")
+            .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at")
+            .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
+            .order("created_at", { ascending: true });
+          if (fallbackErr) throw new Error(`Failed to fetch stores: ${fallbackErr.message}`);
+          storesList = fallback || [];
+        } else {
+          throw new Error(`Failed to fetch stores: ${error.message}`);
+        }
+      } else {
+        storesList = data || [];
+      }
+    } catch (err: any) {
+      throw new Error(`Failed to fetch stores: ${err.message}`);
     }
-
-    const storesList = stores || [];
 
     // Compute live metrics for connected stores
     const enrichedStores = await Promise.all(
@@ -42,6 +57,7 @@ export async function GET(req: NextRequest) {
             store_name: store.store_name,
             seller_id: store.seller_id || "N/A",
             region: store.region || "PK",
+            slot_number: store.slot_number || null,
             isConnected: false,
             status: "not_connected",
             statusText: "Not Connected",
@@ -95,6 +111,7 @@ export async function GET(req: NextRequest) {
           store_name: store.store_name,
           seller_id: store.seller_id || "SELLER_UNKNOWN",
           region: store.region || "PK",
+          slot_number: store.slot_number || null,
           isConnected: true,
           status: syncStatus === "syncing" ? "syncing" : syncStatus === "error" ? "error" : "connected",
           sync_status: syncStatus,

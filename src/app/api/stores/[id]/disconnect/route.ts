@@ -51,18 +51,32 @@ export async function POST(
     }
 
     // Execute Store Disconnect (removes API tokens, sets inactive, clears slot_number for reuse, preserves historical order/product data)
-    const { error: updateErr } = await supabase
+    const disconnectData: Record<string, any> = {
+      is_active: false,
+      sync_status: "disconnected",
+      access_token: null,
+      refresh_token: null,
+      token_expires_at: null,
+      slot_number: null,
+      updated_at: new Date().toISOString(),
+    };
+
+    let updateErr: any = null;
+    const { error } = await supabase
       .from("daraz_stores")
-      .update({
-        is_active: false,
-        sync_status: "disconnected",
-        access_token: null,
-        refresh_token: null,
-        token_expires_at: null,
-        slot_number: null,
-        updated_at: new Date().toISOString(),
-      })
+      .update(disconnectData)
       .eq("id", storeId);
+
+    if (error && error.message?.includes("slot_number")) {
+      const { slot_number, ...fallbackDisconnectData } = disconnectData;
+      const { error: fallbackErr } = await supabase
+        .from("daraz_stores")
+        .update(fallbackDisconnectData)
+        .eq("id", storeId);
+      updateErr = fallbackErr;
+    } else {
+      updateErr = error;
+    }
 
     if (updateErr) {
       throw new Error(`Database error while disconnecting store: ${updateErr.message}`);

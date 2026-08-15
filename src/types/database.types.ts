@@ -135,11 +135,21 @@ export interface Database {
           refresh_token: string | null;
           token_expires_at: string | null;
           is_active: boolean;
+          slot_number: number | null;
+          user_id?: string | null;
+          sync_status?: string | null;
+          last_synced_at?: string | null;
+          last_sync_error?: string | null;
           created_at: string;
           updated_at: string;
         };
         Insert: Omit<Database['public']['Tables']['daraz_stores']['Row'], 'id' | 'created_at' | 'updated_at'> & {
           id?: string;
+          slot_number?: number | null;
+          user_id?: string | null;
+          sync_status?: string | null;
+          last_synced_at?: string | null;
+          last_sync_error?: string | null;
           created_at?: string;
           updated_at?: string;
         };

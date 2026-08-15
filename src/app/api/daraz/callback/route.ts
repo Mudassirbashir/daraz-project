@@ -175,27 +175,57 @@ export async function GET(req: NextRequest) {
     }
 
     // 6. Compute Deterministic Lowest Available Slot Number (1, 2, 3...)
-    const { data: activeStoresList } = await supabase
-      .from("daraz_stores")
-      .select("id, slot_number, store_code")
-      .eq("is_active", true);
+    let activeStoresList: any[] = [];
+    try {
+      const { data, error } = await supabase
+        .from("daraz_stores")
+        .select("id, slot_number, store_code")
+        .eq("is_active", true);
 
-    const activeSlots = (activeStoresList || [])
+      if (!error && data) {
+        activeStoresList = data;
+      } else {
+        const { data: fallback } = await supabase
+          .from("daraz_stores")
+          .select("id, store_code")
+          .eq("is_active", true);
+        activeStoresList = fallback || [];
+      }
+    } catch (e) {
+      // Fallback
+    }
+
+    const activeSlots = activeStoresList
       .map((s: any) => s.slot_number)
       .filter((n: any) => typeof n === "number" && n > 0);
 
     let nextSlot = 1;
-    const sortedSlots = [...activeSlots].sort((a, b) => a - b);
+    const sortedSlots = Array.from(new Set(activeSlots)).sort((a: any, b: any) => a - b);
     for (const slot of sortedSlots) {
       if (slot === nextSlot) nextSlot++;
       else if (slot > nextSlot) break;
     }
 
+    // Cap slot number to maximum 3
+    if (nextSlot > 3) {
+      nextSlot = 3;
+    }
+
     // 7. Check for existing store matching verified seller_id (active or inactive)
-    const { data: existingStores } = await supabase
-      .from("daraz_stores")
-      .select("id, store_code, seller_id, is_active, slot_number")
-      .eq("seller_id", verifiedSellerId);
+    let existingStores: any[] = [];
+    try {
+      const { data } = await supabase
+        .from("daraz_stores")
+        .select("id, store_code, seller_id, is_active, slot_number")
+        .eq("seller_id", verifiedSellerId);
+      existingStores = data || [];
+    } catch (e) {
+      const { data } = await supabase
+        .from("daraz_stores")
+        .select("id, store_code, seller_id, is_active")
+        .eq("seller_id", verifiedSellerId);
+      existingStores = data || [];
+    }
 
     let storeId: string;
 
@@ -219,21 +249,40 @@ export async function GET(req: NextRequest) {
     if (existingStores && existingStores.length > 0) {
       // Reconnect existing seller record without creating duplicate store row
       const targetStore = existingStores[0];
-      const assignedSlot = targetStore.slot_number || nextSlot;
+      const assignedSlot = (targetStore.is_active && targetStore.slot_number) ? targetStore.slot_number : nextSlot;
       baseUpdateData.slot_number = assignedSlot;
       baseUpdateData.store_code = `DARAZ-${storeRegion}-${String(assignedSlot).padStart(2, "0")}`;
 
-      const { data: updated, error: updateErr } = await supabase
-        .from("daraz_stores")
-        .update(baseUpdateData)
-        .eq("id", targetStore.id)
-        .select()
-        .single();
+      let updatedStore: any = null;
+      try {
+        const { data: updated, error: updateErr } = await supabase
+          .from("daraz_stores")
+          .update(baseUpdateData)
+          .eq("id", targetStore.id)
+          .select()
+          .single();
 
-      if (updateErr) throw new Error(`Supabase store update error: ${updateErr.message}`);
-      storeId = updated.id;
+        if (updateErr) throw updateErr;
+        updatedStore = updated;
+      } catch (updateErr: any) {
+        if (updateErr.message?.includes("slot_number")) {
+          const { slot_number, ...dataWithoutSlot } = baseUpdateData;
+          const { data: updatedFallback, error: fallbackUpdateErr } = await supabase
+            .from("daraz_stores")
+            .update(dataWithoutSlot)
+            .eq("id", targetStore.id)
+            .select()
+            .single();
+
+          if (fallbackUpdateErr) throw new Error(`Supabase store update error: ${fallbackUpdateErr.message}`);
+          updatedStore = updatedFallback;
+        } else {
+          throw new Error(`Supabase store update error: ${updateErr.message}`);
+        }
+      }
+      storeId = updatedStore.id;
     } else {
-      // New store connection -> Enforce 3-Store Limit!
+      // New store connection -> Enforce 3 ACTIVE Store Limit!
       let storeQuery = supabase
         .from("daraz_stores")
         .select("id", { count: "exact", head: true })
@@ -256,19 +305,40 @@ export async function GET(req: NextRequest) {
       const formattedSlot = String(nextSlot).padStart(2, "0");
       const storeCode = `DARAZ-${storeRegion}-${formattedSlot}`;
 
-      const { data: inserted, error: insertErr } = await supabase
-        .from("daraz_stores")
-        .insert({
-          ...baseUpdateData,
-          slot_number: nextSlot,
-          store_code: storeCode,
-          region: storeRegion,
-        })
-        .select()
-        .single();
+      const insertPayload = {
+        ...baseUpdateData,
+        slot_number: nextSlot,
+        store_code: storeCode,
+        region: storeRegion,
+      };
 
-      if (insertErr) throw new Error(`Supabase store insert error: ${insertErr.message}`);
-      storeId = inserted.id;
+      let insertedStore: any = null;
+      try {
+        const { data: inserted, error: insertErr } = await supabase
+          .from("daraz_stores")
+          .insert(insertPayload)
+          .select()
+          .single();
+
+        if (insertErr) throw insertErr;
+        insertedStore = inserted;
+      } catch (insertErr: any) {
+        if (insertErr.message?.includes("slot_number")) {
+          console.warn("[Daraz OAuth Callback] 'slot_number' column missing in Supabase schema cache. Inserting fallback row...");
+          const { slot_number, ...payloadWithoutSlot } = insertPayload;
+          const { data: insertedFallback, error: fallbackErr } = await supabase
+            .from("daraz_stores")
+            .insert(payloadWithoutSlot)
+            .select()
+            .single();
+
+          if (fallbackErr) throw new Error(`Supabase store insert error: ${fallbackErr.message}`);
+          insertedStore = insertedFallback;
+        } else {
+          throw new Error(`Supabase store insert error: ${insertErr.message}`);
+        }
+      }
+      storeId = insertedStore.id;
     }
 
     // 7. Non-Blocking Async Background Sync Execution
