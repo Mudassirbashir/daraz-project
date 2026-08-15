@@ -1,6 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
 import { updateSession } from "@/lib/supabase/middleware";
-import { createAdminClient } from "@/lib/supabase/admin";
 import { PROTECTED_ROUTES } from "@/lib/rbac/permissions";
 import { AppRole } from "@/types/database.types";
 
@@ -34,7 +33,6 @@ export async function middleware(request: NextRequest) {
   try {
     // 3. Refresh Supabase Auth session & extract current user
     let { supabaseResponse, user, supabase } = await updateSession(request);
-    let isFallbackUser = false;
 
     // Fallback: check daraz_ops_user cookie
     if (!user) {
@@ -42,7 +40,6 @@ export async function middleware(request: NextRequest) {
       if (fallbackCookie?.value) {
         try {
           user = JSON.parse(fallbackCookie.value);
-          isFallbackUser = true;
         } catch (e) {
           // invalid JSON cookie
         }
@@ -78,39 +75,19 @@ export async function middleware(request: NextRequest) {
     }
 
     // Role-Based Access Control (RBAC) path protection
-    if (user && !isAuthRoute) {
+    if (user && supabase && !isAuthRoute) {
       try {
-        let userRole: AppRole | null = null;
+        const { data: profile, error: profileErr } = await (supabase as any)
+          .from("profiles")
+          .select("role")
+          .eq("id", user.id)
+          .single();
 
-        if (isFallbackUser) {
-          // Cookie fallback login (daraz_ops_user): read role directly from cookie payload
-          userRole =
-            ((user as any)?.role as AppRole) ||
-            ((user as any)?.user_metadata?.role as AppRole) ||
-            ((user as any)?.app_metadata?.role as AppRole) ||
-            null;
+        if (profileErr) {
+          console.warn("[Middleware RBAC Profile Query Warning]:", profileErr.message);
         }
 
-        if (!userRole && user?.id) {
-          // Real Supabase Auth session login: query profiles table using admin client to bypass RLS
-          const adminSupabase = createAdminClient();
-          const { data: profile } = await adminSupabase
-            .from("profiles")
-            .select("role")
-            .eq("id", user.id)
-            .maybeSingle();
-
-          userRole =
-            (profile?.role as AppRole) ||
-            ((user as any)?.role as AppRole) ||
-            ((user as any)?.user_metadata?.role as AppRole) ||
-            ((user as any)?.app_metadata?.role as AppRole) ||
-            null;
-        }
-
-        if (!userRole) {
-          userRole = "ops_manager";
-        }
+        const userRole: AppRole = (profile?.role as AppRole) || "ops_manager";
 
         const matchedGuard = PROTECTED_ROUTES.find((guard) =>
           pathname.startsWith(guard.pathPrefix)

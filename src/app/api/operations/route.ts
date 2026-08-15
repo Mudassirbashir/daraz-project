@@ -58,13 +58,17 @@ export async function GET(req: NextRequest) {
 
     const [
       { count: waitingCount },
+      { count: pickedCount },
       { count: packedCount },
       { count: shippedCount },
+      completedOrdersRes,
       inventoryListRes,
     ] = await Promise.all([
       supabase.from("orders").select("*", { count: "exact", head: true }).in("status", ["pending", "unpaid"]).eq("is_packed", false),
+      supabase.from("orders").select("*", { count: "exact", head: true }).eq("workflow_status", "picked"),
       supabase.from("orders").select("*", { count: "exact", head: true }).eq("is_packed", true),
       supabase.from("orders").select("*", { count: "exact", head: true }).in("status", ["shipped", "delivered"]),
+      supabase.from("orders").select("order_date, updated_at").eq("is_packed", true).order("updated_at", { ascending: false }).limit(50),
       supabase.from("inventory").select("sku, storage_location").limit(100),
     ]);
 
@@ -79,13 +83,22 @@ export async function GET(req: NextRequest) {
       package_status: ord.status === "shipped" ? "In Transit" : ord.status === "delivered" ? "Delivered" : "Processing",
     }));
 
+    let avgProcessingTimeMinutes = 0;
+    if (completedOrdersRes.data && completedOrdersRes.data.length > 0) {
+      const totalDiffMs = completedOrdersRes.data.reduce((sum, ord) => {
+        const start = new Date(ord.order_date).getTime();
+        const end = new Date(ord.updated_at).getTime();
+        return sum + Math.max(0, end - start);
+      }, 0);
+      avgProcessingTimeMinutes = Math.round((totalDiffMs / completedOrdersRes.data.length / (60 * 1000)) * 10) / 10;
+    }
+
     const metrics = {
       ordersWaiting: waitingCount || 0,
-      ordersPicked: Math.max(0, (packedCount || 0) - 5),
+      ordersPicked: pickedCount || 0,
       ordersPacked: packedCount || 0,
       ordersShipped: shippedCount || 0,
-      avgProcessingTimeMinutes: 14.5,
-      employeeProductivityScore: 98.2,
+      avgProcessingTimeMinutes,
     };
 
     return NextResponse.json({

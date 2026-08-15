@@ -40,13 +40,13 @@ export default function OperationsPage() {
   const [barcodeInput, setBarcodeInput] = useState("");
 
   // WMS Metrics
-  const [metrics, setMetrics] = useState({
+  const [metrics, setMetrics] = useState<any>({
     ordersWaiting: 0,
     ordersPicked: 0,
     ordersPacked: 0,
     ordersShipped: 0,
-    avgProcessingTimeMinutes: 14.5,
-    employeeProductivityScore: 98.2,
+    avgProcessingTimeMinutes: 0,
+    employeeProductivityScore: 100,
   });
 
   // Pagination State
@@ -218,7 +218,7 @@ export default function OperationsPage() {
       </div>
 
       {/* Warehouse Performance Dashboard Cards */}
-      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-6">
+      <div className="grid grid-cols-2 gap-3 sm:grid-cols-3 md:grid-cols-5">
         <div className="rounded-2xl border border-amber-200/80 dark:border-amber-500/30 bg-amber-50/80 dark:bg-amber-500/10 p-3.5 shadow-apple">
           <span className="text-[10px] font-bold uppercase tracking-wider text-amber-700 dark:text-amber-400">Orders Waiting</span>
           <p className="mt-1 text-xl font-bold text-amber-900 dark:text-amber-200">{metrics.ordersWaiting}</p>
@@ -242,11 +242,6 @@ export default function OperationsPage() {
         <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
           <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Avg Processing</span>
           <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">{metrics.avgProcessingTimeMinutes} min</p>
-        </div>
-
-        <div className="rounded-2xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 backdrop-blur-xl p-3.5 shadow-apple">
-          <span className="text-[10px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">Productivity</span>
-          <p className="mt-1 text-xl font-bold text-slate-900 dark:text-white">{metrics.employeeProductivityScore}%</p>
         </div>
       </div>
 

@@ -45,29 +45,63 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ success: false, error: "Invalid image operation arguments." }, { status: 400 });
     }
 
-    // Call Daraz API if store credentials exist
-    let darazConfirmed = false;
-    if (product.daraz_stores && product.daraz_stores.access_token) {
-      try {
-        const darazClient = new DarazApiClient({
-          storeId: product.daraz_stores.id,
-          accessToken: product.daraz_stores.access_token,
-          refreshToken: product.daraz_stores.refresh_token || undefined,
-          tokenExpiresAt: product.daraz_stores.token_expires_at || undefined,
-        });
-
-        darazConfirmed = await darazClient.updateProduct(
-          product.daraz_item_id || product.id,
-          product.seller_sku,
-          product.attributes || {},
-          images
-        );
-      } catch (darazErr: any) {
-        console.warn(`[Daraz Image API Update Warning]: ${darazErr.message}`);
-      }
+    // =========================================================================
+    // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
+    // =========================================================================
+    const store = product.daraz_stores;
+    if (!store || !store.access_token) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Daraz store is disconnected. Reconnect your store via My Stores before modifying product images.",
+          darazConfirmed: false,
+        },
+        { status: 400 }
+      );
     }
 
-    // Update Supabase database
+    let darazConfirmed = false;
+    try {
+      const darazClient = new DarazApiClient({
+        storeId: store.id,
+        accessToken: store.access_token,
+        refreshToken: store.refresh_token || undefined,
+        tokenExpiresAt: store.token_expires_at || undefined,
+        appKey: store.api_app_key || undefined,
+        appSecret: store.api_app_secret || undefined,
+      });
+
+      darazConfirmed = await darazClient.updateProduct(
+        product.daraz_item_id || product.id,
+        product.seller_sku,
+        product.attributes || {},
+        images
+      );
+    } catch (darazErr: any) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: `Daraz did not accept image update: ${darazErr.message}`,
+          darazConfirmed: false,
+        },
+        { status: 400 }
+      );
+    }
+
+    if (!darazConfirmed) {
+      return NextResponse.json(
+        {
+          success: false,
+          error: "Daraz Seller Center rejected the product image update.",
+          darazConfirmed: false,
+        },
+        { status: 400 }
+      );
+    }
+
+    // =========================================================================
+    // TWO-PHASE ACTION MODEL: STEP 2 - UPDATE LOCAL DB ONLY AFTER CONFIRMED SUCCESS
+    // =========================================================================
     const { data: updatedProduct, error: updateErr } = await supabase
       .from("listings")
       .update({
@@ -81,14 +115,14 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       .single();
 
     if (updateErr) {
-      throw new Error(`Failed to update product images: ${updateErr.message}`);
+      throw new Error(`Failed to update product images in database: ${updateErr.message}`);
     }
 
     return NextResponse.json({
       success: true,
-      message: darazConfirmed ? "✓ Saved & Synced to Daraz" : "✓ Saved locally in application",
+      message: "✓ Daraz Confirmed: Saved & Synced image to Seller Center",
       product: updatedProduct,
-      darazConfirmed,
+      darazConfirmed: true,
     });
   } catch (err: any) {
     console.error("[POST /api/products/[id]/images Exception]:", err.message);

@@ -20,17 +20,8 @@ export async function GET(req: NextRequest) {
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
   const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
 
-  const rawAppKey = process.env.DARAZ_APP_KEY;
-  if (!rawAppKey || !rawAppKey.trim()) {
-    throw new Error("Missing required environment variable: DARAZ_APP_KEY");
-  }
-  const appKey = rawAppKey.trim();
-
-  const rawAppSecret = process.env.DARAZ_APP_SECRET;
-  if (!rawAppSecret || !rawAppSecret.trim()) {
-    throw new Error("Missing required environment variable: DARAZ_APP_SECRET");
-  }
-  const appSecret = rawAppSecret.trim();
+  const appKey = (process.env.DARAZ_APP_KEY || "").trim();
+  const appSecret = (process.env.DARAZ_APP_SECRET || "").trim();
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
 
   const supabase = createAdminClient();

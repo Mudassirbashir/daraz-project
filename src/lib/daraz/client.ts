@@ -565,8 +565,8 @@ export class DarazApiClient {
         reason: item.reason || "",
       }));
     } catch (err: any) {
-      console.warn(`[DarazApiClient] getOrderItems notice for Order ${orderId}:`, err.message);
-      return [];
+      console.error(`[DarazApiClient] getOrderItems error for Order ${orderId}:`, err.message);
+      throw new Error(`Failed to fetch order items for Order #${orderId}: ${err.message}`);
     }
   }
 

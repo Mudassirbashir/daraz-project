@@ -4,11 +4,7 @@ import crypto from "crypto";
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
-  const rawAppKey = process.env.DARAZ_APP_KEY;
-  if (!rawAppKey || !rawAppKey.trim()) {
-    throw new Error("Missing required environment variable: DARAZ_APP_KEY");
-  }
-  const appKey = rawAppKey.trim();
+  const appKey = (process.env.DARAZ_APP_KEY || "").trim();
 
   const requestUrl = new URL(req.url);
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");

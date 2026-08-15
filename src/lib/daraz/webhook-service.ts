@@ -32,18 +32,9 @@ export function validateDarazWebhookSignature(
   rawBody: string,
   headers: Headers,
   searchParams: URLSearchParams,
-  appSecret?: string,
-  appKey?: string
+  appSecret: string = process.env.DARAZ_APP_SECRET || "",
+  appKey: string = process.env.DARAZ_APP_KEY || ""
 ): boolean {
-  const secret = appSecret || process.env.DARAZ_APP_SECRET;
-  if (!secret || !secret.trim()) {
-    throw new Error("Missing required environment variable: DARAZ_APP_SECRET");
-  }
-
-  const key = appKey || process.env.DARAZ_APP_KEY;
-  if (!key || !key.trim()) {
-    throw new Error("Missing required environment variable: DARAZ_APP_KEY");
-  }
   const authHeader = headers.get("authorization") || headers.get("Authorization") || "";
   const signHeader = headers.get("x-daraz-signature") || headers.get("x-signature") || searchParams.get("sign") || "";
 
@@ -56,9 +47,9 @@ export function validateDarazWebhookSignature(
     const targetSign = (signHeader || authHeader.replace(/^Bearer\s+/i, "")).trim();
 
     // Candidate 1: Exact Daraz specification: Authorization = HEX(HMAC-SHA256(app_key + exact_raw_message_body, app_secret))
-    const baseWithAppKey = `${key.trim()}${rawBody}`;
+    const baseWithAppKey = `${appKey.trim()}${rawBody}`;
     const computedAppKeyHmac = crypto
-      .createHmac("sha256", secret.trim())
+      .createHmac("sha256", appSecret.trim())
       .update(baseWithAppKey, "utf8")
       .digest("hex");
 
@@ -68,7 +59,7 @@ export function validateDarazWebhookSignature(
 
     // Candidate 2: HMAC-SHA256 of raw body directly
     const computedRawHmac = crypto
-      .createHmac("sha256", secret.trim())
+      .createHmac("sha256", appSecret.trim())
       .update(rawBody, "utf8")
       .digest("hex");
 
@@ -78,8 +69,8 @@ export function validateDarazWebhookSignature(
 
     // Candidate 3: Parameter-sorted HMAC if parameters were passed via query string
     const paramObj: Record<string, string> = {};
-    searchParams.forEach((val, k) => {
-      if (k !== "sign") paramObj[k] = val;
+    searchParams.forEach((val, key) => {
+      if (key !== "sign") paramObj[key] = val;
     });
 
     if (Object.keys(paramObj).length > 0) {
@@ -89,7 +80,7 @@ export function validateDarazWebhookSignature(
         baseStr += `${k}${paramObj[k]}`;
       }
       const computedParamHmac = crypto
-        .createHmac("sha256", secret.trim())
+        .createHmac("sha256", appSecret.trim())
         .update(baseStr, "utf8")
         .digest("hex");
 
@@ -119,14 +110,16 @@ export function mapDarazWebhookStatus(rawStatus?: string): DarazOrderStatus {
     return "shipped";
   } else if (norm === "delivered") {
     return "delivered";
-  } else if (["canceled", "cancelled"].includes(norm)) {
+  } else if (["canceled", "cancelled", "refunded"].includes(norm)) {
     return "canceled";
-  } else if (["returned"].includes(norm)) {
+  } else if (["returned", "shipped_back", "shipped_back_success", "package_returned"].includes(norm)) {
     return "returned";
-  } else if (["failed"].includes(norm)) {
+  } else if (["failed", "failed_delivery", "delivery_failed", "lost"].includes(norm)) {
     return "failed";
   } else if (["unpaid"].includes(norm)) {
     return "unpaid";
+  } else if (["pending", "processing"].includes(norm)) {
+    return "pending";
   }
   return "pending";
 }
@@ -195,7 +188,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
     `[DARAZ WEBHOOK] Processing Event details:\nMessageType: ${numMessageType}\nEvent ID: ${eventId}\nSeller ID: ${sellerId || "N/A"}\nOrder ID: ${darazOrderId || "N/A"}\nStatus: ${mappedStatus}`
   );
 
-  // 5. Match Connected Store in daraz_stores
+  // 5. Match Connected Store in daraz_stores (STRICT MATCH ONLY: No guessing)
   let targetStoreId: string | null = null;
   if (sellerId) {
     const { data: store } = await supabase
@@ -207,25 +200,12 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
 
     if (store) {
       targetStoreId = store.id;
-      console.log(`[DARAZ WEBHOOK] Store matched (Store ID: ${targetStoreId})`);
-    }
-  }
-
-  if (!targetStoreId) {
-    const { data: activeStores } = await supabase
-      .from("daraz_stores")
-      .select("id")
-      .eq("is_active", true)
-      .not("access_token", "is", null);
-
-    if (activeStores && activeStores.length === 1) {
-      targetStoreId = activeStores[0].id;
-      console.log(`[DARAZ WEBHOOK] Fallback matched single active store (Store ID: ${targetStoreId})`);
+      console.log(`[DARAZ WEBHOOK] Verified Store matched (Store ID: ${targetStoreId})`);
     }
   }
 
   if (!targetStoreId && [1, 4, 14].includes(numMessageType)) {
-    console.warn(`[DARAZ WEBHOOK] No connected store matched for Seller ID '${sellerId}'. Processing halted.`);
+    console.warn(`[DARAZ WEBHOOK] No verified store matched for Seller ID '${sellerId}'. Processing marked as unmatched for manual review.`);
   }
 
   // 6. Idempotency Check & Webhook Event Storage
@@ -252,6 +232,8 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       };
     }
 
+    const eventStatus = targetStoreId ? "processing" : "unmatched";
+
     await supabase.from("daraz_webhook_events").insert({
       store_id: targetStoreId,
       seller_id: sellerId || null,
@@ -259,22 +241,23 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       event_id: eventId,
       daraz_order_id: darazOrderId || null,
       payload: payload,
-      status: "processing",
+      status: eventStatus,
       received_at: timestamp,
     });
-    console.log("[DARAZ WEBHOOK] Event stored");
+    console.log(`[DARAZ WEBHOOK] Event stored (status: ${eventStatus})`);
   } catch (dbErr: any) {
+    console.error(`[DARAZ WEBHOOK] Failed to insert event to daraz_webhook_events: ${dbErr.message}`);
     try {
       await supabase.from("daraz_api_logs").insert({
         store_id: targetStoreId,
         sync_type: `webhook_msg_${numMessageType}`,
-        status: "processing",
+        status: targetStoreId ? "processing" : "unmatched",
         records_synced: 1,
         payload: { eventId, sellerId, darazOrderId, rawStatus },
       });
       console.log("[DARAZ WEBHOOK] Event stored in fallback daraz_api_logs");
-    } catch (e) {
-      // ignore
+    } catch (e: any) {
+      console.error(`[DARAZ WEBHOOK] Fallback logging error: ${e.message}`);
     }
   }
 
@@ -294,7 +277,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       // Check if order already exists in orders table
       const { data: existingOrder } = await supabase
         .from("orders")
-        .select("id, status, workflow_status")
+        .select("id, status")
         .eq("daraz_order_id", darazOrderId)
         .maybeSingle();
 
@@ -305,15 +288,6 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       const customerCity = dataObj.customer_city || dataObj.shipping_city || "Karachi";
       const totalAmountCents = dataObj.total_amount_cents || Math.round(parseFloat(String(dataObj.price || 0)) * 100);
 
-      let targetWorkflowStatus = mappedStatus;
-      if (
-        existingOrder?.workflow_status &&
-        ["picking", "picked"].includes(existingOrder.workflow_status) &&
-        mappedStatus === "pending"
-      ) {
-        targetWorkflowStatus = existingOrder.workflow_status;
-      }
-
       const orderPayload = {
         store_id: targetStoreId,
         daraz_order_id: darazOrderId,
@@ -322,7 +296,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
         customer_city: customerCity,
         total_amount_cents: totalAmountCents || 0,
         status: mappedStatus,
-        workflow_status: targetWorkflowStatus,
+        workflow_status: mappedStatus,
         is_payout_settled: false,
         order_date: dataObj.created_at || timestamp,
       };

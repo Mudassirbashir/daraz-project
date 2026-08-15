@@ -15,8 +15,7 @@ export interface SyncResult {
   timestamp: string;
 }
 
-// Per-store in-memory sync lock map to prevent overlapping sync runs for the same store
-const storeSyncLocks = new Map<string, number>();
+// Database-backed sync lock threshold to prevent concurrent syncs across serverless processes
 const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
@@ -77,26 +76,21 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
     // 2. Process each connected store
     for (const store of connectedStores) {
-      // Check per-store sync lock
-      const lastLock = storeSyncLocks.get(store.id);
-      if (lastLock && Date.now() - lastLock < SYNC_LOCK_TIMEOUT_MS) {
-        console.warn(`[SyncEngine] Store ${store.store_code} is currently syncing by another process. Skipping...`);
+      // Serverless-safe Database Row Lock: Check sync_status & updated_at on daraz_stores
+      const lockCutoffIso = new Date(Date.now() - SYNC_LOCK_TIMEOUT_MS).toISOString();
+      const { data: lockAcquired, error: lockErr } = await supabase
+        .from("daraz_stores")
+        .update({ sync_status: "syncing", updated_at: timestamp })
+        .eq("id", store.id)
+        .or(`sync_status.neq.syncing,updated_at.lt.${lockCutoffIso}`)
+        .select("id");
+
+      if (lockErr || !lockAcquired || lockAcquired.length === 0) {
+        console.warn(`[SyncEngine] Store ${store.store_code} is currently locked/syncing by another process. Skipping...`);
         continue;
       }
 
-      storeSyncLocks.set(store.id, Date.now());
-
       console.log(`[Daraz Sync]\nstore_id: ${store.id}\nseller_id: ${store.seller_id || "N/A"}\nstore_name: ${store.store_name}\nsync started`);
-
-      // Set store sync_status to syncing
-      try {
-        await supabase
-          .from("daraz_stores")
-          .update({ sync_status: "syncing", updated_at: timestamp })
-          .eq("id", store.id);
-      } catch (e) {
-        // ignore
-      }
 
       try {
         // Relink any orphaned listings or orders matching seller_id to this active store.id
@@ -383,10 +377,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             })
             .eq("id", store.id);
         } catch (stErr) {
-          // ignore
+          console.error(`[SyncEngine] Failed to update store error status: ${stErr.message}`);
         }
-      } finally {
-        storeSyncLocks.delete(store.id);
       }
     }
 

@@ -10,19 +10,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
   try {
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
-    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
-    if (!user && !opsUserCookie) {
+    if (!user) {
       return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
-    }
-
-    let fallbackUser: any = null;
-    if (opsUserCookie) {
-      try {
-        fallbackUser = JSON.parse(opsUserCookie);
-      } catch (e) {
-        // ignore
-      }
     }
 
     const body = await req.json();
@@ -34,16 +24,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const supabase = createAdminClient();
 
     // Fetch user profile name
-    let operatorName = fallbackUser?.full_name || fallbackUser?.employee_id || "Picking Staff";
-    if (user?.id) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name, employee_id")
-        .eq("id", user.id)
-        .maybeSingle();
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("full_name, employee_id")
+      .eq("id", user.id)
+      .maybeSingle();
 
-      operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
-    }
+    const operatorName = profile?.full_name || profile?.employee_id || user.email || "Picking Staff";
 
     // Fetch target order and items
     const { data: order, error: fetchErr } = await supabase
@@ -58,47 +45,11 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     const timestamp = new Date().toISOString();
 
-    // Ensure order_items DB table has at least one real row for this order
-    const { data: existingDbItems } = await supabase
-      .from("order_items")
-      .select("id, order_item_id, quantity, picked_quantity, is_picked")
-      .eq("order_id", id);
-
-    let dbItems = existingDbItems || [];
-
-    if (dbItems.length === 0) {
-      // Create a real item row in order_items table for this order if possible
-      const { data: createdItem } = await supabase
-        .from("order_items")
-        .insert({
-          order_id: id,
-          order_item_id: order.daraz_order_id,
-          name: "Daraz Ordered Item",
-          quantity: 1,
-          picked_quantity: 0,
-          is_picked: false,
-          item_price_cents: order.total_amount_cents || 0,
-        })
-        .select()
-        .single();
-
-      if (createdItem) {
-        dbItems = [createdItem];
-      }
-    }
-
     if (markAllPicked) {
-      if (!dbItems || dbItems.length === 0) {
-        return NextResponse.json(
-          { success: false, error: "Cannot mark order as picked: Order has no items in database." },
-          { status: 400 }
-        );
-      }
-
-      // Mark all items as picked in DB
+      // Mark all items as picked
       await supabase
         .from("order_items")
-        .update({ is_picked: true, picked_quantity: 1, updated_at: timestamp })
+        .update({ is_picked: true, updated_at: timestamp })
         .eq("order_id", id);
 
       // Update order status to picked
@@ -125,7 +76,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
       // Record audit log
       await supabase.from("audit_logs").insert({
-        user_id: user?.id || fallbackUser?.id || "00000000-0000-0000-0000-000000000000",
+        user_id: user.id,
         actor_name: operatorName,
         entity_type: "order",
         entity_id: order.id,
@@ -164,14 +115,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
           .eq("order_item_id", item.order_item_id);
       }
 
-      // Check if all items in order are now fully picked (must have at least 1 item in DB)
+      // Check if all items in order are now fully picked
       const { data: allItems } = await supabase
         .from("order_items")
         .select("quantity, picked_quantity, is_picked")
         .eq("order_id", id);
 
-      const hasDbItems = Array.isArray(allItems) && allItems.length > 0;
-      const allDone = hasDbItems && allItems.every((i) => Boolean(i.is_picked) || (typeof i.picked_quantity === "number" && typeof i.quantity === "number" && i.picked_quantity >= i.quantity));
+      const allDone = allItems && allItems.every((i) => i.is_picked || i.picked_quantity >= i.quantity);
 
       const nextWorkflowStatus = allDone ? "picked" : "picking";
 
