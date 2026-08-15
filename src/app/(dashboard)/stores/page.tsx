@@ -235,12 +235,24 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                   </div>
                 </div>
 
-                {/* Connection Status Badge */}
+                {/* Connection & Sync Status Badge */}
                 {store.isConnected ? (
-                  <span className="inline-flex items-center space-x-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shrink-0">
-                    <span className="h-2 w-2 rounded-full bg-emerald-500 animate-pulse"></span>
-                    <span>Connected</span>
-                  </span>
+                  store.sync_status === "syncing" ? (
+                    <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20 shrink-0">
+                      <span className="h-2 w-2 rounded-full bg-blue-500 animate-ping"></span>
+                      <span>Syncing...</span>
+                    </span>
+                  ) : store.sync_status === "error" ? (
+                    <span className="inline-flex items-center space-x-1 rounded-xl bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 border border-amber-200/80 dark:border-amber-500/20 shrink-0">
+                      <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+                      <span>Sync Error</span>
+                    </span>
+                  ) : (
+                    <span className="inline-flex items-center space-x-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shrink-0">
+                      <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                      <span>Connected</span>
+                    </span>
+                  )
                 ) : (
                   <span className="inline-flex items-center space-x-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">
                     <span className="h-2 w-2 rounded-full bg-slate-400"></span>
@@ -269,7 +281,11 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                     <span>Products</span>
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {store.isConnected ? (hasSyncError && store.productsCount === 0 ? "Failed" : store.productsCount) : "--"}
+                    {store.isConnected
+                      ? store.sync_status === "syncing" && store.productsCount === 0
+                        ? "Syncing..."
+                        : store.productsCount
+                      : "--"}
                   </p>
                 </div>
 
@@ -280,7 +296,11 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                     <span>Stock</span>
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {store.isConnected ? (hasSyncError && store.stockCount === 0 ? "Failed" : store.stockCount) : "--"}
+                    {store.isConnected
+                      ? store.sync_status === "syncing" && store.stockCount === 0
+                        ? "Syncing..."
+                        : store.stockCount
+                      : "--"}
                   </p>
                 </div>
 
@@ -291,7 +311,11 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                     <span>Orders</span>
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
-                    {store.isConnected ? (hasSyncError && store.ordersCount === 0 ? "Failed" : store.ordersCount) : "--"}
+                    {store.isConnected
+                      ? store.sync_status === "syncing" && store.ordersCount === 0
+                        ? "Syncing..."
+                        : store.ordersCount
+                      : "--"}
                   </p>
                 </div>
               </div>

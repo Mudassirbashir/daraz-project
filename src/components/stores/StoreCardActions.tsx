@@ -13,8 +13,28 @@ interface StoreCardActionsProps {
 export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardActionsProps) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
+  const [syncingStore, setSyncingStore] = useState(false);
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const router = useRouter();
+
+  const handleManualSync = async () => {
+    setSyncingStore(true);
+    try {
+      const res = await fetch("/api/stores", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ store_id: storeId }),
+      });
+      const data = await res.json();
+      if (data.success) {
+        router.refresh();
+      }
+    } catch (err) {
+      console.error("[Single Store Sync Error]:", err);
+    } finally {
+      setSyncingStore(false);
+    }
+  };
 
   const handleDisconnect = async () => {
     setDisconnecting(true);
@@ -65,13 +85,15 @@ export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardA
           <span>Open Store</span>
         </a>
 
-        <a
-          href="/api/auth/daraz/login"
-          title="Reconnect Daraz store account"
-          className="inline-flex items-center justify-center p-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 text-slate-600 dark:text-slate-300 hover:bg-slate-50 transition-all text-xs"
+        <button
+          onClick={handleManualSync}
+          disabled={syncingStore}
+          title="Sync products and orders for this store"
+          className="inline-flex items-center justify-center space-x-1 px-3 py-2 rounded-xl border border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-100 font-bold transition-all text-xs disabled:opacity-50"
         >
-          <RefreshCw className="h-3.5 w-3.5" />
-        </a>
+          <RefreshCw className={`h-3.5 w-3.5 ${syncingStore ? "animate-spin text-orange-600" : ""}`} />
+          <span>{syncingStore ? "Syncing..." : "Sync"}</span>
+        </button>
 
         <button
           onClick={() => setShowConfirmModal(true)}

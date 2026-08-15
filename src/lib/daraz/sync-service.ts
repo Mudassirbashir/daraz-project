@@ -361,7 +361,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             .from("daraz_stores")
             .update({
               last_synced_at: timestamp,
-              sync_status: "idle",
+              sync_status: "success",
               updated_at: timestamp,
             })
             .eq("id", store.id);

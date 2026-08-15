@@ -257,13 +257,11 @@ export async function GET(req: NextRequest) {
       console.warn("[Daraz OAuth Callback] Seller profile verification notice:", profileErr.message);
     }
 
-    // 7. Initial Sync Execution
-    try {
-      console.log(`[Daraz OAuth Callback] Starting initial store sync for storeId ${storeId}...`);
-      await executeDarazSync(storeId);
-    } catch (syncErr: any) {
-      console.error(`[Daraz OAuth Callback] Initial store sync notice for ${storeId}:`, syncErr.message);
-    }
+    // 7. Non-Blocking Async Background Sync Execution
+    console.log(`[Daraz OAuth Callback] Triggering non-blocking background sync for storeId ${storeId}...`);
+    executeDarazSync(storeId).catch((syncErr: any) => {
+      console.error(`[Daraz OAuth Callback Background Sync Notice for ${storeId}]:`, syncErr.message);
+    });
 
     // 8. Log Audit Diagnostic
     try {
