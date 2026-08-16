@@ -201,12 +201,14 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
       {/* Stores Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
         {enrichedStores.map((store) => {
-          const initials = store.store_name
+          const storeName = store.store_name || "Daraz Store";
+          const initials = storeName
             .split(" ")
+            .filter(Boolean)
             .map((w: string) => w[0])
             .join("")
             .slice(0, 2)
-            .toUpperCase();
+            .toUpperCase() || "DS";
 
           const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
 

@@ -185,13 +185,16 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   });
 
   const enrichedStores = storesList.map((st) => {
-    const isConnected = Boolean(st.access_token && st.is_active);
-    const key = String(st.id).toLowerCase();
+    const isConnected = Boolean(st?.access_token && st?.is_active);
+    const key = String(st?.id || "").toLowerCase();
     const storeListingStats = storeListingsMap[key] || { count: 0, stock: 0 };
     const storeOrderStats = storeOrdersMap[key] || { total: 0, inProgress: 0 };
 
     return {
       ...st,
+      store_name: st?.store_name || "Daraz Store",
+      store_code: st?.store_code || "STORE",
+      seller_id: st?.seller_id || "N/A",
       isConnected,
       productsCount: isConnected ? storeListingStats.count : null,
       stockCount: isConnected ? storeListingStats.stock : null,
@@ -337,12 +340,14 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
           {enrichedStores.map((store) => {
-            const initials = store.store_name
+            const storeName = store.store_name || "Daraz Store";
+            const initials = storeName
               .split(" ")
+              .filter(Boolean)
               .map((w: string) => w[0])
               .join("")
               .slice(0, 2)
-              .toUpperCase();
+              .toUpperCase() || "DS";
 
             const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
 
