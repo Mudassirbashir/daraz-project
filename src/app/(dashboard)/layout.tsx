@@ -6,6 +6,8 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { AppRole } from "@/types/database.types";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
 
+export const dynamic = "force-dynamic";
+
 export default async function DashboardLayout({
   children,
 }: {
@@ -19,6 +21,9 @@ export default async function DashboardLayout({
   try {
     supabase = createClient();
   } catch (err: any) {
+    if (err?.digest === "DYNAMIC_SERVER_USAGE" || err?.message?.includes("Dynamic server usage")) {
+      throw err;
+    }
     clientInitError = err?.message || String(err);
     logDashboardError("Layout Server Supabase Init", err);
   }
@@ -26,6 +31,9 @@ export default async function DashboardLayout({
   try {
     adminSupabase = createAdminClient();
   } catch (err: any) {
+    if (err?.digest === "DYNAMIC_SERVER_USAGE" || err?.message?.includes("Dynamic server usage")) {
+      throw err;
+    }
     if (!clientInitError) clientInitError = err?.message || String(err);
     logDashboardError("Layout Admin Supabase Init", err);
   }
