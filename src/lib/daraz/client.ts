@@ -377,13 +377,44 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Parent Catalog Items & Nested SKUs (/products/get)
+   * Safely extract images from a raw images field (supports arrays, objects, and strings)
    */
-  async getCatalogItems(offset = 0, limit = 50): Promise<{
+  private extractImages(rawImages: any): string[] {
+    const result: string[] = [];
+    if (Array.isArray(rawImages)) {
+      rawImages.forEach((img: any) => {
+        if (typeof img === "string" && img.trim()) result.push(img.trim());
+        else if (img && typeof img === "object") {
+          // Handle {url: "..."} or {Url: "..."} objects
+          const url = img.url || img.Url || img.image || img.Image || "";
+          if (typeof url === "string" && url.trim()) result.push(url.trim());
+        }
+      });
+    } else if (typeof rawImages === "string" && rawImages.trim()) {
+      result.push(rawImages.trim());
+    }
+    return result;
+  }
+
+  /**
+   * Fetch Store Parent Catalog Items & Nested SKUs (/products/get)
+   *
+   * Returns only items with a stable Daraz item_id, and only SKUs with a stable seller_sku.
+   * Items or SKUs missing stable identifiers are logged and skipped instead of generating
+   * fake placeholder identities, which could corrupt catalog data.
+   */
+  async getCatalogItems(offset = 0, limit = 500): Promise<{
     items: DarazCatalogItem[];
     total_items: number;
     raw_items_count: number;
+    skipped_items: number;
+    skipped_skus: number;
   }> {
+    const requestTimestamp = new Date().toISOString();
+    console.log(
+      `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} offset=${offset} limit=${limit} requested_at=${requestTimestamp}`
+    );
+
     const response = await this.request<any>("/products/get", {
       filter: "all",
       offset: String(offset),
@@ -393,6 +424,7 @@ export class DarazApiClient {
     const dataObj = response.data || response.result || response;
     let rawProducts: any[] = [];
 
+    // Support all known response envelope shapes
     if (Array.isArray(dataObj)) {
       rawProducts = dataObj;
     } else if (Array.isArray(dataObj?.products)) {
@@ -407,108 +439,207 @@ export class DarazApiClient {
       rawProducts = dataObj.product;
     }
 
-    const total_items = parseInt(String(
-      dataObj?.total_products || dataObj?.total || dataObj?.TotalProducts || dataObj?.Total || rawProducts.length
-    ), 10) || rawProducts.length;
+    const total_items = parseInt(
+      String(
+        dataObj?.total_products ??
+        dataObj?.total ??
+        dataObj?.TotalProducts ??
+        dataObj?.Total ??
+        rawProducts.length
+      ),
+      10
+    ) || rawProducts.length;
+
     const raw_items_count = rawProducts.length;
     const items: DarazCatalogItem[] = [];
+    let skipped_items = 0;
+    let skipped_skus = 0;
 
-    rawProducts.forEach((p) => {
-      // Daraz Open Platform examples use PascalCase on some sellers and
-      // camelCase on others. Normalize both instead of creating placeholder
-      // rows when a response uses ItemId / Skus / Attributes.
-      const rawAttributes = p.attributes || p.Attributes || {};
+    console.log(
+      `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} offset=${offset} raw_items=${raw_items_count} total_reported=${total_items}`
+    );
+
+    rawProducts.forEach((p, pIdx) => {
+      // ---------------------------------------------------------------
+      // REQUIREMENT: Skip items with no stable Daraz item ID.
+      // Never generate fake IDs like `ITEM_${Date.now()}`.
+      // ---------------------------------------------------------------
+      const rawItemId = p.item_id || p.ItemId || p.itemId || "";
+      const itemId = typeof rawItemId === "string" ? rawItemId.trim() : String(rawItemId || "").trim();
+
+      if (!itemId) {
+        skipped_items++;
+        console.warn(
+          `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} offset=${offset} index=${pIdx}: ` +
+          `Skipping item with no stable item_id. Raw keys: [${Object.keys(p).join(", ")}]`
+        );
+        return;
+      }
+
+      // Normalize attributes (camelCase & PascalCase)
+      const rawAttributes: Record<string, any> = p.attributes || p.Attributes || {};
+
+      // Product-level images
       const productLevelImages: string[] = [];
-
       const rawProductImages = p.images || p.Images || [];
-      if (Array.isArray(rawProductImages)) {
-        rawProductImages.forEach((img: any) => {
-          if (typeof img === "string") productLevelImages.push(img);
-        });
-      }
-      if (Array.isArray(rawAttributes.images)) {
-        rawAttributes.images.forEach((img: any) => {
-          if (typeof img === "string") productLevelImages.push(img);
-        });
-      } else if (typeof rawAttributes.image === "string") {
-        productLevelImages.push(rawAttributes.image);
-      }
+      productLevelImages.push(...this.extractImages(rawProductImages));
+
+      // Also include attribute-level images if present
+      if (rawAttributes.images) productLevelImages.push(...this.extractImages(rawAttributes.images));
+      else if (rawAttributes.image) productLevelImages.push(...this.extractImages(rawAttributes.image));
 
       const description =
         rawAttributes.description ||
+        rawAttributes.Description ||
         rawAttributes.short_description ||
+        rawAttributes.ShortDescription ||
         p.description ||
         p.Description ||
-        "No description provided.";
+        "";
 
+      // SKU collection (camelCase & PascalCase)
       const skuCollection = p.skus || p.Skus || [];
-      const rawSkus = Array.isArray(skuCollection) && skuCollection.length > 0 ? skuCollection : [{}];
+      // If the API returns no skus array, treat the parent item itself as having one implicit SKU
+      const rawSkus: any[] = Array.isArray(skuCollection) && skuCollection.length > 0 ? skuCollection : [{}];
       const parsedSkus: DarazProductSku[] = [];
 
-      rawSkus.forEach((sku: any) => {
-        const skuImages: string[] = [...productLevelImages];
-        if (Array.isArray(sku.Images)) {
-          sku.Images.forEach((img: any) => {
-            if (typeof img === "string") skuImages.push(img);
-          });
-        } else if (typeof sku.Images === "string") {
-          skuImages.push(sku.Images);
+      rawSkus.forEach((sku: any, sIdx: number) => {
+        // ---------------------------------------------------------------
+        // REQUIREMENT: Skip SKUs with no stable seller_sku.
+        // Never generate fake SKUs like `SKU_${itemId}_...`.
+        // ---------------------------------------------------------------
+        const rawSellerSku =
+          sku.SellerSku || sku.seller_sku || sku.sellerSku || sku.SellerSKU || "";
+        const sellerSku = typeof rawSellerSku === "string" ? rawSellerSku.trim() : String(rawSellerSku || "").trim();
+
+        if (!sellerSku) {
+          skipped_skus++;
+          console.warn(
+            `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} item_id=${itemId} sku_index=${sIdx}: ` +
+            `Skipping SKU with no stable SellerSku. Raw sku keys: [${Object.keys(sku).join(", ")}]`
+          );
+          return;
         }
+
+        // SKU-level images (camelCase + PascalCase + object forms)
+        const skuImages: string[] = [...productLevelImages];
+        const rawSkuImages = sku.Images || sku.images || [];
+        skuImages.push(...this.extractImages(rawSkuImages));
 
         const normalizedImages = Array.from(
           new Set(skuImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
         );
 
-        const rawQty = sku.quantity ?? sku.Quantity ?? sku.Available ?? sku.available ?? 0;
+        // Quantity: check all known field names
+        const rawQty =
+          sku.quantity ??
+          sku.Quantity ??
+          sku.Available ??
+          sku.available ??
+          sku.stock ??
+          sku.Stock ??
+          0;
         const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
 
-        const rawReserved = sku.withholding_quantity ?? sku.WithholdingQuantity ?? sku.reserved_stock ?? sku.ReservedStock ?? 0;
+        // Reserved/withheld quantity
+        const rawReserved =
+          sku.withholding_quantity ??
+          sku.WithholdingQuantity ??
+          sku.reserved_stock ??
+          sku.ReservedStock ??
+          sku.reserved_quantity ??
+          sku.ReservedQuantity ??
+          0;
         const parsedReserved = Math.max(0, parseInt(String(rawReserved), 10) || 0);
 
-        const priceCents = Math.round((parseFloat(String(sku.price ?? sku.Price ?? 0)) || 0) * 100);
-        const specialPrice = sku.special_price ?? sku.SpecialPrice;
-        const specialPriceCents = specialPrice
-          ? Math.round(parseFloat(String(specialPrice)) * 100)
-          : undefined;
+        // Price
+        const rawPrice = sku.price ?? sku.Price ?? sku.SalePrice ?? sku.sale_price ?? 0;
+        const priceCents = Math.round((parseFloat(String(rawPrice)) || 0) * 100);
 
-        const itemId = String(p.item_id || p.ItemId || p.itemId || "");
-        const sellerSku = sku.SellerSku || sku.seller_sku || sku.sellerSku || `SKU_${itemId || "UNKNOWN"}_${sku.SkuId || sku.sku_id || sku.Sku || "0"}`;
+        // Special / sale price
+        const specialPrice = sku.special_price ?? sku.SpecialPrice ?? sku.SalePrice ?? sku.sale_price;
+        const specialPriceCents =
+          specialPrice !== null && specialPrice !== undefined && specialPrice !== rawPrice
+            ? Math.round(parseFloat(String(specialPrice)) * 100) || undefined
+            : undefined;
+
+        // Daraz SKU ID and Shop SKU
+        const darazSkuId = String(
+          sku.SkuId || sku.skuId || sku.sku_id || sku.SkuID || sku.ShopSku || ""
+        );
+        const shopSku = String(
+          sku.ShopSku || sku.shop_sku || sku.ShopSKU || sku.SkuId || sku.sku_id || ""
+        );
+
+        // SKU status
+        const skuStatus = String(
+          sku.Status || sku.status || p.status || p.Status || "active"
+        ).toLowerCase();
 
         parsedSkus.push({
           seller_sku: sellerSku,
-          daraz_sku_id: String(sku.SkuId || sku.sku_id || sku.Sku || sku.ShopSku || ""),
-          shop_sku: String(sku.ShopSku || sku.shop_sku || sku.SkuId || sku.sku_id || ""),
-          item_id: itemId || "0",
+          daraz_sku_id: darazSkuId,
+          shop_sku: shopSku,
+          item_id: itemId,
           price_cents: priceCents,
           special_price_cents: specialPriceCents,
           quantity: parsedQuantity,
           reserved_quantity: parsedReserved,
-          status: String(sku.Status || sku.status || p.status || p.Status || "active").toLowerCase(),
+          status: skuStatus,
           images: normalizedImages,
-          package_content: sku.package_content || "",
+          package_content: sku.package_content || sku.PackageContent || "",
           attributes: sku,
         });
       });
+
+      // Only include the item if it has at least one valid SKU
+      if (parsedSkus.length === 0) {
+        skipped_items++;
+        console.warn(
+          `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} item_id=${itemId}: ` +
+          `Skipping item — all ${rawSkus.length} SKU(s) were missing a stable SellerSku.`
+        );
+        return;
+      }
 
       const parentImages = Array.from(
         new Set(productLevelImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
       );
 
+      // Item title: check all known field names
+      const title =
+        rawAttributes.name_en ||
+        rawAttributes.NameEn ||
+        rawAttributes.name ||
+        rawAttributes.Name ||
+        p.title ||
+        p.Title ||
+        p.name ||
+        p.Name ||
+        "";
+
       items.push({
-        item_id: String(p.item_id || p.ItemId || p.itemId || `ITEM_${Date.now()}`),
-        title: rawAttributes.name_en || rawAttributes.NameEn || rawAttributes.name || rawAttributes.Name || p.title || p.Title || "Daraz Product",
-        category: String(p.primary_category || p.PrimaryCategory || rawAttributes.category || rawAttributes.Category || "General"),
+        item_id: itemId,
+        title,
+        category: String(
+          p.primary_category || p.PrimaryCategory ||
+          rawAttributes.category || rawAttributes.Category ||
+          "General"
+        ),
         brand: String(rawAttributes.brand || rawAttributes.Brand || "Generic"),
         status: String(p.status || p.Status || "active").toLowerCase(),
         description,
         images: parentImages,
         attributes: rawAttributes,
-        product_url: p.url || p.Url || p.product_url || p.ProductUrl || rawAttributes.product_url || rawAttributes.ProductUrl || "",
+        product_url:
+          p.url || p.Url || p.product_url || p.ProductUrl ||
+          rawAttributes.product_url || rawAttributes.ProductUrl ||
+          "",
         skus: parsedSkus,
       });
     });
 
-    return { items, total_items, raw_items_count };
+    return { items, total_items, raw_items_count, skipped_items, skipped_skus };
   }
 
   /**
@@ -642,9 +773,9 @@ export class DarazApiClient {
       return rawItems.map((item) => ({
         order_item_id: String(item.order_item_id || item.item_id),
         order_id: String(item.order_id || orderId),
-        name: item.name || "Daraz Product",
+        name: item.name || "",
         product_main_image: item.product_main_image || "",
-        seller_sku: item.sku || item.seller_sku || "SKU_UNKNOWN",
+        seller_sku: item.sku || item.seller_sku || "",
         shop_sku: item.shop_sku || item.daraz_sku || "",
         item_price_cents: Math.round((parseFloat(String(item.item_price || 0)) || 0) * 100),
         paid_price_cents: Math.round((parseFloat(String(item.paid_price || item.item_price || 0)) || 0) * 100),
@@ -798,29 +929,33 @@ export class DarazApiClient {
       const exactCity = addressShipping.city || addressBilling.city || "Karachi";
       const exactAddress = [addressShipping.address1, addressShipping.address2].filter(Boolean).join(", ").trim() || "Address on File";
 
+      const exactProvince = addressShipping.address3 || addressShipping.state || o.customer_province || "";
+      const exactArea = addressShipping.address5 || addressShipping.address4 || o.customer_area || "";
+      const exactPostcode = addressShipping.postCode || addressShipping.post_code || o.customer_postcode || "";
+
       return {
-        order_id: String(o.order_id),
-        order_number: String(o.order_number || o.order_id),
-        package_id: String(o.package_id || `PKG-${o.order_id}`),
-        package_number: String(o.package_number || o.order_id),
-        tracking_code: o.tracking_code || o.order_number || String(o.order_id),
-        customer_first_name: exactFullName,
+        order_id: String(o.order_id || o.orderId || ""),
+        order_number: String(o.order_number || o.orderNumber || o.order_id || ""),
+        package_id: String(o.package_id || o.packageId || ""),
+        package_number: String(o.package_number || ""),
+        tracking_code: String(o.tracking_code || ""),
+        customer_first_name: exactFirstName,
         customer_phone: exactPhone,
         customer_city: exactCity,
         customer_address: exactAddress,
-        customer_province: addressShipping.address3 || addressShipping.state || "Pakistan",
-        customer_area: addressShipping.address5 || addressShipping.address4 || exactCity,
-        customer_postcode: addressShipping.postcode || addressBilling.postcode || "",
-        shipping_provider: o.shipping_provider || addressShipping.shipping_provider || "Daraz Express (DEX)",
-        shipping_type: o.shipping_type || "Standard",
-        payment_method: o.payment_method || "COD",
-        price_cents: Math.round(parseFloat(String(o.price || 0)) * 100),
-        shipping_fee_cents: Math.round(parseFloat(String(o.shipping_fee || 0)) * 100),
-        voucher_discount_cents: Math.round(parseFloat(String(o.voucher_platform || o.voucher || 0)) * 100),
-        seller_discount_cents: Math.round(parseFloat(String(o.voucher_seller || 0)) * 100),
+        customer_province: exactProvince,
+        customer_area: exactArea,
+        customer_postcode: exactPostcode,
+        shipping_provider: String(o.shipping_provider || o.shipment_provider_type || ""),
+        shipping_type: String(o.shipping_type || ""),
+        payment_method: String(o.payment_method || ""),
+        price_cents: Math.round((parseFloat(String(o.price || 0)) || 0) * 100),
+        shipping_fee_cents: Math.round((parseFloat(String(o.shipping_fee || 0)) || 0) * 100),
+        voucher_discount_cents: Math.round((parseFloat(String(o.voucher_discount || 0)) || 0) * 100),
+        seller_discount_cents: Math.round((parseFloat(String(o.seller_discount || 0)) || 0) * 100),
         statuses: normalizedStatus,
-        created_at: o.created_at || new Date().toISOString(),
-        updated_at: o.updated_at || new Date().toISOString(),
+        created_at: String(o.created_at || o.date_created || ""),
+        updated_at: String(o.updated_at || o.date_updated || ""),
         items: [],
         raw: o,
       };
@@ -830,185 +965,158 @@ export class DarazApiClient {
   }
 
   /**
-   * Pack Order Action via Official Daraz Open Platform API (/order/fulfill/pack or /order/pack)
+   * Set Package Status to Ready-to-Ship (/logistic/retrytopick/get)
+   * Alias: initiate pickup / ready-to-ship
    */
-  async packOrder(orderItemIds: string[], shippingProvider?: string): Promise<{ success: boolean; packageId?: string; raw?: any }> {
-    if (!orderItemIds || orderItemIds.length === 0) {
-      throw new Error("Cannot pack order: Missing valid order_item_ids.");
-    }
-
-    const formattedItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
-    const itemPayload = formattedItemIds.length > 0 ? formattedItemIds : orderItemIds;
-
-    const packReq = JSON.stringify({
-      pack_order_list: [
-        {
-          pack_order_items: itemPayload.map((id) => ({ order_item_id: id })),
-          delivery_type: "dropship",
-          shipping_allocate_type: "TFS",
-        },
-      ],
-    });
-
-    const response = await this.request<{ code: string; message?: string; data?: any }>("/order/fulfill/pack", {
-      pack_req: packReq,
+  async setPackageReadyToShip(packageId: string, shipmentProvider: string, trackingNumber: string): Promise<boolean> {
+    const response = await this.request<any>("/logistics/order/pack", {
+      package_id: packageId,
+      shipment_type: "dropship",
     }, "POST");
 
-    const success = !response.code || response.code === "0";
+    return !response.code || response.code === "0";
+  }
+
+  /**
+   * Fetch Shipping Document / Label PDF for a Package (/doc/shipping/get)
+   */
+  async getShippingLabel(orderId: string, documentType = "shippingLabel"): Promise<{ content: string; mime_type: string }> {
+    const response = await this.request<any>("/doc/shipping/get", {
+      doc_type: documentType,
+      order_id: orderId,
+    });
+
+    const dataObj = response.data || response.result || response;
+    const content =
+      dataObj?.content ||
+      dataObj?.pdf ||
+      dataObj?.document ||
+      dataObj?.file_content ||
+      "";
+
     return {
-      success,
-      packageId: response.data?.package_id || response.data?.package_number || undefined,
-      raw: response,
+      content,
+      mime_type: dataObj?.mime_type || "application/pdf",
     };
   }
 
   /**
-   * Set Order Ready to Ship Action via Official Daraz API (/order/rts or /order/fulfill/rts)
+   * Cancel order items on Daraz Seller Center (/order/cancel)
    */
-  async setReadyToShip(orderItemIds: string[], trackingNumber?: string, shipmentProvider?: string): Promise<{ success: boolean; raw?: any }> {
-    if (!orderItemIds || orderItemIds.length === 0) {
-      throw new Error("Cannot set Ready to Ship: Missing valid order_item_ids.");
+  async cancelOrder(itemIds: string[]): Promise<{ success: boolean }> {
+    try {
+      const response = await this.request<any>("/order/cancel", {
+        reason_id: "22",  // Daraz cancel reason: Out of stock (seller-initiated cancellation)
+        reason_detail: "",
+        order_item_ids: JSON.stringify(itemIds),
+      }, "POST");
+
+      const isSuccess = !response.code || response.code === "0";
+      return { success: isSuccess };
+    } catch (err: any) {
+      throw new Error(`cancelOrder failed: ${err.message}`);
     }
-
-    const formattedItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
-    const itemPayload = formattedItemIds.length > 0 ? formattedItemIds : orderItemIds;
-
-    const rtsReq = JSON.stringify({
-      order_item_ids: itemPayload,
-      shipment_provider: shipmentProvider || "Daraz Express (DEX)",
-      tracking_number: trackingNumber || "",
-    });
-
-    const response = await this.request<{ code: string; message?: string; data?: any }>("/order/rts", {
-      rts_req: rtsReq,
-    }, "POST");
-
-    const success = !response.code || response.code === "0";
-    return {
-      success,
-      raw: response,
-    };
   }
 
   /**
-   * Cancel Order Action via Official Daraz Open Platform API (/order/cancel)
+   * Pack an order on Daraz Seller Center (/order/fulfill/pack)
+   * Required before generating a shipping label.
    */
-  async cancelOrder(orderItemIds: string[], reasonId?: string, reasonDetail?: string): Promise<{ success: boolean; raw?: any }> {
-    if (!orderItemIds || orderItemIds.length === 0) {
-      throw new Error("Cannot cancel order: Missing valid order_item_ids.");
+  async packOrder(itemIds: string[], shippingProvider: string): Promise<{ success: boolean; packageId?: string }> {
+    try {
+      const response = await this.request<any>("/order/fulfill/pack", {
+        item_ids: JSON.stringify(itemIds),
+        shipment_provider: shippingProvider || "Daraz Express (DEX)",
+      }, "POST");
+
+      const dataObj = response.data || response.result || response;
+      const packageId = String(dataObj?.package_id || dataObj?.packageId || "");
+      const isSuccess = !response.code || response.code === "0";
+
+      return { success: isSuccess, packageId: packageId || undefined };
+    } catch (err: any) {
+      throw new Error(`packOrder failed: ${err.message}`);
     }
-
-    const formattedItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
-    const itemPayload = formattedItemIds.length > 0 ? formattedItemIds : orderItemIds;
-
-    const cancelReq = JSON.stringify({
-      order_item_id_list: itemPayload,
-      reason_id: reasonId || "1",
-      reason_detail: reasonDetail || "Out of Stock / Canceled by Seller",
-    });
-
-    const response = await this.request<{ code: string; message?: string }>("/order/cancel", {
-      cancel_req: cancelReq,
-    }, "POST");
-
-    const success = !response.code || response.code === "0";
-    return { success, raw: response };
   }
 
   /**
-   * Fetch Official Original Shipping Label Document (/order/document/get or /order/package/document/get)
+   * Set order items as Ready To Ship (/order/fulfill/readyToShip)
+   */
+  async setReadyToShip(itemIds: string[], trackingNumber: string, shippingProvider: string): Promise<{ success: boolean }> {
+    try {
+      const response = await this.request<any>("/order/fulfill/readyToShip", {
+        item_ids: JSON.stringify(itemIds),
+        tracking_number: trackingNumber || "",
+        shipment_provider: shippingProvider || "Daraz Express (DEX)",
+        delivery_type: "dropship",
+      }, "POST");
+
+      const isSuccess = !response.code || response.code === "0";
+      return { success: isSuccess };
+    } catch (err: any) {
+      throw new Error(`setReadyToShip failed: ${err.message}`);
+    }
+  }
+
+  /**
+   * Retrieve official Daraz shipping document (label/invoice/manifest) for order items.
+   * Calls /order/document/get and returns the decoded file content.
    */
   async getShippingDocument(
-    orderItemIds: string[],
-    docType: "shipping_label" | "invoice" | "carrierManifest" = "shipping_label"
-  ): Promise<{ file: string; mimeType: string; endpoint: string; raw?: any }> {
-    if (!orderItemIds || orderItemIds.length === 0) {
-      throw new Error("Cannot retrieve shipping document: Missing valid order_item_ids.");
+    itemIds: string[],
+    docType: "shipping_label" | "invoice" | "carrierManifest" | string = "shipping_label"
+  ): Promise<{ file: string; mimeType: string; raw: any }> {
+    const response = await this.request<any>("/order/document/get", {
+      doc_type: docType,
+      order_item_ids: JSON.stringify(itemIds),
+    });
+
+    const dataObj = response.data || response.result || response;
+
+    // Daraz returns the document as base64 in multiple possible fields
+    const fileContent =
+      dataObj?.document ||
+      dataObj?.file ||
+      dataObj?.pdf ||
+      dataObj?.content ||
+      dataObj?.file_content ||
+      "";
+
+    const mimeType =
+      dataObj?.mime_type ||
+      dataObj?.mimeType ||
+      (docType === "invoice" ? "application/pdf" : "application/pdf");
+
+    if (!fileContent) {
+      throw new Error(
+        `Daraz Document API returned no file content for doc_type='${docType}'. ` +
+        `Response keys: [${Object.keys(dataObj || {}).join(", ")}]`
+      );
     }
 
-    const numericItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
-    const formattedItemIds = JSON.stringify(numericItemIds.length > 0 ? numericItemIds : orderItemIds);
-
-    let lastError: Error | null = null;
-    const endpointsToTry = ["/order/document/get", "/order/package/document/get"];
-
-    for (const apiPath of endpointsToTry) {
-      try {
-        const response = await this.request<any>(apiPath, {
-          doc_type: docType,
-          order_item_ids: formattedItemIds,
-        });
-
-        const dataObj = response.data || response.result || response;
-        const doc = dataObj?.document || dataObj;
-        
-        let fileContent = doc?.file || doc?.document_file || (typeof doc === "string" ? doc : "");
-        let mimeType = doc?.mime_type || "application/pdf";
-
-        if (fileContent && typeof fileContent === "string" && fileContent.trim()) {
-          let rawFile = fileContent.trim();
-
-          // If Daraz returned a document URL, fetch the actual file content
-          if (rawFile.startsWith("http://") || rawFile.startsWith("https://")) {
-            try {
-              const urlRes = await fetch(rawFile);
-              if (urlRes.ok) {
-                const arrayBuf = await urlRes.arrayBuffer();
-                const buf = Buffer.from(arrayBuf);
-                const headerHex = buf.subarray(0, 4).toString("utf-8");
-                if (headerHex === "%PDF") {
-                  rawFile = buf.toString("base64");
-                  mimeType = "application/pdf";
-                } else {
-                  rawFile = buf.toString("utf-8");
-                }
-              }
-            } catch (fetchErr: any) {
-              console.warn(`[DarazApiClient] Notice downloading document URL (${rawFile}):`, fetchErr.message);
-            }
-          }
-
-          // Auto-detect PDF mime type if base64 encoded PDF header 'JVBERi' or raw '%PDF'
-          if (rawFile.startsWith("%PDF") || rawFile.startsWith("JVBERi")) {
-            mimeType = "application/pdf";
-          }
-
-          console.log(`[DarazApiClient] Successfully retrieved official ${docType} from ${apiPath}. Mime: ${mimeType}`);
-
-          return {
-            file: rawFile,
-            mimeType,
-            endpoint: apiPath,
-            raw: response,
-          };
-        }
-      } catch (err: any) {
-        console.warn(`[DarazApiClient] Notice attempting ${apiPath} for items [${orderItemIds.join(", ")}]: ${err.message}`);
-        lastError = err;
-      }
-    }
-
-    throw lastError || new Error(`Daraz API returned empty shipping document for items [${orderItemIds.join(", ")}].`);
+    return { file: fileContent, mimeType, raw: dataObj };
   }
 }
 
 /**
- * Factory helper resolving a store-isolated DarazApiClient instance from store_id UUID.
+ * Factory: Creates a DarazApiClient pre-populated from a store's credentials in Supabase.
+ * Exported for use by API routes that receive a store_id and need a ready-to-use client.
  */
 export async function getDarazClient(storeId: string): Promise<DarazApiClient> {
   const supabase = createAdminClient();
+
   const { data: store, error } = await supabase
     .from("daraz_stores")
-    .select("*")
+    .select("id, access_token, refresh_token, token_expires_at, api_app_key, api_app_secret")
     .eq("id", storeId)
     .single();
 
   if (error || !store) {
-    throw new Error(`Daraz store with ID '${storeId}' was not found in database.`);
+    throw new Error(`Store ${storeId} not found in database: ${error?.message || "unknown"}`);
   }
 
-  if (!store.is_active || !store.access_token) {
-    throw new Error(`Daraz store '${store.store_name}' (${store.store_code}) is disconnected. Reconnect store via My Stores.`);
+  if (!store.access_token) {
+    throw new Error(`Store ${storeId} has no active access token. Reconnect via My Stores.`);
   }
 
   return new DarazApiClient({
@@ -1022,24 +1130,27 @@ export async function getDarazClient(storeId: string): Promise<DarazApiClient> {
 }
 
 /**
- * Sanitizes diagnostic log objects to ensure sensitive tokens and credentials are never logged.
+ * Sanitize log payloads to remove sensitive credentials before storing to database
  */
 export function sanitizeLogPayload(payload: any): any {
   if (!payload || typeof payload !== "object") return payload;
+
+  const SENSITIVE_KEYS = [
+    "access_token", "refresh_token", "token", "api_key", "app_key",
+    "app_secret", "api_app_key", "api_app_secret", "secret", "password",
+    "authorization", "auth_token",
+  ];
+
   try {
-    const copy = JSON.parse(JSON.stringify(payload));
-    const mask = (obj: any) => {
-      for (const key in obj) {
-        if (typeof obj[key] === "string" && (key.toLowerCase().includes("token") || key.toLowerCase().includes("secret") || key.toLowerCase().includes("password"))) {
-          obj[key] = "[REDACTED]";
-        } else if (typeof obj[key] === "object" && obj[key] !== null) {
-          mask(obj[key]);
-        }
+    const sanitized = { ...payload };
+    for (const key of SENSITIVE_KEYS) {
+      if (sanitized[key]) {
+        sanitized[key] = "[REDACTED]";
       }
-    };
-    mask(copy);
-    return copy;
+    }
+    return sanitized;
   } catch (e) {
     return { sanitized: true };
   }
 }
+

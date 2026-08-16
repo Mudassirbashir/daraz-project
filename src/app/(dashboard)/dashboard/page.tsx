@@ -140,7 +140,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       if (targetStoreIds.length > 0) {
         let listingsQuery = supabase
           .from("listings")
-          .select("store_id, stock_quantity")
+          .select("store_id, stock_quantity, daraz_item_id")
           .in("store_id", targetStoreIds);
 
         let ordersQuery = supabase
