@@ -174,12 +174,25 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   }
 
   // Build per-store metrics map in memory
-  const storeListingsMap: Record<string, { count: number; stock: number }> = {};
+  const storeListingsMap: Record<string, { skusCount: number; parentCount: number; stock: number }> = {};
   listingsData.forEach((l: any) => {
     const key = String(l.store_id || "").toLowerCase();
-    if (!storeListingsMap[key]) storeListingsMap[key] = { count: 0, stock: 0 };
-    storeListingsMap[key].count += 1;
+    if (!storeListingsMap[key]) storeListingsMap[key] = { skusCount: 0, parentCount: 0, stock: 0 };
+    storeListingsMap[key].skusCount += 1;
     storeListingsMap[key].stock += l.stock_quantity || 0;
+  });
+
+  // Calculate distinct parent items per store
+  const storeParentMap: Record<string, Set<string>> = {};
+  listingsData.forEach((l: any) => {
+    const key = String(l.store_id || "").toLowerCase();
+    if (!storeParentMap[key]) storeParentMap[key] = new Set();
+    if (l.daraz_item_id) storeParentMap[key].add(l.daraz_item_id);
+  });
+  Object.keys(storeParentMap).forEach((key) => {
+    if (storeListingsMap[key]) {
+      storeListingsMap[key].parentCount = storeParentMap[key].size > 0 ? storeParentMap[key].size : storeListingsMap[key].skusCount;
+    }
   });
 
   const storeOrdersMap: Record<string, { total: number; inProgress: number }> = {};
@@ -196,7 +209,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const enrichedStores = storesList.map((st, idx) => {
     const isConnected = Boolean(st?.access_token && st?.is_active);
     const key = String(st?.id || "").toLowerCase();
-    const storeListingStats = storeListingsMap[key] || { count: 0, stock: 0 };
+    const storeListingStats = storeListingsMap[key] || { skusCount: 0, parentCount: 0, stock: 0 };
     const storeOrderStats = storeOrdersMap[key] || { total: 0, inProgress: 0 };
     const displayName = getStoreDisplayName(st, idx);
 
@@ -206,7 +219,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       store_code: st?.store_code || "STORE",
       seller_id: st?.seller_id || "N/A",
       isConnected,
-      productsCount: isConnected ? storeListingStats.count : null,
+      productsCount: isConnected ? storeListingStats.parentCount : null,
+      skusCount: isConnected ? storeListingStats.skusCount : null,
       stockCount: isConnected ? storeListingStats.stock : null,
       ordersCount: isConnected ? storeOrderStats.total : null,
       inProgressOrdersCount: isConnected ? storeOrderStats.inProgress : null,
@@ -216,7 +230,8 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const totalStoresCount = enrichedStores.length;
   const isMaxStoresReached = totalStoresCount >= 3;
 
-  const totalProductsCount = listingsData.length;
+  const totalDistinctParentItems = new Set(listingsData.map((l: any) => l.daraz_item_id).filter(Boolean)).size;
+  const totalProductsCount = totalDistinctParentItems > 0 ? totalDistinctParentItems : listingsData.length;
   const totalStockUnits = listingsData.reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
   const lowStockCount = listingsData.filter((item) => (item.stock_quantity || 0) <= 10).length;
 

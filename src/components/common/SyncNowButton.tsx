@@ -25,6 +25,9 @@ export function SyncNowButton() {
         type: "success",
         text: `Done! Updated ${data.productsSynced || 0} products and ${data.ordersSynced || 0} orders.`,
       });
+      if (typeof window !== "undefined") {
+        window.dispatchEvent(new CustomEvent("daraz-sync-completed", { detail: data }));
+      }
       router.refresh();
     } catch (err: any) {
       console.error("[SyncNowButton Error]:", err.message);

@@ -94,18 +94,44 @@ export async function GET(req: NextRequest) {
     }
 
     // Query parent items count
-    let parentItemsQuery = supabase
-      .from("daraz_products")
-      .select("*", { count: "exact", head: true });
+    let parentItemsCountFromTable: number | null = null;
+    try {
+      let parentItemsQuery = supabase
+        .from("daraz_products")
+        .select("*", { count: "exact", head: true });
 
-    if (storeId !== "all") {
-      parentItemsQuery = parentItemsQuery.eq("store_id", storeId);
-    } else {
-      parentItemsQuery = parentItemsQuery.in("store_id", userStoreIds);
+      if (storeId !== "all") {
+        parentItemsQuery = parentItemsQuery.eq("store_id", storeId);
+      } else {
+        parentItemsQuery = parentItemsQuery.in("store_id", userStoreIds);
+      }
+
+      const { count: pCount } = await parentItemsQuery;
+      parentItemsCountFromTable = pCount;
+    } catch (e) {
+      // Graceful fallback if table is missing
     }
 
-    const { count: parentItemsCount } = await parentItemsQuery;
-    const totalItems = (typeof parentItemsCount === "number" && parentItemsCount > 0) ? parentItemsCount : (count || 0);
+    // Query distinct parent items from listings as fallback
+    let distinctItemCount = 0;
+    try {
+      let distinctQuery = supabase
+        .from("listings")
+        .select("daraz_item_id");
+
+      if (storeId !== "all") {
+        distinctQuery = distinctQuery.eq("store_id", storeId);
+      } else {
+        distinctQuery = distinctQuery.in("store_id", userStoreIds);
+      }
+
+      const { data: distData } = await distinctQuery;
+      distinctItemCount = new Set((distData || []).map((l: any) => l.daraz_item_id).filter(Boolean)).size;
+    } catch (e) {}
+
+    const totalItems = (typeof parentItemsCountFromTable === "number" && parentItemsCountFromTable > 0)
+      ? parentItemsCountFromTable
+      : (distinctItemCount > 0 ? distinctItemCount : (count || 0));
 
     return NextResponse.json({
       success: true,

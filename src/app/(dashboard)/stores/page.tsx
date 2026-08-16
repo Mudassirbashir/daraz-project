@@ -73,12 +73,27 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
       }
 
       // Query products & stock for this store
+      let parentCountFromTable: number | null = null;
+      try {
+        const { count } = await supabase
+          .from("daraz_products")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", st.id);
+        parentCountFromTable = count;
+      } catch (e) {
+        // Graceful fallback
+      }
+
       const { data: listings } = await supabase
         .from("listings")
-        .select("stock_quantity")
+        .select("stock_quantity, daraz_item_id")
         .eq("store_id", st.id);
 
-      const productsCount = (listings || []).length;
+      const skusCount = (listings || []).length;
+      const distinctItemIds = new Set((listings || []).map((l: any) => l.daraz_item_id).filter(Boolean)).size;
+      const productsCount = (typeof parentCountFromTable === "number" && parentCountFromTable > 0)
+        ? parentCountFromTable
+        : (distinctItemIds > 0 ? distinctItemIds : skusCount);
       const stockCount = (listings || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
 
       // Query orders & in-progress orders for this store
@@ -89,7 +104,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
 
       const ordersCount = (orders || []).length;
       const inProgressOrdersCount = (orders || []).filter((o) =>
-        ["pending", "unpaid", "ready_to_ship", "shipped"].includes(o.workflow_status || o.status)
+        ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(o.workflow_status || o.status)
       ).length;
 
       // Query last synced log
@@ -103,10 +118,13 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
         .maybeSingle();
 
       const lastSyncedAt = lastLog?.created_at || st.last_synced_at || st.updated_at || null;
+      const updatedTime = st.updated_at ? new Date(st.updated_at).getTime() : 0;
+      const isSyncing = st.sync_status === "syncing" && (Date.now() - updatedTime < 10 * 60 * 1000);
 
       return {
         ...st,
         isConnected: true,
+        isSyncing,
         productsCount,
         stockCount,
         ordersCount,
@@ -239,15 +257,15 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
 
                 {/* Connection & Sync Status Badge */}
                 {store.isConnected ? (
-                  store.sync_status === "syncing" ? (
+                  store.isSyncing ? (
                     <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20 shrink-0">
                       <span className="h-2 w-2 rounded-full bg-blue-500 animate-ping"></span>
                       <span>Syncing...</span>
                     </span>
-                  ) : store.sync_status === "error" ? (
+                  ) : store.last_sync_error || store.sync_status === "error" ? (
                     <span className="inline-flex items-center space-x-1 rounded-xl bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 border border-amber-200/80 dark:border-amber-500/20 shrink-0">
                       <span className="h-2 w-2 rounded-full bg-amber-500"></span>
-                      <span>Sync Error</span>
+                      <span>Sync Notice</span>
                     </span>
                   ) : (
                     <span className="inline-flex items-center space-x-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shrink-0">
@@ -284,9 +302,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
                     {store.isConnected
-                      ? store.sync_status === "syncing" && store.productsCount === 0
-                        ? "Syncing..."
-                        : store.productsCount
+                      ? store.productsCount
                       : "--"}
                   </p>
                 </div>
@@ -299,9 +315,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
                     {store.isConnected
-                      ? store.sync_status === "syncing" && store.stockCount === 0
-                        ? "Syncing..."
-                        : store.stockCount
+                      ? store.stockCount
                       : "--"}
                   </p>
                 </div>
@@ -314,9 +328,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                   </span>
                   <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
                     {store.isConnected
-                      ? store.sync_status === "syncing" && store.ordersCount === 0
-                        ? "Syncing..."
-                        : store.ordersCount
+                      ? store.ordersCount
                       : "--"}
                   </p>
                 </div>

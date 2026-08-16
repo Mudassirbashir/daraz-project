@@ -81,31 +81,40 @@ export async function GET(req: NextRequest) {
         }
 
         // Query parent items & SKUs metrics
-        const { count: parentItemsCount } = await supabase
-          .from("daraz_products")
-          .select("*", { count: "exact", head: true })
-          .eq("store_id", store.id);
+        let parentCountFromTable: number | null = null;
+        try {
+          const { count } = await supabase
+            .from("daraz_products")
+            .select("*", { count: "exact", head: true })
+            .eq("store_id", store.id);
+          parentCountFromTable = count;
+        } catch (e) {
+          // Graceful fallback
+        }
 
         const { data: listings } = await supabase
           .from("listings")
-          .select("stock_quantity")
+          .select("stock_quantity, daraz_item_id")
           .eq("store_id", store.id);
 
         const skus_count = (listings || []).length;
-        const products_count = (typeof parentItemsCount === "number" && parentItemsCount > 0) ? parentItemsCount : skus_count;
+        const distinctItemIds = new Set((listings || []).map((l: any) => l.daraz_item_id).filter(Boolean)).size;
+        const products_count = (typeof parentCountFromTable === "number" && parentCountFromTable > 0)
+          ? parentCountFromTable
+          : (distinctItemIds > 0 ? distinctItemIds : skus_count);
         const stock_count = (listings || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
 
         // Query orders metrics
         const { data: orders } = await supabase
           .from("orders")
-          .select("status")
+          .select("status, workflow_status")
           .eq("store_id", store.id);
 
         const total_orders = (orders || []).length;
         const in_progress_orders = (orders || []).filter((o) =>
-          ["pending", "unpaid", "ready_to_ship", "shipped"].includes(o.status)
+          ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(o.workflow_status || o.status)
         ).length;
-        const completed_orders = (orders || []).filter((o) => o.status === "delivered").length;
+        const completed_orders = (orders || []).filter((o) => (o.workflow_status || o.status) === "delivered").length;
 
         // Query last synced time from API logs or store updated_at
         const { data: lastLog } = await supabase
@@ -118,7 +127,11 @@ export async function GET(req: NextRequest) {
           .maybeSingle();
 
         const last_synced_at = store.last_synced_at || lastLog?.created_at || store.updated_at || null;
-        const syncStatus = store.sync_status || (products_count > 0 ? "success" : "idle");
+        
+        // Active lock check: sync_status === "syncing" only if updated_at is within last 10 minutes
+        const updatedTime = store.updated_at ? new Date(store.updated_at).getTime() : 0;
+        const isLockActive = store.sync_status === "syncing" && (Date.now() - updatedTime < 10 * 60 * 1000);
+        const syncStatus = isLockActive ? "syncing" : store.last_sync_error ? "error" : "connected";
 
         return {
           id: store.id,
@@ -128,7 +141,7 @@ export async function GET(req: NextRequest) {
           region: store.region || "PK",
           slot_number: store.slot_number || null,
           isConnected: true,
-          status: syncStatus === "syncing" ? "syncing" : syncStatus === "error" ? "error" : "connected",
+          status: syncStatus,
           sync_status: syncStatus,
           statusText: syncStatus === "syncing" ? "Syncing..." : syncStatus === "error" ? "Sync Error" : "Connected",
           statusBadgeClass:

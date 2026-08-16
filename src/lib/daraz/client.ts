@@ -734,8 +734,8 @@ export class DarazApiClient {
   /**
    * Fetch Store Orders with Multi-Format Response Parsing (/orders/get)
    */
-  async getOrders(offset = 0, limit = 50, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
-    const safeUpdateAfter = updateAfter || new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString();
+  async getOrders(offset = 0, limit = 100, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {
+    const safeUpdateAfter = updateAfter || "2020-01-01T00:00:00Z";
 
     const params: Record<string, string> = {
       sort_by: "created_at",
