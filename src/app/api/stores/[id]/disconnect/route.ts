@@ -15,8 +15,15 @@ export async function POST(
   }
 
   try {
-    const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
+    let user: any = null;
+    try {
+      const serverSupabase = createClient();
+      const { data } = await serverSupabase.auth.getUser();
+      user = data?.user || null;
+    } catch (authErr) {
+      console.warn("[Disconnect API Auth Check Warning]:", authErr);
+    }
+
     const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
     if (!user && !opsUserCookie) {

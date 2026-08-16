@@ -48,14 +48,22 @@ export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardA
       const data = await res.json();
 
       if (!res.ok || !data.success) {
-        throw new Error(data.error || "Failed to disconnect store.");
+        let msg = data.error || "Failed to disconnect store.";
+        if (msg.includes("Missing Environment Variable") || msg.includes("SUPABASE")) {
+          msg = "Store disconnection encountered a backend configuration notice. Please try again or check backend services.";
+        }
+        throw new Error(msg);
       }
 
       setShowConfirmModal(false);
       router.refresh();
     } catch (err: any) {
       console.error("[StoreCardActions Error]:", err.message);
-      setErrorMessage(err.message || "Failed to disconnect store.");
+      let userMsg = err.message || "Failed to disconnect store.";
+      if (userMsg.includes("Missing Environment Variable") || userMsg.includes("SUPABASE")) {
+        userMsg = "Store disconnection encountered a backend service notice. Please try again.";
+      }
+      setErrorMessage(userMsg);
     } finally {
       setDisconnecting(false);
     }
