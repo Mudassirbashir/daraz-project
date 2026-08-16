@@ -568,6 +568,92 @@ export class DarazApiClient {
   }
 
   /**
+   * Fetch Single Order Details (/order/get)
+   */
+  async getOrderDetails(orderId: string): Promise<Record<string, any>> {
+    try {
+      const response = await this.request<any>("/order/get", { order_id: orderId });
+      const dataObj = response.data || response.result || response;
+      return dataObj?.order || dataObj;
+    } catch (err: any) {
+      console.error(`[DarazApiClient] getOrderDetails error for Order ${orderId}:`, err.message);
+      throw new Error(`Failed to fetch order details for Order #${orderId}: ${err.message}`);
+    }
+  }
+
+  /**
+   * Fetch Eligible Shipment Providers (/shipment/providers/get)
+   */
+  async getShipmentProviders(): Promise<Array<{ name: string; is_default?: boolean }>> {
+    try {
+      const response = await this.request<any>("/shipment/providers/get");
+      const dataObj = response.data || response.result || response;
+      let rawProviders: any[] = [];
+
+      if (Array.isArray(dataObj)) {
+        rawProviders = dataObj;
+      } else if (Array.isArray(dataObj?.shipment_providers)) {
+        rawProviders = dataObj.shipment_providers;
+      } else if (Array.isArray(dataObj?.providers)) {
+        rawProviders = dataObj.providers;
+      }
+
+      return rawProviders.map((p) => ({
+        name: typeof p === "string" ? p : p.name || p.provider_name || "Daraz Express (DEX)",
+        is_default: typeof p === "object" ? Boolean(p.is_default || p.default) : false,
+      }));
+    } catch (err: any) {
+      console.warn("[DarazApiClient] getShipmentProviders notice:", err.message);
+      return [{ name: "Daraz Express (DEX)", is_default: true }];
+    }
+  }
+
+  /**
+   * Verified Daraz Store Connectivity Check
+   * Makes actual authenticated API call and updates sync_status / last_sync_error on daraz_stores
+   */
+  async verifyStoreConnection(): Promise<{ success: boolean; error?: string }> {
+    if (!this.storeId) {
+      return { success: false, error: "Missing storeId for connection verification." };
+    }
+
+    const supabase = createAdminClient();
+    const timestamp = new Date().toISOString();
+
+    try {
+      // Execute an actual authenticated API call
+      await this.request<any>("/seller/get");
+
+      // Update store connection state as verified
+      await supabase
+        .from("daraz_stores")
+        .update({
+          sync_status: "connected",
+          is_active: true,
+          last_sync_error: null,
+          last_synced_at: timestamp,
+          updated_at: timestamp,
+        })
+        .eq("id", this.storeId);
+
+      return { success: true };
+    } catch (err: any) {
+      const errorMsg = humanizeDarazApiError(err.code || "AUTH_FAILED", err.message);
+
+      await supabase
+        .from("daraz_stores")
+        .update({
+          sync_status: "disconnected",
+          last_sync_error: errorMsg,
+          updated_at: timestamp,
+        })
+        .eq("id", this.storeId);
+
+      return { success: false, error: errorMsg };
+    }
+  }
+
+  /**
    * Fetch Store Orders with Multi-Format Response Parsing (/orders/get)
    */
   async getOrders(offset = 0, limit = 50, updateAfter?: string): Promise<{ orders: DarazOrderItem[]; total: number }> {

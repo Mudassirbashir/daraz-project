@@ -388,27 +388,17 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
         console.log(`[Supabase]\nproducts upserted: ${productsSynced}\nstock upserted: ${productsSynced}\norders upserted: ${ordersSynced}`);
 
-        // Update store status to success
+        // Update store status to success / connected
         try {
-          const { error: stErr } = await supabase
+          await supabase
             .from("daraz_stores")
             .update({
               last_synced_at: timestamp,
-              sync_status: "success",
+              sync_status: "connected",
+              last_sync_error: null,
               updated_at: timestamp,
             })
             .eq("id", store.id);
-
-          if (stErr) {
-            // Fallback if last_synced_at column is missing in production database
-            await supabase
-              .from("daraz_stores")
-              .update({
-                sync_status: "success",
-                updated_at: timestamp,
-              })
-              .eq("id", store.id);
-          }
         } catch (stErr: any) {
           console.error(`[SyncEngine] Failed to update store success status:`, stErr?.message || stErr);
         }
@@ -423,7 +413,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           await supabase
             .from("daraz_stores")
             .update({
-              sync_status: "error",
+              sync_status: "disconnected",
+              last_sync_error: storeErr.message || "Sync execution failed.",
               updated_at: timestamp,
             })
             .eq("id", store.id);

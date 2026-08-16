@@ -110,7 +110,52 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       mimeType = officialDocResult.mimeType || "application/pdf";
       isOfficial = true;
 
-      // Persist official label in shipping_labels relational table
+      // Persist in daraz_shipments and daraz_shipping_labels tables
+      const timestamp = new Date().toISOString();
+      let shipmentId: string | null = null;
+
+      try {
+        const { data: shipmentData } = await supabase
+          .from("daraz_shipments")
+          .upsert(
+            {
+              store_id: store.id,
+              order_id: order.id,
+              daraz_order_id: order.daraz_order_id,
+              package_id: order.package_id || `PKG-${order.daraz_order_id}`,
+              shipment_provider_name: order.shipping_provider || "Daraz Express (DEX)",
+              tracking_number: order.tracking_number || null,
+              status: order.workflow_status || order.status || "packed",
+              raw_response: officialDocResult.raw || {},
+              updated_at: timestamp,
+            },
+            { onConflict: "daraz_order_id" }
+          )
+          .select("id")
+          .maybeSingle();
+
+        shipmentId = shipmentData?.id || null;
+      } catch (shipmentDbErr: any) {
+        console.warn("[Order Label API] Notice saving to daraz_shipments:", shipmentDbErr.message);
+      }
+
+      try {
+        await supabase.from("daraz_shipping_labels").insert({
+          shipment_id: shipmentId,
+          order_id: order.id,
+          daraz_order_id: order.daraz_order_id,
+          label_type: docTypeParam,
+          document_data: decodedContent,
+          mime_type: mimeType,
+          status: "ready",
+          created_at: timestamp,
+          updated_at: timestamp,
+        });
+      } catch (labelDbErr: any) {
+        console.warn("[Order Label API] Notice saving to daraz_shipping_labels:", labelDbErr.message);
+      }
+
+      // Persist official label in shipping_labels relational table for backward compatibility
       try {
         await supabase.from("shipping_labels").insert({
           order_id: order.id,
@@ -120,7 +165,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
           mime_type: mimeType,
           file_content: decodedContent,
           is_official: true,
-          retrieved_at: new Date().toISOString(),
+          retrieved_at: timestamp,
         });
       } catch (dbErr: any) {
         console.warn("[Order Label API] Notice saving label to shipping_labels table:", dbErr.message);

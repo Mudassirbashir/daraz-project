@@ -51,7 +51,7 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
     setStoreNotConnected(false);
 
     try {
-      const res = await fetch(`/api/orders/${order.id}/label?doc_type=${docType}`);
+      const res = await fetch(`/api/orders/${order.id}/shipping-label?doc_type=${docType}`);
       const data = await res.json();
 
       if (!data.success) {
@@ -60,9 +60,9 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
       }
 
       setFileContent(data.file || "");
-      setMimeType(data.mimeType || "text/html");
+      setMimeType(data.mimeType || "application/pdf");
       setIsOfficial(data.isOfficial !== false);
-      setSourceMessage(data.sourceMessage || (data.isOfficial ? "Official Daraz document retrieved" : "Application shipping label generated from synchronized order data"));
+      setSourceMessage(data.sourceMessage || "Official Daraz shipping document retrieved from Daraz Open Platform API");
       if (data.printTracking) setPrintTracking(data.printTracking);
     } catch (err: any) {
       console.error("[FetchOfficialLabel Error]:", err.message);
@@ -206,7 +206,7 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
             )}
 
             <a
-              href={`/api/orders/${order.id}/label?doc_type=${docType}&format=pdf`}
+              href={`/api/orders/${order.id}/shipping-label?doc_type=${docType}&format=pdf`}
               target="_blank"
               rel="noopener noreferrer"
               className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all apple-press"
@@ -232,7 +232,7 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
             <AlertCircle className="mx-auto h-8 w-8 text-amber-600" />
             <h3 className="font-bold text-sm">Daraz Store Not Connected</h3>
             <p className="max-w-md mx-auto text-[11px]">
-              Showing application-generated fulfillment label sourced from real order data in your database. Reconnect store to pull official Daraz document API stream.
+              Daraz store connection is disconnected or credentials are invalid. Please reconnect your store via My Stores page to fetch official shipping labels directly from Daraz Open Platform API.
             </p>
           </div>
         )}

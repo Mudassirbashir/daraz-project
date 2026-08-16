@@ -457,6 +457,51 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['shipping_labels']['Insert']>;
       };
+      daraz_shipments: {
+        Row: {
+          id: string;
+          store_id: string;
+          order_id: string;
+          daraz_order_id: string;
+          package_id: string | null;
+          shipment_provider_id: string | null;
+          shipment_provider_name: string | null;
+          tracking_number: string | null;
+          awb_number: string | null;
+          status: string;
+          raw_response: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_shipments']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_shipments']['Insert']>;
+      };
+      daraz_shipping_labels: {
+        Row: {
+          id: string;
+          shipment_id: string | null;
+          order_id: string;
+          daraz_order_id: string;
+          label_type: string;
+          document_url: string | null;
+          document_data: string | null;
+          mime_type: string;
+          status: string;
+          error_message: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_shipping_labels']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_shipping_labels']['Insert']>;
+      };
     };
     Views: {};
     Functions: {
