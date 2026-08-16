@@ -31,9 +31,48 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
+    // Query authorized active store IDs
+    let storeQuery = supabase
+      .from("daraz_stores")
+      .select("id")
+      .eq("is_active", true)
+      .not("access_token", "is", null);
+
+    if (user?.id) {
+      storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
+    }
+
+    const { data: userStores } = await storeQuery;
+    const userStoreIds = (userStores || []).map((s) => s.id);
+
+    if (userStoreIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        inventory: [],
+        metrics: {
+          totalProducts: 0,
+          totalAvailableStock: 0,
+          totalReservedStock: 0,
+          lowStockProducts: 0,
+          outOfStockProducts: 0,
+          recentlyUpdatedCount: 0,
+        },
+        pagination: { page: 1, limit, total: 0, totalPages: 0 },
+      });
+    }
+
+    let targetStoreIds = userStoreIds;
+    if (storeId !== "all") {
+      if (!userStoreIds.includes(storeId)) {
+        return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
+      }
+      targetStoreIds = [storeId];
+    }
+
     let query = supabase
       .from("inventory")
-      .select("*, listings(store_id, daraz_item_id, daraz_sku_id, title, price_cents, special_price_cents, is_synced, last_synced_at, daraz_stores(id, store_name, store_code, region))", { count: "exact" });
+      .select("*, listings!inner(store_id, daraz_item_id, daraz_sku_id, title, price_cents, special_price_cents, is_synced, last_synced_at, daraz_stores(id, store_name, store_code, region))", { count: "exact" })
+      .in("listings.store_id", targetStoreIds);
 
     // 1. Filter by Stock Status
     if (stockStatus === "out_of_stock") {
@@ -72,10 +111,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Calculate Centralized Dashboard Metrics
+    // Calculate Centralized Dashboard Metrics (Scoped to target active stores)
     const { data: allItems } = await supabase
       .from("inventory")
-      .select("quantity_on_hand, quantity_reserved, reorder_point, updated_at");
+      .select("quantity_on_hand, quantity_reserved, reorder_point, updated_at, listings!inner(store_id)")
+      .in("listings.store_id", targetStoreIds);
 
     const metrics = {
       totalProducts: allItems?.length || 0,

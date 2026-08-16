@@ -29,9 +29,39 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
+    // Query authorized active store IDs
+    let storeQuery = supabase
+      .from("daraz_stores")
+      .select("id")
+      .eq("is_active", true)
+      .not("access_token", "is", null);
+
+    if (user?.id) {
+      storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
+    }
+
+    const { data: userStores } = await storeQuery;
+    const userStoreIds = (userStores || []).map((s) => s.id);
+
+    if (userStoreIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        orders: [],
+        metrics: {
+          ordersWaiting: 0,
+          ordersPicked: 0,
+          ordersPacked: 0,
+          ordersShipped: 0,
+          avgProcessingTimeMinutes: 0,
+        },
+        pagination: { page: 1, limit, total: 0, totalPages: 0 },
+      });
+    }
+
     let query = supabase
       .from("orders")
-      .select("*, daraz_stores(store_name, store_code, region)", { count: "exact" });
+      .select("*, daraz_stores(store_name, store_code, region)", { count: "exact" })
+      .in("store_id", userStoreIds);
 
     if (stage !== "all") {
       if (stage === "new") query = query.in("status", ["pending", "unpaid"]);
@@ -64,11 +94,11 @@ export async function GET(req: NextRequest) {
       completedOrdersRes,
       inventoryListRes,
     ] = await Promise.all([
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("status", ["pending", "unpaid"]).eq("is_packed", false),
-      supabase.from("orders").select("*", { count: "exact", head: true }).eq("workflow_status", "picked"),
-      supabase.from("orders").select("*", { count: "exact", head: true }).eq("is_packed", true),
-      supabase.from("orders").select("*", { count: "exact", head: true }).in("status", ["shipped", "delivered"]),
-      supabase.from("orders").select("order_date, updated_at").eq("is_packed", true).order("updated_at", { ascending: false }).limit(50),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).in("status", ["pending", "unpaid"]).eq("is_packed", false),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("workflow_status", "picked"),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("is_packed", true),
+      supabase.from("orders").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).in("status", ["shipped", "delivered"]),
+      supabase.from("orders").select("order_date, updated_at").in("store_id", userStoreIds).eq("is_packed", true).order("updated_at", { ascending: false }).limit(50),
       supabase.from("inventory").select("sku, storage_location").limit(100),
     ]);
 

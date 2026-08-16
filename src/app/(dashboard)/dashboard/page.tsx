@@ -100,7 +100,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     try {
       let storesQuery = supabase
         .from("daraz_stores")
-        .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
+        .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, updated_at")
         .order("created_at", { ascending: true });
 
       if (userStoreIds.length > 0) {
@@ -120,43 +120,51 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     }
   }
 
-  // 2. Fetch Listings & Orders Metrics
+  // Filter Active Connected Stores (is_active = true & access_token present)
+  const activeStoreIds = storesList
+    .filter((s) => Boolean(s.is_active && s.access_token))
+    .map((s) => s.id);
+
+  // 2. Fetch Listings & Orders Metrics (Scoped ONLY to Active Connected Stores)
   let listingsData: any[] = [];
   let ordersList: any[] = [];
 
-  if (supabase) {
+  if (supabase && activeStoreIds.length > 0) {
     try {
-      let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
-      if (!isCombinedView && selectedStoreId) {
-        listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
-      } else if (userStoreIds.length > 0) {
-        listingsQuery = listingsQuery.in("store_id", userStoreIds);
+      let targetStoreIds = activeStoreIds;
+      if (!isCombinedView && selectedStoreId && selectedStoreId !== "all") {
+        targetStoreIds = activeStoreIds.includes(selectedStoreId) ? [selectedStoreId] : [];
       }
 
-      let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
-      if (!isCombinedView && selectedStoreId) {
-        ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
-      } else if (userStoreIds.length > 0) {
-        ordersQuery = ordersQuery.in("store_id", userStoreIds);
-      }
+      if (targetStoreIds.length > 0) {
+        let listingsQuery = supabase
+          .from("listings")
+          .select("store_id, stock_quantity")
+          .in("store_id", targetStoreIds);
 
-      const [listingsResult, ordersResult] = await Promise.all([
-        listingsQuery,
-        ordersQuery,
-      ]);
+        let ordersQuery = supabase
+          .from("orders")
+          .select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at")
+          .in("store_id", targetStoreIds);
 
-      if (listingsResult.error) {
-        logDashboardError("Dashboard Page Listings Query", listingsResult.error);
-        if (!queryErrorNotice) queryErrorNotice = listingsResult.error.message;
-      } else {
-        listingsData = listingsResult.data || [];
-      }
+        const [listingsResult, ordersResult] = await Promise.all([
+          listingsQuery,
+          ordersQuery,
+        ]);
 
-      if (ordersResult.error) {
-        logDashboardError("Dashboard Page Orders Query", ordersResult.error);
-        if (!queryErrorNotice) queryErrorNotice = ordersResult.error.message;
-      } else {
-        ordersList = ordersResult.data || [];
+        if (listingsResult.error) {
+          logDashboardError("Dashboard Page Listings Query", listingsResult.error);
+          if (!queryErrorNotice) queryErrorNotice = listingsResult.error.message;
+        } else {
+          listingsData = listingsResult.data || [];
+        }
+
+        if (ordersResult.error) {
+          logDashboardError("Dashboard Page Orders Query", ordersResult.error);
+          if (!queryErrorNotice) queryErrorNotice = ordersResult.error.message;
+        } else {
+          ordersList = ordersResult.data || [];
+        }
       }
     } catch (metricsEx: any) {
       logDashboardError("Dashboard Page Metrics Exception", metricsEx);

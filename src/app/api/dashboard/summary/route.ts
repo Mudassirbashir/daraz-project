@@ -16,8 +16,13 @@ export async function GET(req: NextRequest) {
 
     const supabase = createAdminClient();
 
-    // Query authorized store IDs
-    let storeQuery = supabase.from("daraz_stores").select("id");
+    // Query authorized active store IDs
+    let storeQuery = supabase
+      .from("daraz_stores")
+      .select("id")
+      .eq("is_active", true)
+      .not("access_token", "is", null);
+
     if (user?.id) {
       storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
     }
