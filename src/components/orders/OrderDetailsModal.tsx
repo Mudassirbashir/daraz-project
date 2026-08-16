@@ -306,18 +306,16 @@ export function OrderDetailsModal({
               </button>
             )}
 
-            {(currentOrdStatus === "ready_to_ship" || currentOrdStatus === "packed" || currentOrdStatus === "shipped") && (
-              <button
-                onClick={() => {
-                  onClose();
-                  if (onOpenPrintModal) onOpenPrintModal(order);
-                }}
-                className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all"
-              >
-                <Package className="h-4 w-4" />
-                <span>Print Shipping Label</span>
-              </button>
-            )}
+            <button
+              onClick={() => {
+                onClose();
+                if (onOpenPrintModal) onOpenPrintModal(order);
+              }}
+              className="inline-flex items-center space-x-1.5 rounded-xl bg-emerald-600 px-4 py-2 text-xs font-bold text-white shadow-sm hover:bg-emerald-700 transition-all apple-press"
+            >
+              <Package className="h-4 w-4" />
+              <span>Print Shipping Label</span>
+            </button>
 
             {currentOrdStatus === "ready_to_ship" && (
               <button

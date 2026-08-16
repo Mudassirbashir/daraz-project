@@ -21,6 +21,10 @@ export interface DarazShippingLabelData {
   recipientCity: string;
   recipientArea: string;
   recipientPhone: string;
+  recipientSubArea?: string;
+  senderPhone?: string;
+  routingCode?: string;
+  hubCode?: string;
   logisticsProvider: string;
   packageId: string;
   storeId: string;
