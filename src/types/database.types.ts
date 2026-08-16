@@ -415,6 +415,48 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['daraz_api_logs']['Insert']>;
       };
+      daraz_packages: {
+        Row: {
+          id: string;
+          order_id: string;
+          daraz_order_id: string;
+          package_id: string;
+          tracking_number: string | null;
+          shipment_provider: string | null;
+          package_status: string;
+          item_ids: Json;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_packages']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_packages']['Insert']>;
+      };
+      shipping_labels: {
+        Row: {
+          id: string;
+          order_id: string;
+          daraz_order_id: string;
+          package_id: string | null;
+          doc_type: string;
+          mime_type: string;
+          file_content: string;
+          is_official: boolean;
+          retrieved_at: string;
+          printed_count: number;
+          last_printed_at: string | null;
+          last_printed_by: string | null;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['shipping_labels']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['shipping_labels']['Insert']>;
+      };
     };
     Views: {};
     Functions: {

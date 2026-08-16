@@ -738,12 +738,12 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Official Original Shipping Label Document (/order/document/get)
+   * Fetch Official Original Shipping Label Document (/order/document/get or /order/package/document/get)
    */
   async getShippingDocument(
     orderItemIds: string[],
     docType: "shipping_label" | "invoice" | "carrierManifest" = "shipping_label"
-  ): Promise<{ file: string; mimeType: string }> {
+  ): Promise<{ file: string; mimeType: string; endpoint: string; raw?: any }> {
     if (!orderItemIds || orderItemIds.length === 0) {
       throw new Error("Cannot retrieve shipping document: Missing valid order_item_ids.");
     }
@@ -751,28 +751,66 @@ export class DarazApiClient {
     const numericItemIds = orderItemIds.map((id) => parseInt(String(id), 10)).filter((n) => !isNaN(n) && n > 0);
     const formattedItemIds = JSON.stringify(numericItemIds.length > 0 ? numericItemIds : orderItemIds);
 
-    const response = await this.request<{
-      data?: {
-        document?: {
-          file?: string;
-          mime_type?: string;
-          document_type?: string;
-        };
-      };
-    }>("/order/document/get", {
-      doc_type: docType,
-      order_item_ids: formattedItemIds,
-    });
+    let lastError: Error | null = null;
+    const endpointsToTry = ["/order/document/get", "/order/package/document/get"];
 
-    const doc = response.data?.document;
-    if (!doc || !doc.file) {
-      throw new Error(`Daraz API returned empty shipping document for items [${orderItemIds.join(", ")}].`);
+    for (const apiPath of endpointsToTry) {
+      try {
+        const response = await this.request<any>(apiPath, {
+          doc_type: docType,
+          order_item_ids: formattedItemIds,
+        });
+
+        const dataObj = response.data || response.result || response;
+        const doc = dataObj?.document || dataObj;
+        
+        let fileContent = doc?.file || doc?.document_file || (typeof doc === "string" ? doc : "");
+        let mimeType = doc?.mime_type || "application/pdf";
+
+        if (fileContent && typeof fileContent === "string" && fileContent.trim()) {
+          let rawFile = fileContent.trim();
+
+          // If Daraz returned a document URL, fetch the actual file content
+          if (rawFile.startsWith("http://") || rawFile.startsWith("https://")) {
+            try {
+              const urlRes = await fetch(rawFile);
+              if (urlRes.ok) {
+                const arrayBuf = await urlRes.arrayBuffer();
+                const buf = Buffer.from(arrayBuf);
+                const headerHex = buf.subarray(0, 4).toString("utf-8");
+                if (headerHex === "%PDF") {
+                  rawFile = buf.toString("base64");
+                  mimeType = "application/pdf";
+                } else {
+                  rawFile = buf.toString("utf-8");
+                }
+              }
+            } catch (fetchErr: any) {
+              console.warn(`[DarazApiClient] Notice downloading document URL (${rawFile}):`, fetchErr.message);
+            }
+          }
+
+          // Auto-detect PDF mime type if base64 encoded PDF header 'JVBERi' or raw '%PDF'
+          if (rawFile.startsWith("%PDF") || rawFile.startsWith("JVBERi")) {
+            mimeType = "application/pdf";
+          }
+
+          console.log(`[DarazApiClient] Successfully retrieved official ${docType} from ${apiPath}. Mime: ${mimeType}`);
+
+          return {
+            file: rawFile,
+            mimeType,
+            endpoint: apiPath,
+            raw: response,
+          };
+        }
+      } catch (err: any) {
+        console.warn(`[DarazApiClient] Notice attempting ${apiPath} for items [${orderItemIds.join(", ")}]: ${err.message}`);
+        lastError = err;
+      }
     }
 
-    return {
-      file: doc.file,
-      mimeType: doc.mime_type || "text/html",
-    };
+    throw lastError || new Error(`Daraz API returned empty shipping document for items [${orderItemIds.join(", ")}].`);
   }
 }
 

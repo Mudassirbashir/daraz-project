@@ -205,6 +205,16 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
               </span>
             )}
 
+            <a
+              href={`/api/orders/${order.id}/label?doc_type=${docType}&format=pdf`}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3.5 py-2 font-bold text-slate-700 dark:text-slate-200 hover:bg-slate-50 dark:hover:bg-slate-700 transition-all apple-press"
+            >
+              <Download className="h-4 w-4 text-slate-500 dark:text-slate-400" />
+              <span>Download PDF</span>
+            </a>
+
             <button
               onClick={handlePrint}
               disabled={loading || !!errorMessage}
@@ -227,21 +237,85 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
           </div>
         )}
 
-        {/* Error View */}
+        {/* Error & State Machine Action View */}
         {errorMessage && !storeNotConnected && (
-          <div className="p-4 rounded-2xl bg-red-50 text-red-900 border border-red-200 space-y-2 text-center print:hidden">
-            <AlertCircle className="mx-auto h-8 w-8 text-red-600" />
-            <h3 className="font-bold text-sm">Shipping label error</h3>
-            <p className="max-w-md mx-auto font-mono text-[11px] text-red-800">
-              {errorMessage}
-            </p>
-            <button
-              onClick={fetchOfficialLabel}
-              className="inline-flex items-center space-x-2 rounded-xl bg-slate-900 text-white px-3.5 py-1.5 text-xs font-bold hover:bg-slate-800"
-            >
-              <RefreshCw className="h-3.5 w-3.5" />
-              <span>Retry Request</span>
-            </button>
+          <div className="p-5 rounded-2xl bg-red-50 text-red-900 border border-red-200 dark:bg-red-950/40 dark:text-red-300 dark:border-red-800/50 space-y-3 print:hidden">
+            <div className="flex items-start space-x-3">
+              <AlertCircle className="h-6 w-6 text-red-600 dark:text-red-400 shrink-0 mt-0.5" />
+              <div className="space-y-1 text-left flex-1">
+                <h3 className="font-bold text-sm text-red-950 dark:text-red-200">Daraz Fulfillment Requirement Notice</h3>
+                <p className="font-mono text-xs text-red-800 dark:text-red-300 leading-relaxed">
+                  {errorMessage}
+                </p>
+              </div>
+            </div>
+
+            {/* State Machine Transition Actions */}
+            <div className="flex flex-wrap items-center justify-end gap-2 pt-2 border-t border-red-200/60 dark:border-red-800/40">
+              {(order.workflow_status === "pending" || order.status === "pending" || !order.is_packed) && (
+                <button
+                  onClick={async () => {
+                    setLoading(true);
+                    setErrorMessage("");
+                    try {
+                      const res = await fetch(`/api/orders/${order.id}/pack`, { method: "POST" });
+                      const packData = await res.json();
+                      if (packData.success) {
+                        fetchOfficialLabel();
+                      } else {
+                        setErrorMessage(packData.error || "Packing failed on Daraz.");
+                        setLoading(false);
+                      }
+                    } catch (e: any) {
+                      setErrorMessage(e.message);
+                      setLoading(false);
+                    }
+                  }}
+                  className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-600 text-white px-4 py-2 font-bold text-xs hover:bg-orange-700 shadow-sm transition-all apple-press"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                  <span>Pack Order on Daraz</span>
+                </button>
+              )}
+
+              {(order.workflow_status === "packed" || order.status === "packed" || order.is_packed) && (
+                <button
+                  onClick={async () => {
+                    setLoading(true);
+                    setErrorMessage("");
+                    try {
+                      const res = await fetch(`/api/orders/${order.id}/status`, {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify({ status: "ready_to_ship" }),
+                      });
+                      const rtsData = await res.json();
+                      if (rtsData.success) {
+                        fetchOfficialLabel();
+                      } else {
+                        setErrorMessage(rtsData.error || "Ready to ship update failed.");
+                        setLoading(false);
+                      }
+                    } catch (e: any) {
+                      setErrorMessage(e.message);
+                      setLoading(false);
+                    }
+                  }}
+                  className="inline-flex items-center space-x-1.5 rounded-xl bg-blue-600 text-white px-4 py-2 font-bold text-xs hover:bg-blue-700 shadow-sm transition-all apple-press"
+                >
+                  <RefreshCw className={`h-3.5 w-3.5 ${loading ? "animate-spin" : ""}`} />
+                  <span>Set Ready to Ship on Daraz</span>
+                </button>
+              )}
+
+              <button
+                onClick={fetchOfficialLabel}
+                className="inline-flex items-center space-x-1.5 rounded-xl bg-slate-900 text-white px-4 py-2 text-xs font-bold hover:bg-slate-800 transition-all apple-press"
+              >
+                <RefreshCw className="h-3.5 w-3.5" />
+                <span>Retry Request</span>
+              </button>
+            </div>
           </div>
         )}
 
@@ -254,18 +328,24 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
           </div>
         ) : fileContent ? (
           <div className="rounded-2xl border border-slate-300 dark:border-slate-800 bg-white overflow-hidden min-h-[500px] flex flex-col print:border-none print:min-h-0 print:overflow-visible">
-            {mimeType.includes("html") || fileContent.trim().startsWith("<") ? (
+            {mimeType.includes("pdf") || fileContent.startsWith("JVBER") || fileContent.startsWith("%PDF") ? (
+              <iframe
+                id="daraz-official-label-iframe"
+                src={
+                  fileContent.startsWith("JVBER")
+                    ? `data:application/pdf;base64,${fileContent}`
+                    : fileContent.startsWith("%PDF")
+                    ? `data:application/pdf;base64,${btoa(fileContent)}`
+                    : `data:application/pdf;base64,${fileContent}`
+                }
+                title="Daraz Order Shipping Label PDF"
+                className="w-full min-h-[600px] border-none print:h-screen print:w-screen print:fixed print:inset-0 print:z-50"
+              />
+            ) : mimeType.includes("html") || fileContent.trim().startsWith("<") ? (
               <iframe
                 id="daraz-official-label-iframe"
                 srcDoc={fileContent}
                 title="Daraz Order Shipping Label"
-                className="w-full min-h-[600px] border-none print:h-screen print:w-screen print:fixed print:inset-0 print:z-50"
-              />
-            ) : mimeType.includes("pdf") || fileContent.startsWith("JVBER") ? (
-              <iframe
-                id="daraz-official-label-iframe"
-                src={`data:application/pdf;base64,${fileContent}`}
-                title="Daraz Order Shipping Label PDF"
                 className="w-full min-h-[600px] border-none print:h-screen print:w-screen print:fixed print:inset-0 print:z-50"
               />
             ) : (

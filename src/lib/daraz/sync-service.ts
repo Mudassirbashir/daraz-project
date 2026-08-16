@@ -312,29 +312,69 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 targetWorkflowStatus = existingOrd.workflow_status;
               }
 
-              // Schema-safe Orders Upsert (Only include columns existing in physical PostgreSQL table)
+              // Extended schema-rich Orders Upsert
               const orderPayload = {
                 store_id: store.id,
                 daraz_order_id: ord.order_id,
                 tracking_number: ord.tracking_code || null,
                 customer_name: exactCustomerName,
                 customer_city: exactCity,
+                customer_phone: ord.customer_phone || shipping.phone || billing.phone || null,
+                customer_address: [shipping.address1, shipping.address2].filter(Boolean).join(", ") || ord.customer_address || null,
+                customer_province: shipping.address3 || shipping.state || ord.customer_province || null,
+                customer_area: shipping.address5 || shipping.address4 || ord.customer_area || null,
+                package_id: ord.package_id || null,
+                shipping_provider: ord.shipping_provider || shipping.shipping_provider || null,
+                payment_method: ord.payment_method || null,
                 total_amount_cents: ord.price_cents,
                 status: mappedStatus,
                 workflow_status: targetWorkflowStatus,
                 is_payout_settled: false,
                 order_date: ord.created_at || timestamp,
+                raw_payload: rawObj,
+                sync_status: "synced",
+                last_synced_at: timestamp,
               };
 
-              const { error: orderUpsertErr } = await supabase
+              const { data: upsertedOrder, error: orderUpsertErr } = await supabase
                 .from("orders")
-                .upsert(orderPayload, { onConflict: "daraz_order_id" });
+                .upsert(orderPayload, { onConflict: "daraz_order_id" })
+                .select("id")
+                .single();
 
               if (orderUpsertErr) {
                 console.error(`[SyncEngine] Error upserting Order ${ord.order_id}:`, orderUpsertErr.message);
                 failedCount++;
               } else {
                 ordersSynced++;
+                const dbOrderId = upsertedOrder.id;
+
+                // Sync Order Items for this order to enable order_item_id mapping
+                try {
+                  const items = await darazClient.getOrderItems(ord.order_id);
+                  if (items && items.length > 0) {
+                    const itemPayloads = items.map((item) => ({
+                      order_id: dbOrderId,
+                      daraz_order_id: ord.order_id,
+                      order_item_id: item.order_item_id,
+                      name: item.name,
+                      seller_sku: item.seller_sku,
+                      shop_sku: item.shop_sku || null,
+                      item_price_cents: item.item_price_cents,
+                      paid_price_cents: item.paid_price_cents,
+                      status: item.status,
+                      shipment_provider: item.shipment_provider || null,
+                      tracking_code: item.tracking_code || null,
+                      product_main_image: item.product_main_image || null,
+                    }));
+
+                    await supabase
+                      .from("order_items")
+                      .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+                  }
+                } catch (itemErr: any) {
+                  console.warn(`[SyncEngine] Notice syncing items for Order ${ord.order_id}:`, itemErr.message);
+                }
               }
             } catch (ordErr: any) {
               failedCount++;

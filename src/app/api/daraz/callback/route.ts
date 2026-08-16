@@ -222,7 +222,19 @@ export async function GET(req: NextRequest) {
 
     // 7. Deterministic Store Code for Seller
     const formattedSlot = String(nextSlot).padStart(2, "0");
-    const incomingStoreCode = `DARAZ-${storeRegion}-${verifiedSellerId}`;
+    
+    // Clean verifiedSellerId for internal store_code generation (sanitize emails, domains, and special characters)
+    let cleanSellerCode = verifiedSellerId;
+    if (cleanSellerCode.includes("@")) {
+      cleanSellerCode = cleanSellerCode.split("@")[0].replace(/[^a-zA-Z0-9_-]/g, "");
+    } else {
+      cleanSellerCode = cleanSellerCode.replace(/\.(com|pk|net|org)$/i, "").replace(/[^a-zA-Z0-9_-]/g, "");
+    }
+    if (!cleanSellerCode) {
+      cleanSellerCode = formattedSlot;
+    }
+
+    const incomingStoreCode = `DARAZ-${storeRegion}-${cleanSellerCode}`;
 
     // 8. 3-Tier Reconciliation Algorithm:
     // Lookup existing store by seller_id first, then fallback to lookup by store_code

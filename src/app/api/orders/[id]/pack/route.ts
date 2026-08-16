@@ -135,6 +135,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       throw new Error(`Failed to update packing status in database: ${updateErr.message}`);
     }
 
+    // Record package details in daraz_packages table
+    const packageIdToStore = darazResult.packageId || order.package_id || `PKG-${order.daraz_order_id}`;
+    await supabase.from("daraz_packages").upsert({
+      order_id: order.id,
+      daraz_order_id: order.daraz_order_id,
+      package_id: packageIdToStore,
+      tracking_number: order.tracking_number || null,
+      shipment_provider: order.shipping_provider || null,
+      package_status: "packed",
+      item_ids: itemIds,
+      updated_at: timestamp,
+    });
+
     await supabase.from("order_activities").insert({
       order_id: order.id,
       daraz_order_id: order.daraz_order_id,
@@ -142,7 +155,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       new_status: "ready_to_ship",
       actor: operatorName,
       source: "Daraz API Confirmed",
-      notes: `Order packed and confirmed via Daraz Open Platform API. Package ID: ${darazResult.packageId || "Assigned"}`,
+      notes: `Order packed and confirmed via Daraz Open Platform API. Package ID: ${packageIdToStore}`,
     });
 
     return NextResponse.json({
