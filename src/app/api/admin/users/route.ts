@@ -47,7 +47,7 @@ export async function GET(req: NextRequest) {
       darazAppSecretConfigured: !!process.env.DARAZ_APP_SECRET,
       supabaseUrlConfigured: !!(process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL),
       supabaseServiceRoleKeyConfigured: !!process.env.SUPABASE_SERVICE_ROLE_KEY,
-      appUrl: process.env.NEXT_PUBLIC_APP_URL || "https://daraz-project.vercel.app",
+      appUrl: process.env.NEXT_PUBLIC_APP_URL || "https://daraz-project-drab.vercel.app",
     };
 
     return NextResponse.json({

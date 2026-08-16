@@ -13,15 +13,7 @@ export default async function DashboardLayout({
   const supabase = createClient();
   const adminSupabase = createAdminClient();
 
-  // Auto-purge demo/placeholder seed rows from daraz_stores
-  try {
-    await adminSupabase
-      .from("daraz_stores")
-      .delete()
-      .in("seller_id", ["504904", "504905", "504906"]);
-  } catch (e) {
-    // ignore
-  }
+  // Note: Legacy seed data purge was removed to prevent accidental deletion of production stores
 
   // Fetch authenticated user & profile
   const {

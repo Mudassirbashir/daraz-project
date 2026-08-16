@@ -12,7 +12,7 @@ export async function GET(req: NextRequest) {
     const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
     if (!user && !opsUserCookie) {
-      console.warn("[API Stores]: Unauthenticated session attempt. Proceeding with system admin client.");
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
     const supabase = createAdminClient();

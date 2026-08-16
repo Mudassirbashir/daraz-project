@@ -17,7 +17,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
     const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
     if (!user && !opsUserCookie) {
-      console.warn("[API Order Label]: Unauthenticated session attempt. Proceeding with system admin client.");
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
     const supabase = createAdminClient();
@@ -157,7 +157,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 
     if (!user && !opsUserCookie) {
-      console.warn("[API Order Label POST]: Unauthenticated session attempt. Proceeding with system admin client.");
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
     }
 
     const supabase = createAdminClient();

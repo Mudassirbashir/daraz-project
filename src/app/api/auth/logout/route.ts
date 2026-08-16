@@ -8,7 +8,7 @@ export async function GET(req: NextRequest) {
   await supabase.auth.signOut();
 
   const requestUrl = new URL(req.url);
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`;
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || `${requestUrl.protocol}//${requestUrl.host}`).replace(/\/+$/, "");
 
   const response = NextResponse.redirect(`${baseUrl}/login?logged_out=true`);
   

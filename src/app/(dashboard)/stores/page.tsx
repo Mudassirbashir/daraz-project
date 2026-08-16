@@ -24,15 +24,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   const errorMessage = searchParams?.message;
   const errorCode = searchParams?.error;
 
-  // One-time automatic purge of legacy dummy/placeholder seed store rows from daraz_stores
-  try {
-    await supabase
-      .from("daraz_stores")
-      .delete()
-      .in("seller_id", ["504904", "504905", "504906"]);
-  } catch (e) {
-    // ignore
-  }
+  // Note: Legacy seed data purge was removed to prevent accidental deletion of production stores
 
   // Fetch logged in user stores
   let userStoreIds: string[] = [];

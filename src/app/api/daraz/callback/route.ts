@@ -18,7 +18,7 @@ export async function GET(req: NextRequest) {
   // Dynamic host & protocol detection
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`).replace(/\/+$/, "");
 
   const appKey = (process.env.DARAZ_APP_KEY || "").trim();
   const appSecret = (process.env.DARAZ_APP_SECRET || "").trim();

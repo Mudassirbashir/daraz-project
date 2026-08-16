@@ -277,7 +277,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       // Check if order already exists in orders table
       const { data: existingOrder } = await supabase
         .from("orders")
-        .select("id, status")
+        .select("id, status, workflow_status")
         .eq("daraz_order_id", darazOrderId)
         .maybeSingle();
 
@@ -288,15 +288,25 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       const customerCity = dataObj.customer_city || dataObj.shipping_city || "Karachi";
       const totalAmountCents = dataObj.total_amount_cents || Math.round(parseFloat(String(dataObj.price || 0)) * 100);
 
+      // Preserve local picking/picked workflow states if Daraz still reports pending
+      let targetWorkflowStatus = mappedStatus;
+      if (
+        existingOrder?.workflow_status &&
+        ["picking", "picked"].includes(existingOrder.workflow_status) &&
+        mappedStatus === "pending"
+      ) {
+        targetWorkflowStatus = existingOrder.workflow_status;
+      }
+
       const orderPayload = {
         store_id: targetStoreId,
         daraz_order_id: darazOrderId,
-        tracking_number: trackingNumber || existingOrder?.status || null,
+        tracking_number: trackingNumber || null,
         customer_name: customerName || "Daraz Customer",
         customer_city: customerCity,
         total_amount_cents: totalAmountCents || 0,
         status: mappedStatus,
-        workflow_status: mappedStatus,
+        workflow_status: targetWorkflowStatus,
         is_payout_settled: false,
         order_date: dataObj.created_at || timestamp,
       };

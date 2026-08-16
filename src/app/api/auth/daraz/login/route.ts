@@ -9,7 +9,7 @@ export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
   const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
-  const baseUrl = process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`;
+  const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`).replace(/\/+$/, "");
   const redirectUri = `${baseUrl}/api/daraz/callback`;
 
   if (!appKey) {

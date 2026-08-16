@@ -85,16 +85,17 @@ export async function POST(
     // Insert audit log
     try {
       await supabase.from("audit_logs").insert({
-        store_id: storeId,
         user_id: user?.id || null,
-        action: "disconnect_store",
+        actor_name: user?.email || "System",
         entity_type: "daraz_store",
         entity_id: storeId,
-        details: {
+        action: "disconnect_store",
+        changes: {
           store_name: store.store_name,
           store_code: store.store_code,
           disconnected_at: new Date().toISOString(),
         },
+        source: "stores_ui",
       });
     } catch (auditErr) {
       // Ignore audit failure
