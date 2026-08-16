@@ -105,16 +105,19 @@ export async function GET(req: NextRequest) {
         const stock_count = (listings || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
 
         // Query orders metrics
-        const { data: orders } = await supabase
-          .from("orders")
-          .select("status, workflow_status")
-          .eq("store_id", store.id);
+        const [
+          { count: totalOrdersCount },
+          { count: inProgressCount },
+          { count: completedCount },
+        ] = await Promise.all([
+          supabase.from("orders").select("*", { count: "exact", head: true }).eq("store_id", store.id),
+          supabase.from("orders").select("*", { count: "exact", head: true }).eq("store_id", store.id).in("status", ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"]),
+          supabase.from("orders").select("*", { count: "exact", head: true }).eq("store_id", store.id).eq("status", "delivered"),
+        ]);
 
-        const total_orders = (orders || []).length;
-        const in_progress_orders = (orders || []).filter((o) =>
-          ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(o.workflow_status || o.status)
-        ).length;
-        const completed_orders = (orders || []).filter((o) => (o.workflow_status || o.status) === "delivered").length;
+        const total_orders = totalOrdersCount || 0;
+        const in_progress_orders = inProgressCount || 0;
+        const completed_orders = completedCount || 0;
 
         // Query last synced time from API logs or store updated_at
         const { data: lastLog } = await supabase

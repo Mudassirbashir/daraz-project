@@ -16,6 +16,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
 import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
+import { fetchAllStoreOrders, fetchAllStoreListings } from "@/lib/supabase/fetch-all";
 
 export const dynamic = "force-dynamic";
 
@@ -138,34 +139,12 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       }
 
       if (targetStoreIds.length > 0) {
-        let listingsQuery = supabase
-          .from("listings")
-          .select("store_id, stock_quantity, daraz_item_id")
-          .in("store_id", targetStoreIds);
-
-        let ordersQuery = supabase
-          .from("orders")
-          .select("id, store_id, status, workflow_status, total_amount_cents, order_date, created_at")
-          .in("store_id", targetStoreIds);
-
-        const [listingsResult, ordersResult] = await Promise.all([
-          listingsQuery,
-          ordersQuery,
+        const [listingsRes, ordersRes] = await Promise.all([
+          fetchAllStoreListings(supabase, targetStoreIds, "store_id, stock_quantity, daraz_item_id"),
+          fetchAllStoreOrders(supabase, targetStoreIds, "id, store_id, status, workflow_status, total_amount_cents, order_date, created_at"),
         ]);
-
-        if (listingsResult.error) {
-          logDashboardError("Dashboard Page Listings Query", listingsResult.error);
-          if (!queryErrorNotice) queryErrorNotice = listingsResult.error.message;
-        } else {
-          listingsData = listingsResult.data || [];
-        }
-
-        if (ordersResult.error) {
-          logDashboardError("Dashboard Page Orders Query", ordersResult.error);
-          if (!queryErrorNotice) queryErrorNotice = ordersResult.error.message;
-        } else {
-          ordersList = ordersResult.data || [];
-        }
+        listingsData = listingsRes;
+        ordersList = ordersRes;
       }
     } catch (metricsEx: any) {
       logDashboardError("Dashboard Page Metrics Exception", metricsEx);

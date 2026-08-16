@@ -97,15 +97,16 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
       const stockCount = (listings || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
 
       // Query orders & in-progress orders for this store
-      const { data: orders } = await supabase
-        .from("orders")
-        .select("status, workflow_status")
-        .eq("store_id", st.id);
+      const [
+        { count: totalOrdersCount },
+        { count: inProgressCount },
+      ] = await Promise.all([
+        supabase.from("orders").select("*", { count: "exact", head: true }).eq("store_id", st.id),
+        supabase.from("orders").select("*", { count: "exact", head: true }).eq("store_id", st.id).in("status", ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"]),
+      ]);
 
-      const ordersCount = (orders || []).length;
-      const inProgressOrdersCount = (orders || []).filter((o) =>
-        ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(o.workflow_status || o.status)
-      ).length;
+      const ordersCount = totalOrdersCount || 0;
+      const inProgressOrdersCount = inProgressCount || 0;
 
       // Query last synced log
       const { data: lastLog } = await supabase
