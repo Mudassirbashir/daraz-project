@@ -268,7 +268,6 @@ export async function GET(req: NextRequest) {
 
     const baseUpdateData: Record<string, any> = {
       seller_id: verifiedSellerId,
-      store_name: verifiedStoreName,
       access_token,
       refresh_token,
       token_expires_at: tokenExpiresAt,
@@ -287,6 +286,7 @@ export async function GET(req: NextRequest) {
       // CASE B / CASE C: Reconnect existing seller/store record without creating duplicate row
       const assignedSlot = (targetStore.is_active && targetStore.slot_number) ? targetStore.slot_number : nextSlot;
       baseUpdateData.slot_number = assignedSlot;
+      baseUpdateData.store_name = `Store ${assignedSlot}`;
       baseUpdateData.store_code = targetStore.store_code || incomingStoreCode;
 
       let updatedStore: any = null;
@@ -341,6 +341,7 @@ export async function GET(req: NextRequest) {
       const insertPayload: Record<string, any> = {
         ...baseUpdateData,
         slot_number: nextSlot,
+        store_name: `Store ${nextSlot}`,
         store_code: incomingStoreCode,
         region: storeRegion,
       };

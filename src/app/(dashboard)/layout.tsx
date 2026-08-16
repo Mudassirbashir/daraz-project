@@ -87,7 +87,7 @@ export default async function DashboardLayout({
     try {
       let storesQuery = (adminSupabase as any)
         .from("daraz_stores")
-        .select("id, store_code, store_name, seller_id, is_active, access_token, region")
+        .select("id, store_code, store_name, seller_id, is_active, access_token, region, slot_number")
         .eq("is_active", true)
         .not("access_token", "is", null)
         .order("created_at", { ascending: true });
@@ -96,11 +96,11 @@ export default async function DashboardLayout({
         storesQuery = storesQuery.or(`user_id.eq.${user.id},user_id.is.null`);
       }
 
-      const { data, error: storesErr } = await storesQuery;
+      const { data, error } = await storesQuery;
 
-      if (storesErr) {
-        storeQueryError = storesErr.message;
-        logDashboardError("Layout Stores Query", storesErr);
+      if (error) {
+        storeQueryError = error.message;
+        logDashboardError("Layout Stores Query", error);
       } else {
         rawStores = data || [];
       }
@@ -117,6 +117,7 @@ export default async function DashboardLayout({
     seller_id: s.seller_id,
     is_active: s.is_active,
     has_token: Boolean(s.access_token),
+    slot_number: s.slot_number,
   }));
 
   const region = rawStores && rawStores.length > 0 ? rawStores[0].region || "PK" : "PK";

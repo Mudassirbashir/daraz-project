@@ -3,6 +3,7 @@
 import React, { Suspense } from "react";
 import { useRouter, useSearchParams, usePathname } from "next/navigation";
 import { Store } from "lucide-react";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 
 export interface StoreOption {
   id: string;
@@ -11,6 +12,7 @@ export interface StoreOption {
   seller_id: string;
   is_active: boolean;
   has_token: boolean;
+  slot_number?: number | null;
 }
 
 interface StoreSwitcherProps {
@@ -45,11 +47,14 @@ function StoreSelectInner({ stores }: StoreSwitcherProps) {
       className="bg-transparent font-bold text-slate-900 dark:text-white focus:outline-none cursor-pointer pr-3"
     >
       <option value="all">All Connected Stores (Unified ERP)</option>
-      {stores.map((s) => (
-        <option key={s.id} value={s.id}>
-          {s.store_name} ({s.store_code}) {s.has_token ? "✓ Live" : "⚠️ Token Required"}
-        </option>
-      ))}
+      {stores.map((s, idx) => {
+        const displayName = getStoreDisplayName(s, idx);
+        return (
+          <option key={s.id} value={s.id}>
+            {displayName} ({s.store_code}) {s.has_token ? "✓ Live" : "⚠️ Token Required"}
+          </option>
+        );
+      })}
     </select>
   );
 }

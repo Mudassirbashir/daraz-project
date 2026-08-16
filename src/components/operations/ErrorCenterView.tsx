@@ -2,6 +2,7 @@
 
 import React, { useState, useEffect } from "react";
 import { AlertTriangle, RefreshCw, CheckCircle2, ShieldAlert, XCircle, Clock } from "lucide-react";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 
 export function ErrorCenterView() {
   const [loading, setLoading] = useState(true);
@@ -172,7 +173,7 @@ export function ErrorCenterView() {
                 {retryErrors.map((err) => (
                   <tr key={err.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="p-3 font-bold text-slate-900 dark:text-white">
-                      {err.daraz_stores?.store_name || "Daraz Store"}
+                      {getStoreDisplayName(err.daraz_stores)}
                     </td>
                     <td className="p-3 font-mono">
                       <span className="font-bold text-slate-800 dark:text-slate-200">{err.operation_type}</span>
@@ -199,7 +200,7 @@ export function ErrorCenterView() {
                 {apiLogs.map((log) => (
                   <tr key={log.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="p-3 font-bold text-slate-900 dark:text-white">
-                      {log.daraz_stores?.store_name || "Daraz Store"}
+                      {getStoreDisplayName(log.daraz_stores)}
                     </td>
                     <td className="p-3 font-mono">
                       <span className="font-bold text-slate-800 dark:text-slate-200">{log.sync_type}</span>

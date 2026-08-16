@@ -15,6 +15,7 @@ import {
   Building2,
   DollarSign
 } from "lucide-react";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 
 interface InventoryDetailModalProps {
   item: any | null;
@@ -55,7 +56,7 @@ export function InventoryDetailModal({ item, onClose }: InventoryDetailModalProp
           <div>
             <div className="flex items-center space-x-2">
               <span className="rounded-md bg-orange-100 px-2.5 py-0.5 text-xs font-bold text-orange-700">
-                {store.store_name || "Daraz Store"}
+                {getStoreDisplayName(store)}
               </span>
               <span className="font-mono text-xs text-slate-500 font-bold">SKU: {item.sku}</span>
               <button

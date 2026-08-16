@@ -5,6 +5,7 @@
 import { DarazShippingLabelData, LabelValidationError } from "./types";
 import { DEFAULT_FALLBACKS } from "./constants";
 import { generateCode128Svg, generateQrCodeSvg } from "./barcodes";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 
 /**
  * Normalizes raw PostgreSQL order and store records into DarazShippingLabelData interface.
@@ -51,7 +52,7 @@ export function normalizeShippingLabelData(order: any, store: any): DarazShippin
   const recipientArea = String(order.customer_area || recipientCity).trim();
   const recipientPhone = String(order.customer_phone || "Phone on file").trim();
 
-  const storeName = String(store.store_name || "Daraz Store").trim();
+  const storeName = getStoreDisplayName(store);
   const sellerCode = String(store.store_code || store.seller_id || `D-${store.id.slice(0, 8)}`).trim();
   const sellerAddress = String(store.region || DEFAULT_FALLBACKS.sellerAddress).trim();
 

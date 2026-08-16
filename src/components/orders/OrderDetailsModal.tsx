@@ -19,6 +19,8 @@ import {
   RefreshCw
 } from "lucide-react";
 
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
+
 interface OrderDetailsModalProps {
   order: any | null;
   onClose: () => void;
@@ -128,7 +130,7 @@ export function OrderDetailsModal({
           <div>
             <div className="flex items-center space-x-2">
               <span className="rounded-md bg-orange-100 px-2.5 py-1 text-xs font-bold text-orange-700">
-                {order.daraz_stores?.store_name || "Daraz Store"}
+                {getStoreDisplayName(order.daraz_stores)}
               </span>
               <span className="font-mono text-xs text-slate-500 font-bold">Order #{order.daraz_order_id}</span>
 

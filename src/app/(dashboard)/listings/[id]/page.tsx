@@ -28,6 +28,7 @@ import {
   Star,
   Users
 } from "lucide-react";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 
 export default function ProductDetailPage() {
   const params = useParams();
@@ -142,7 +143,7 @@ export default function ProductDetailPage() {
           <div>
             <div className="flex items-center space-x-2">
               <span className="rounded-xl bg-orange-100 dark:bg-orange-500/10 px-2.5 py-0.5 text-xs font-bold text-orange-700 dark:text-orange-400 border border-orange-200/80 dark:border-orange-500/20">
-                {product.daraz_stores?.store_name || "Daraz Store"}
+                {getStoreDisplayName(product.daraz_stores)}
               </span>
               <span className="font-mono text-xs text-slate-500 dark:text-slate-400 font-bold">Item ID: {product.daraz_item_id || product.id}</span>
             </div>

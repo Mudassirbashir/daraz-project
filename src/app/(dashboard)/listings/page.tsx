@@ -3,6 +3,7 @@
 import React, { useState, useEffect } from "react";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { ProductDetailModal } from "@/components/products/ProductDetailModal";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 import { BulkEditModal } from "@/components/products/BulkEditModal";
 import { ProductImage } from "@/components/products/ProductImage";
 import {
@@ -185,7 +186,7 @@ export default function ListingsPage() {
 
     const rows = itemsToExport.map((p) => [
       `"${p.daraz_stores?.store_code || ""}"`,
-      `"${p.daraz_stores?.store_name || ""}"`,
+      `"${getStoreDisplayName(p.daraz_stores)}"`,
       `"${(p.title || "").replace(/"/g, '""')}"`,
       `"${p.seller_sku || ""}"`,
       `"${p.daraz_sku_id || ""}"`,
@@ -340,9 +341,9 @@ export default function ListingsPage() {
               className="bg-transparent text-xs font-bold text-slate-700 dark:text-slate-300 focus:outline-none cursor-pointer"
             >
               <option value="all">All Stores</option>
-              {stores.map((s) => (
+              {stores.map((s, idx) => (
                 <option key={s.id} value={s.id}>
-                  {s.store_name} ({s.store_code})
+                  {getStoreDisplayName(s, idx)} ({s.store_code})
                 </option>
               ))}
             </select>
@@ -525,7 +526,7 @@ export default function ListingsPage() {
                             <div>
                               <p className="font-bold text-slate-900 dark:text-white line-clamp-1">{item.title}</p>
                               <p className="text-[11px] text-slate-500">
-                                Store: {item.daraz_stores?.store_name || "Daraz Store"}
+                                Store: {getStoreDisplayName(item.daraz_stores)}
                               </p>
                             </div>
                           </div>

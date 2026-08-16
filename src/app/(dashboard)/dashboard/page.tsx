@@ -15,6 +15,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
+import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -192,15 +193,16 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     }
   });
 
-  const enrichedStores = storesList.map((st) => {
+  const enrichedStores = storesList.map((st, idx) => {
     const isConnected = Boolean(st?.access_token && st?.is_active);
     const key = String(st?.id || "").toLowerCase();
     const storeListingStats = storeListingsMap[key] || { count: 0, stock: 0 };
     const storeOrderStats = storeOrdersMap[key] || { total: 0, inProgress: 0 };
+    const displayName = getStoreDisplayName(st, idx);
 
     return {
       ...st,
-      store_name: st?.store_name || "Daraz Store",
+      store_name: displayName,
       store_code: st?.store_code || "STORE",
       seller_id: st?.seller_id || "N/A",
       isConnected,
@@ -347,15 +349,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
         </div>
 
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
-          {enrichedStores.map((store) => {
-            const storeName = store.store_name || "Daraz Store";
-            const initials = storeName
-              .split(" ")
-              .filter(Boolean)
-              .map((w: string) => w[0])
-              .join("")
-              .slice(0, 2)
-              .toUpperCase() || "DS";
+          {enrichedStores.map((store, idx) => {
+            const storeName = getStoreDisplayName(store, idx);
+            const initials = getStoreInitials(storeName);
 
             const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
 

@@ -26,6 +26,8 @@ import {
 import { ProductImage } from "./ProductImage";
 import { ImageGalleryModal } from "./ImageGalleryModal";
 
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
+
 interface ProductDetailModalProps {
   product: any | null;
   onClose: () => void;
@@ -185,7 +187,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
           <div className="space-y-1 max-w-2xl">
             <div className="flex flex-wrap items-center gap-2">
               <span className="rounded-xl bg-orange-100 px-2.5 py-0.5 text-xs font-bold text-orange-700">
-                {product.daraz_stores?.store_name || "Daraz Store"}
+                {getStoreDisplayName(product.daraz_stores)}
               </span>
 
               <span className="font-mono text-xs text-slate-500">

@@ -13,6 +13,7 @@ import {
   ShieldCheck,
   Download
 } from "lucide-react";
+import { getStoreDisplayName } from "@/lib/daraz/store-utils";
 
 interface PrintableLabelModalProps {
   order: any | null;
@@ -126,7 +127,7 @@ export function PrintableLabelModal({ order, onClose, onLabelPrinted }: Printabl
           <div className="space-y-1">
             <div className="flex items-center space-x-2">
               <span className="rounded-xl bg-orange-100 dark:bg-orange-500/20 px-2.5 py-0.5 text-xs font-bold text-orange-700 dark:text-orange-300">
-                {order.daraz_stores?.store_name || "Daraz Store"}
+                {getStoreDisplayName(order.daraz_stores)}
               </span>
 
               <span className="font-mono text-xs text-slate-500 font-bold">Order #{order.daraz_order_id}</span>

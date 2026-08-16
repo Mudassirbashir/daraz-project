@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { StoreCardActions } from "@/components/stores/StoreCardActions";
 import { StoreAutoSyncTrigger } from "@/components/stores/StoreAutoSyncTrigger";
+import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -200,15 +201,9 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
 
       {/* Stores Cards Grid */}
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 text-xs">
-        {enrichedStores.map((store) => {
-          const storeName = store.store_name || "Daraz Store";
-          const initials = storeName
-            .split(" ")
-            .filter(Boolean)
-            .map((w: string) => w[0])
-            .join("")
-            .slice(0, 2)
-            .toUpperCase() || "DS";
+        {enrichedStores.map((store, idx) => {
+          const storeName = getStoreDisplayName(store, idx);
+          const initials = getStoreInitials(storeName);
 
           const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
 
@@ -230,10 +225,10 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                   <div>
                     <div className="flex items-center space-x-2">
                       <h3 className="font-bold text-slate-900 dark:text-white text-base leading-snug">
-                        {store.store_name}
+                        {storeName}
                       </h3>
                       <span className="px-2 py-0.5 rounded-lg text-[10px] font-extrabold bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-300 border border-slate-200 dark:border-slate-700">
-                        {store.slot_number ? `Store ${store.slot_number}` : store.isConnected ? "Store 1" : "Disconnected"}
+                        {store.isConnected ? "Active" : "Disconnected"}
                       </span>
                     </div>
                     <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
