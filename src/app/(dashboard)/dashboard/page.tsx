@@ -14,6 +14,7 @@ import {
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
+import { logDashboardError } from "@/lib/logging/dashboard-logger";
 
 export const dynamic = "force-dynamic";
 
@@ -24,133 +25,146 @@ interface DashboardPageProps {
 }
 
 export default async function DashboardPage({ searchParams }: DashboardPageProps) {
-  const supabase = createAdminClient();
+  let supabase: ReturnType<typeof createAdminClient> | null = null;
+  let serverSupabase: ReturnType<typeof createClient> | null = null;
+  let configErrorMsg: string | null = null;
+
+  // Safe Supabase Client Initializations
+  try {
+    supabase = createAdminClient();
+  } catch (err: any) {
+    configErrorMsg = err?.message || "SUPABASE_SERVICE_ROLE_KEY or SUPABASE_URL not configured";
+    logDashboardError("Dashboard Page Admin Client Init", err);
+  }
+
+  try {
+    serverSupabase = createClient();
+  } catch (err: any) {
+    if (!configErrorMsg) {
+      configErrorMsg = err?.message || "NEXT_PUBLIC_SUPABASE_ANON_KEY not configured";
+    }
+    logDashboardError("Dashboard Page Server Client Init", err);
+  }
+
   const selectedStoreId = searchParams?.storeId || "all";
   const isCombinedView = selectedStoreId === "all";
 
-  // Purge legacy seed store rows from database
-  try {
-    await supabase
-      .from("daraz_stores")
-      .delete()
-      .in("seller_id", ["504904", "504905", "504906"]);
-  } catch (e) {
-    // ignore
-  }
-
   // Fetch logged-in user profile name & authorized stores
-  let userName = "Mubashir";
+  let userName = "Team Member";
   let userStoreIds: string[] = [];
-  try {
-    const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
-    if (user?.id) {
-      const { data: profile } = await supabase
-        .from("profiles")
-        .select("full_name")
-        .eq("id", user.id)
-        .maybeSingle();
-      if (profile?.full_name) {
-        userName = profile.full_name.split(" ")[0];
+  
+  if (serverSupabase && supabase) {
+    try {
+      const { data: userData, error: userErr } = await serverSupabase.auth.getUser();
+      if (userErr) {
+        logDashboardError("Dashboard Page Auth Check", userErr);
       }
+      const user = userData?.user;
 
-      const { data: userStores } = await supabase
-        .from("daraz_stores")
-        .select("id")
-        .or(`user_id.eq.${user.id},user_id.is.null`);
-      userStoreIds = (userStores || []).map((s) => s.id);
+      if (user?.id) {
+        const { data: profile, error: profileErr } = await supabase
+          .from("profiles")
+          .select("full_name")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profileErr) {
+          logDashboardError("Dashboard Page Profile Query", profileErr);
+        } else if (profile?.full_name) {
+          userName = profile.full_name.split(" ")[0];
+        } else {
+          userName = user.email ? user.email.split("@")[0] : "Team Member";
+        }
+
+        const { data: userStores, error: userStoresErr } = await supabase
+          .from("daraz_stores")
+          .select("id")
+          .or(`user_id.eq.${user.id},user_id.is.null`);
+
+        if (userStoresErr) {
+          logDashboardError("Dashboard Page UserStores Query", userStoresErr);
+        } else {
+          userStoreIds = (userStores || []).map((s: any) => s.id);
+        }
+      }
+    } catch (e: any) {
+      logDashboardError("Dashboard Page User Context Exception", e);
     }
-  } catch (e) {
-    // fallback
   }
 
   // 1. Fetch Authorized Stores
   let storesList: any[] = [];
-  try {
-    let storesQuery = supabase
-      .from("daraz_stores")
-      .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
-      .order("created_at", { ascending: true });
+  let queryErrorNotice: string | null = configErrorMsg;
 
-    if (userStoreIds.length > 0) {
-      storesQuery = storesQuery.in("id", userStoreIds);
-    }
+  if (supabase) {
+    try {
+      let storesQuery = supabase
+        .from("daraz_stores")
+        .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
+        .order("created_at", { ascending: true });
 
-    const { data: storesData, error: storesErr } = await storesQuery;
-    if (storesErr) {
-      console.error("[DASHBOARD FATAL ERROR - Page Stores Query]:", {
-        name: storesErr.name,
-        message: storesErr.message,
-        code: (storesErr as any).code,
-        details: (storesErr as any).details,
-        hint: (storesErr as any).hint,
-      });
-    } else {
-      storesList = storesData || [];
+      if (userStoreIds.length > 0) {
+        storesQuery = storesQuery.in("id", userStoreIds);
+      }
+
+      const { data: storesData, error: storesErr } = await storesQuery;
+      if (storesErr) {
+        queryErrorNotice = storesErr.message;
+        logDashboardError("Dashboard Page Stores Query", storesErr);
+      } else {
+        storesList = storesData || [];
+      }
+    } catch (ex: any) {
+      queryErrorNotice = ex?.message || String(ex);
+      logDashboardError("Dashboard Page Stores Exception", ex);
     }
-  } catch (ex: any) {
-    console.error("[DASHBOARD FATAL ERROR - Page Stores Exception]:", {
-      name: ex?.name,
-      message: ex?.message || String(ex),
-      stack: ex?.stack,
-    });
   }
 
   // 2. Fetch Listings & Orders Metrics
   let listingsData: any[] = [];
   let ordersList: any[] = [];
-  try {
-    let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
-    if (!isCombinedView && selectedStoreId) {
-      listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
-    } else if (userStoreIds.length > 0) {
-      listingsQuery = listingsQuery.in("store_id", userStoreIds);
-    }
 
-    let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
-    if (!isCombinedView && selectedStoreId) {
-      ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
-    } else if (userStoreIds.length > 0) {
-      ordersQuery = ordersQuery.in("store_id", userStoreIds);
-    }
+  if (supabase) {
+    try {
+      let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
+      if (!isCombinedView && selectedStoreId) {
+        listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
+      } else if (userStoreIds.length > 0) {
+        listingsQuery = listingsQuery.in("store_id", userStoreIds);
+      }
 
-    const [listingsResult, ordersResult] = await Promise.all([
-      listingsQuery,
-      ordersQuery,
-    ]);
+      let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
+      if (!isCombinedView && selectedStoreId) {
+        ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
+      } else if (userStoreIds.length > 0) {
+        ordersQuery = ordersQuery.in("store_id", userStoreIds);
+      }
 
-    if (listingsResult.error) {
-      console.error("[DASHBOARD FATAL ERROR - Page Listings Query]:", {
-        name: listingsResult.error.name,
-        message: listingsResult.error.message,
-        code: (listingsResult.error as any).code,
-        details: (listingsResult.error as any).details,
-        hint: (listingsResult.error as any).hint,
-      });
-    } else {
-      listingsData = listingsResult.data || [];
-    }
+      const [listingsResult, ordersResult] = await Promise.all([
+        listingsQuery,
+        ordersQuery,
+      ]);
 
-    if (ordersResult.error) {
-      console.error("[DASHBOARD FATAL ERROR - Page Orders Query]:", {
-        name: ordersResult.error.name,
-        message: ordersResult.error.message,
-        code: (ordersResult.error as any).code,
-        details: (ordersResult.error as any).details,
-        hint: (ordersResult.error as any).hint,
-      });
-    } else {
-      ordersList = ordersResult.data || [];
+      if (listingsResult.error) {
+        logDashboardError("Dashboard Page Listings Query", listingsResult.error);
+        if (!queryErrorNotice) queryErrorNotice = listingsResult.error.message;
+      } else {
+        listingsData = listingsResult.data || [];
+      }
+
+      if (ordersResult.error) {
+        logDashboardError("Dashboard Page Orders Query", ordersResult.error);
+        if (!queryErrorNotice) queryErrorNotice = ordersResult.error.message;
+      } else {
+        ordersList = ordersResult.data || [];
+      }
+    } catch (metricsEx: any) {
+      logDashboardError("Dashboard Page Metrics Exception", metricsEx);
+      if (!queryErrorNotice) queryErrorNotice = metricsEx?.message || String(metricsEx);
     }
-  } catch (metricsEx: any) {
-    console.error("[DASHBOARD FATAL ERROR - Page Metrics Exception]:", {
-      name: metricsEx?.name,
-      message: metricsEx?.message || String(metricsEx),
-      stack: metricsEx?.stack,
-    });
   }
 
-  // Build per-store metrics map in memory (robust normalized string keys)
+  // Build per-store metrics map in memory
   const storeListingsMap: Record<string, { count: number; stock: number }> = {};
   listingsData.forEach((l: any) => {
     const key = String(l.store_id || "").toLowerCase();
@@ -187,7 +201,6 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   });
 
   const totalStoresCount = enrichedStores.length;
-  const connectedStoresCount = enrichedStores.filter((s) => s.isConnected).length;
   const isMaxStoresReached = totalStoresCount >= 3;
 
   const totalProductsCount = listingsData.length;
@@ -207,6 +220,21 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   return (
     <div className="space-y-6">
+      {/* Configuration or Query Diagnostic Notice Banner */}
+      {queryErrorNotice && (
+        <div className="rounded-2xl bg-amber-50 dark:bg-amber-950/40 border border-amber-200 dark:border-amber-900/50 p-4 flex items-start space-x-3 text-amber-800 dark:text-amber-300 text-xs shadow-sm">
+          <AlertCircle className="h-5 w-5 shrink-0 text-amber-600 dark:text-amber-400 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-bold text-slate-900 dark:text-white">
+              System Environment Diagnostic Notice
+            </p>
+            <p className="leading-relaxed">
+              A database query or service client notice occurred during page render: <span className="font-mono text-amber-900 dark:text-amber-200">{queryErrorNotice}</span>. Diagnostic details logged under <code className="bg-amber-100 dark:bg-amber-900/60 px-1 py-0.5 rounded font-mono">[DASHBOARD FATAL ERROR]</code> in Vercel Runtime Logs.
+            </p>
+          </div>
+        </div>
+      )}
+
       {/* Welcome Banner */}
       <div className="rounded-3xl border border-slate-200/80 dark:border-slate-800/80 bg-white/80 dark:bg-slate-900/80 p-6 shadow-apple backdrop-blur-xl">
         <div className="flex flex-col md:flex-row md:items-center md:justify-between gap-4">
