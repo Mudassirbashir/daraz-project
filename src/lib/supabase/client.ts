@@ -4,8 +4,7 @@ import { Database } from "@/types/database.types";
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   if (!envUrl || !envUrl.trim()) {
-    console.warn("[BrowserClient] Notice: NEXT_PUBLIC_SUPABASE_URL environment variable is not configured.");
-    return "https://placeholder.supabase.co";
+    throw new Error("Missing required environment variable: NEXT_PUBLIC_SUPABASE_URL or SUPABASE_URL");
   }
   return envUrl.trim();
 }
@@ -13,8 +12,7 @@ function getValidSupabaseUrl(): string {
 function getValidAnonKey(): string {
   const envKey = process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY;
   if (!envKey || !envKey.trim()) {
-    console.warn("[BrowserClient] Notice: NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is not configured.");
-    return "placeholder-key";
+    throw new Error("Missing required environment variable: NEXT_PUBLIC_SUPABASE_ANON_KEY");
   }
   return envKey.trim();
 }

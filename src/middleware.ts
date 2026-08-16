@@ -31,6 +31,8 @@ export async function middleware(request: NextRequest) {
   const isAuthRoute = pathname === "/login" || pathname === "/unauthorized";
 
   try {
+    let isFallbackUser = false;
+
     // 3. Refresh Supabase Auth session & extract current user
     let { supabaseResponse, user, supabase } = await updateSession(request);
 
@@ -40,6 +42,7 @@ export async function middleware(request: NextRequest) {
       if (fallbackCookie?.value) {
         try {
           user = JSON.parse(fallbackCookie.value);
+          isFallbackUser = true;
         } catch (e) {
           // invalid JSON cookie
         }
@@ -75,19 +78,25 @@ export async function middleware(request: NextRequest) {
     }
 
     // Role-Based Access Control (RBAC) path protection
-    if (user && supabase && !isAuthRoute) {
+    if (user && !isAuthRoute) {
       try {
-        const { data: profile, error: profileErr } = await (supabase as any)
-          .from("profiles")
-          .select("role")
-          .eq("id", user.id)
-          .single();
+        let userRole: AppRole = "ops_manager";
 
-        if (profileErr) {
-          console.warn("[Middleware RBAC Profile Query Warning]:", profileErr.message);
+        if (isFallbackUser) {
+          userRole = ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || "ops_manager";
+        } else if (supabase && user?.id) {
+          const { data: profile, error: profileErr } = await (supabase as any)
+            .from("profiles")
+            .select("role")
+            .eq("id", user.id)
+            .maybeSingle();
+
+          if (profileErr) {
+            console.warn("[Middleware RBAC Profile Query Warning]:", profileErr.message);
+          }
+
+          userRole = (profile?.role as AppRole) || ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || "ops_manager";
         }
-
-        const userRole: AppRole = (profile?.role as AppRole) || "ops_manager";
 
         const matchedGuard = PROTECTED_ROUTES.find((guard) =>
           pathname.startsWith(guard.pathPrefix)
