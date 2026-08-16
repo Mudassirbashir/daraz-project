@@ -80,13 +80,19 @@ export async function GET(req: NextRequest) {
           };
         }
 
-        // Query listings count & stock sum
+        // Query parent items & SKUs metrics
+        const { count: parentItemsCount } = await supabase
+          .from("daraz_products")
+          .select("*", { count: "exact", head: true })
+          .eq("store_id", store.id);
+
         const { data: listings } = await supabase
           .from("listings")
           .select("stock_quantity")
           .eq("store_id", store.id);
 
-        const products_count = (listings || []).length;
+        const skus_count = (listings || []).length;
+        const products_count = (typeof parentItemsCount === "number" && parentItemsCount > 0) ? parentItemsCount : skus_count;
         const stock_count = (listings || []).reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
 
         // Query orders metrics
@@ -132,6 +138,8 @@ export async function GET(req: NextRequest) {
               ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20"
               : "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
           last_synced_at,
+          items_count: products_count,
+          skus_count,
           products_count,
           stock_count,
           total_orders,

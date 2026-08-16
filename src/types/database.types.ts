@@ -502,6 +502,61 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['daraz_shipping_labels']['Insert']>;
       };
+      daraz_products: {
+        Row: {
+          id: string;
+          store_id: string;
+          daraz_item_id: string;
+          title: string;
+          category: string;
+          brand: string;
+          status: string;
+          description: string | null;
+          images: Json;
+          attributes: Json;
+          product_url: string | null;
+          skus_count: number;
+          total_stock: number;
+          is_synced: boolean;
+          last_synced_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_products']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_products']['Insert']>;
+      };
+      daraz_product_skus: {
+        Row: {
+          id: string;
+          store_id: string;
+          product_id: string | null;
+          daraz_item_id: string;
+          daraz_sku_id: string | null;
+          seller_sku: string;
+          shop_sku: string | null;
+          price_cents: number;
+          special_price_cents: number | null;
+          quantity: number;
+          reserved_quantity: number;
+          status: string;
+          images: Json;
+          package_content: string | null;
+          is_synced: boolean;
+          last_synced_at: string;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_product_skus']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_product_skus']['Insert']>;
+      };
     };
     Views: {};
     Functions: {

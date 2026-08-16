@@ -5,7 +5,9 @@ import { DarazOrderStatus } from "@/types/database.types";
 export interface SyncResult {
   success: boolean;
   storesSynced: number;
-  productsSynced: number;
+  productsSynced: number; // Deprecated alias for skusSynced
+  itemsSynced: number;    // Parent Items / Products count
+  skusSynced: number;     // Total SKU variations count
   ordersSynced: number;
   importedCount: number;
   updatedCount: number;
@@ -23,9 +25,9 @@ const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
  * 1. Multi-store isolation with per-store lock guards.
  * 2. Queries active Daraz Stores from Supabase.
  * 3. Uses 24-hour safe overlap window on incremental `last_synced_at` to prevent missing orders.
- * 4. Fetches Store Profiles, Catalog Listings, Variations, Images, and Orders via Daraz REST API.
- * 5. Safely UPSERTS records into Supabase PostgreSQL tables using `seller_sku` & `daraz_order_id`.
- * 6. Logs diagnostics into `daraz_api_logs` and records discrepancies in `reconciliation_logs`.
+ * 4. Fetches Store Profiles, Parent Items & SKU Variations via Daraz REST API with complete pagination.
+ * 5. Safely UPSERTS records into daraz_products, daraz_product_skus, listings, inventory & orders.
+ * 6. Performs full catalog reconciliation and logs diagnostics into `daraz_api_logs`.
  */
 export async function executeDarazSync(targetStoreId?: string): Promise<SyncResult> {
   const startTime = Date.now();
@@ -36,7 +38,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
   const supabase = createAdminClient();
 
   let storesSynced = 0;
-  let productsSynced = 0;
+  let itemsSynced = 0;
+  let skusSynced = 0;
   let ordersSynced = 0;
   let importedCount = 0;
   let updatedCount = 0;
@@ -64,6 +67,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         success: false,
         storesSynced: 0,
         productsSynced: 0,
+        itemsSynced: 0,
+        skusSynced: 0,
         ordersSynced: 0,
         importedCount: 0,
         updatedCount: 0,
@@ -105,6 +110,12 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             const sisterIds = sisterStores.map((s) => s.id);
             await supabase.from("listings").update({ store_id: store.id }).in("store_id", sisterIds);
             await supabase.from("orders").update({ store_id: store.id }).in("store_id", sisterIds);
+            try {
+              await supabase.from("daraz_products").update({ store_id: store.id }).in("store_id", sisterIds);
+              await supabase.from("daraz_product_skus").update({ store_id: store.id }).in("store_id", sisterIds);
+            } catch (e: any) {
+              // Gracefully handle if tables in migration state
+            }
           }
         }
 
@@ -132,100 +143,177 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           console.warn(`[SyncEngine] Store profile notice for ${store.store_code}:`, profileErr.message);
         }
 
-        // B. Sync Products / Listings & Inventory
+        // B. Sync Parent Catalog Items & SKU Variations with Complete Pagination
         let productOffset = 0;
         const limit = 50;
-        let totalProducts = 0;
-        let fetchedProductCount = 0;
+        let totalItemsCount = 0;
+        let rawItemsReturned = 0;
         let currentPageNum = 1;
+
+        const syncedDarazItemIds = new Set<string>();
         const syncedSellerSkus = new Set<string>();
 
         do {
-          const { products, total } = await darazClient.getProducts(productOffset, limit);
-          totalProducts = total;
-          fetchedProductCount = products.length;
+          const { items, total_items, raw_items_count } = await darazClient.getCatalogItems(productOffset, limit);
+          totalItemsCount = total_items;
+          rawItemsReturned = raw_items_count;
 
-          console.log(`[Daraz Products]\npage: ${currentPageNum}\nitems returned: ${fetchedProductCount}\ntotal: ${totalProducts}\nnext page: ${productOffset + limit < totalProducts ? currentPageNum + 1 : "None"}`);
+          console.log(
+            `[Daraz Products Sync] Page ${currentPageNum} | Offset: ${productOffset} | Items Returned: ${rawItemsReturned} | Total Items: ${totalItemsCount}`
+          );
 
-          for (const item of products) {
+          for (const item of items) {
             try {
-              if (item.seller_sku) {
-                syncedSellerSkus.add(item.seller_sku);
+              if (item.item_id) {
+                syncedDarazItemIds.add(item.item_id);
               }
 
-              const { data: existingListing } = await supabase
-                .from("listings")
-                .select("id, stock_quantity, price_cents")
-                .eq("store_id", store.id)
-                .eq("seller_sku", item.seller_sku)
-                .maybeSingle();
+              const itemTotalStock = item.skus.reduce((sum, s) => sum + s.quantity, 0);
 
-              if (existingListing) {
-                updatedCount++;
-              } else {
-                importedCount++;
-              }
-
-              // Schema-safe Inventory Upsert
-              let invItemId: string | null = null;
+              // 1. Upsert Parent Product Record into daraz_products
+              let parentDbProductId: string | null = null;
               try {
-                const { data: invItem } = await supabase
-                  .from("inventory")
+                const { data: parentProduct } = await supabase
+                  .from("daraz_products")
                   .upsert(
                     {
-                      sku: item.seller_sku,
+                      store_id: store.id,
+                      daraz_item_id: item.item_id,
                       title: item.title,
                       category: item.category || "General",
-                      quantity_on_hand: item.quantity,
-                      quantity_reserved: item.reserved_quantity || 0,
+                      brand: item.brand || "Generic",
+                      status: item.status || "active",
+                      description: item.description,
+                      images: item.images,
+                      attributes: item.attributes,
+                      product_url: item.product_url,
+                      skus_count: item.skus.length,
+                      total_stock: itemTotalStock,
+                      is_synced: true,
+                      last_synced_at: timestamp,
+                      updated_at: timestamp,
                     },
-                    { onConflict: "sku" }
+                    { onConflict: "store_id,daraz_item_id" }
                   )
                   .select("id")
                   .single();
-                invItemId = invItem?.id || null;
-              } catch (invErr: any) {
-                console.warn(`[SyncEngine] Inventory upsert notice for SKU ${item.seller_sku}:`, invErr.message);
+
+                parentDbProductId = parentProduct?.id || null;
+                itemsSynced++;
+              } catch (parentErr: any) {
+                console.warn(`[SyncEngine] daraz_products upsert notice for Item ${item.item_id}:`, parentErr.message);
               }
 
-              // Schema-safe Listings Upsert (Only include columns existing in physical PostgreSQL table)
-              const listingPayload = {
-                store_id: store.id,
-                inventory_id: invItemId,
-                seller_sku: item.seller_sku,
-                daraz_item_id: item.item_id,
-                daraz_sku_id: item.daraz_sku_id || null,
-                title: item.title,
-                price_cents: item.price_cents,
-                special_price_cents: item.special_price_cents || null,
-                stock_quantity: item.quantity,
-                is_synced: true,
-                last_synced_at: timestamp,
-              };
+              // 2. Process and Upsert SKU Variations under this Parent Item
+              for (const sku of item.skus) {
+                if (sku.seller_sku) {
+                  syncedSellerSkus.add(sku.seller_sku);
+                }
 
-              const { error: listingErr } = await supabase.from("listings").upsert(listingPayload, {
-                onConflict: "store_id,seller_sku",
-              });
+                // Check existing listing count for statistics
+                const { data: existingListing } = await supabase
+                  .from("listings")
+                  .select("id")
+                  .eq("store_id", store.id)
+                  .eq("seller_sku", sku.seller_sku)
+                  .maybeSingle();
 
-              if (listingErr) {
-                console.error(`[SyncEngine] Listing upsert error for SKU ${item.seller_sku}:`, listingErr.message);
-                failedCount++;
-              } else {
-                productsSynced++;
+                if (existingListing) {
+                  updatedCount++;
+                } else {
+                  importedCount++;
+                }
+
+                // Upsert into daraz_product_skus
+                try {
+                  await supabase.from("daraz_product_skus").upsert(
+                    {
+                      store_id: store.id,
+                      product_id: parentDbProductId,
+                      daraz_item_id: item.item_id,
+                      daraz_sku_id: sku.daraz_sku_id || null,
+                      seller_sku: sku.seller_sku,
+                      shop_sku: sku.shop_sku || null,
+                      price_cents: sku.price_cents,
+                      special_price_cents: sku.special_price_cents || null,
+                      quantity: sku.quantity,
+                      reserved_quantity: sku.reserved_quantity,
+                      status: sku.status || item.status,
+                      images: sku.images.length > 0 ? sku.images : item.images,
+                      package_content: sku.package_content || null,
+                      is_synced: true,
+                      last_synced_at: timestamp,
+                      updated_at: timestamp,
+                    },
+                    { onConflict: "store_id,seller_sku" }
+                  );
+                } catch (skuErr: any) {
+                  console.warn(`[SyncEngine] daraz_product_skus upsert notice for SKU ${sku.seller_sku}:`, skuErr.message);
+                }
+
+                // Inventory Upsert for backwards compatibility
+                let invItemId: string | null = null;
+                try {
+                  const { data: invItem } = await supabase
+                    .from("inventory")
+                    .upsert(
+                      {
+                        sku: sku.seller_sku,
+                        title: item.title,
+                        category: item.category || "General",
+                        quantity_on_hand: sku.quantity,
+                        quantity_reserved: sku.reserved_quantity || 0,
+                      },
+                      { onConflict: "sku" }
+                    )
+                    .select("id")
+                    .single();
+                  invItemId = invItem?.id || null;
+                } catch (invErr: any) {
+                  console.warn(`[SyncEngine] Inventory upsert notice for SKU ${sku.seller_sku}:`, invErr.message);
+                }
+
+                // Listings Upsert for backwards compatibility
+                const listingPayload = {
+                  store_id: store.id,
+                  inventory_id: invItemId,
+                  seller_sku: sku.seller_sku,
+                  daraz_item_id: item.item_id,
+                  daraz_sku_id: sku.daraz_sku_id || null,
+                  title: item.title,
+                  price_cents: sku.price_cents,
+                  special_price_cents: sku.special_price_cents || null,
+                  stock_quantity: sku.quantity,
+                  is_synced: true,
+                  last_synced_at: timestamp,
+                };
+
+                const { error: listingErr } = await supabase.from("listings").upsert(listingPayload, {
+                  onConflict: "store_id,seller_sku",
+                });
+
+                if (listingErr) {
+                  console.error(`[SyncEngine] Listing upsert error for SKU ${sku.seller_sku}:`, listingErr.message);
+                  failedCount++;
+                } else {
+                  skusSynced++;
+                }
               }
             } catch (itemErr: any) {
               failedCount++;
-              console.error(`[SyncEngine] Item error for SKU ${item.seller_sku}:`, itemErr.message);
+              console.error(`[SyncEngine] Item error for Item ID ${item.item_id}:`, itemErr.message);
             }
           }
 
-          productOffset += limit;
+          // Advance offset by actual parent items returned
+          productOffset += rawItemsReturned;
           currentPageNum++;
-        } while (productOffset < totalProducts && fetchedProductCount > 0);
+        } while (rawItemsReturned > 0 && productOffset < totalItemsCount);
 
-        // Catalog Reconciliation: mark old listings for this store that were not returned by Daraz as is_synced = false
-        if (syncedSellerSkus.size > 0) {
+        // Catalog Reconciliation: mark unreturned Items & SKUs as is_synced = false / inactive
+        if (syncedSellerSkus.size > 0 || syncedDarazItemIds.size > 0) {
           try {
+            // Reconcile listings & SKUs
             const { data: allStoreListings } = await supabase
               .from("listings")
               .select("id, seller_sku")
@@ -238,14 +326,48 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 .from("listings")
                 .update({ is_synced: false, updated_at: timestamp })
                 .in("id", missingIds);
-              console.log(`[SyncEngine Reconciliation] Marked ${missingListings.length} missing listing(s) as inactive/unsynced for store ${store.store_name}.`);
+              console.log(
+                `[SyncEngine Reconciliation] Marked ${missingListings.length} missing SKU listing(s) as unsynced for store ${store.store_name}.`
+              );
             }
+
+            // Reconcile parent products
+            const { data: allStoreProducts } = await supabase
+              .from("daraz_products")
+              .select("id, daraz_item_id")
+              .eq("store_id", store.id);
+
+            const missingProducts = (allStoreProducts || []).filter((p) => !syncedDarazItemIds.has(p.daraz_item_id));
+            if (missingProducts.length > 0) {
+              const missingProdIds = missingProducts.map((p) => p.id);
+              await supabase
+                .from("daraz_products")
+                .update({ is_synced: false, status: "inactive", updated_at: timestamp })
+                .in("id", missingProdIds);
+              console.log(
+                `[SyncEngine Reconciliation] Marked ${missingProducts.length} missing parent product(s) as inactive/unsynced for store ${store.store_name}.`
+              );
+            }
+
+            // Record Reconciliation Event
+            await supabase.from("reconciliation_logs").insert({
+              store_id: store.id,
+              total_scanned: syncedSellerSkus.size,
+              discrepancy_count: missingListings.length,
+              status: "completed",
+              discrepancies: {
+                missing_skus_count: missingListings.length,
+                missing_items_count: missingProducts.length,
+                synced_items_count: syncedDarazItemIds.size,
+                synced_skus_count: syncedSellerSkus.size,
+              },
+            });
           } catch (recErr: any) {
             console.warn(`[SyncEngine Reconciliation notice for ${store.store_name}]:`, recErr.message);
           }
         }
 
-        console.log(`[Daraz Stock]\nitems returned: ${productsSynced}`);
+        console.log(`[Daraz Catalog Sync Completed]\nItems Synced: ${itemsSynced}\nSKUs Synced: ${skusSynced}`);
 
         // C. Sync Orders
         let orderOffset = 0;
@@ -386,7 +508,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           currentOrderPageNum++;
         } while (orderOffset < totalOrders && fetchedOrderCount > 0);
 
-        console.log(`[Supabase]\nproducts upserted: ${productsSynced}\nstock upserted: ${productsSynced}\norders upserted: ${ordersSynced}`);
+        console.log(`[Supabase]\nitems upserted: ${itemsSynced}\nskus upserted: ${skusSynced}\norders upserted: ${ordersSynced}`);
 
         // Update store status to success / connected
         try {
@@ -432,11 +554,13 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         store_id: targetStoreId || connectedStores[0]?.id,
         sync_type: targetStoreId ? "store_sync" : "cron_sync",
         status: errors.length > 0 ? "completed_with_errors" : "completed",
-        records_synced: productsSynced + ordersSynced,
+        records_synced: itemsSynced + skusSynced + ordersSynced,
         payload: sanitizeLogPayload({
           durationMs,
           storesSynced,
-          productsSynced,
+          itemsSynced,
+          skusSynced,
+          productsSynced: skusSynced,
           ordersSynced,
           importedCount,
           updatedCount,
@@ -453,7 +577,9 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
     return {
       success: errors.length === 0,
       storesSynced,
-      productsSynced,
+      productsSynced: skusSynced,
+      itemsSynced,
+      skusSynced,
       ordersSynced,
       importedCount,
       updatedCount,
@@ -469,7 +595,9 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
     return {
       success: false,
       storesSynced,
-      productsSynced,
+      productsSynced: skusSynced,
+      itemsSynced,
+      skusSynced,
       ordersSynced,
       importedCount,
       updatedCount,

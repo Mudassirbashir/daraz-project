@@ -93,9 +93,27 @@ export async function GET(req: NextRequest) {
       throw new Error(`Database query error: ${error.message}`);
     }
 
+    // Query parent items count
+    let parentItemsQuery = supabase
+      .from("daraz_products")
+      .select("*", { count: "exact", head: true });
+
+    if (storeId !== "all") {
+      parentItemsQuery = parentItemsQuery.eq("store_id", storeId);
+    } else {
+      parentItemsQuery = parentItemsQuery.in("store_id", userStoreIds);
+    }
+
+    const { count: parentItemsCount } = await parentItemsQuery;
+    const totalItems = (typeof parentItemsCount === "number" && parentItemsCount > 0) ? parentItemsCount : (count || 0);
+
     return NextResponse.json({
       success: true,
       products: listings || [],
+      metrics: {
+        total_items: totalItems,
+        total_skus: count || 0,
+      },
       pagination: {
         page,
         limit,

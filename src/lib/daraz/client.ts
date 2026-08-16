@@ -9,6 +9,34 @@ export interface DarazStoreProfile {
   location: string;
 }
 
+export interface DarazProductSku {
+  seller_sku: string;
+  daraz_sku_id: string;
+  shop_sku: string;
+  item_id: string;
+  price_cents: number;
+  special_price_cents?: number;
+  quantity: number;
+  reserved_quantity: number;
+  status: string;
+  images: string[];
+  package_content?: string;
+  attributes?: Record<string, any>;
+}
+
+export interface DarazCatalogItem {
+  item_id: string;
+  title: string;
+  category: string;
+  brand: string;
+  status: string;
+  description: string;
+  images: string[];
+  attributes: Record<string, any>;
+  product_url: string;
+  skus: DarazProductSku[];
+}
+
 export interface DarazProductItem {
   item_id: string;
   seller_sku: string;
@@ -349,9 +377,13 @@ export class DarazApiClient {
   }
 
   /**
-   * Fetch Store Products with Multi-Format Response Parsing & Pagination (/products/get)
+   * Fetch Store Parent Catalog Items & Nested SKUs (/products/get)
    */
-  async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
+  async getCatalogItems(offset = 0, limit = 50): Promise<{
+    items: DarazCatalogItem[];
+    total_items: number;
+    raw_items_count: number;
+  }> {
     const response = await this.request<any>("/products/get", {
       filter: "all",
       offset: String(offset),
@@ -371,13 +403,14 @@ export class DarazApiClient {
       rawProducts = dataObj.product;
     }
 
-    const total = dataObj?.total_products || dataObj?.total || rawProducts.length;
-    const products: DarazProductItem[] = [];
+    const total_items = parseInt(String(dataObj?.total_products || dataObj?.total || rawProducts.length), 10) || rawProducts.length;
+    const raw_items_count = rawProducts.length;
+    const items: DarazCatalogItem[] = [];
 
     rawProducts.forEach((p) => {
       const rawAttributes = p.attributes || {};
-
       const productLevelImages: string[] = [];
+
       if (Array.isArray(p.images)) {
         p.images.forEach((img: any) => {
           if (typeof img === "string") productLevelImages.push(img);
@@ -397,10 +430,10 @@ export class DarazApiClient {
         p.description ||
         "No description provided.";
 
-      const skus = Array.isArray(p.skus) && p.skus.length > 0 ? p.skus : [{}];
+      const rawSkus = Array.isArray(p.skus) && p.skus.length > 0 ? p.skus : [{}];
+      const parsedSkus: DarazProductSku[] = [];
 
-      // Extract each SKU variation as an accurate catalog item
-      skus.forEach((sku: any) => {
+      rawSkus.forEach((sku: any) => {
         const skuImages: string[] = [...productLevelImages];
         if (Array.isArray(sku.Images)) {
           sku.Images.forEach((img: any) => {
@@ -414,7 +447,6 @@ export class DarazApiClient {
           new Set(skuImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
         );
 
-        // Safely parse quantity & stock numbers
         const rawQty = sku.quantity ?? sku.Available ?? 0;
         const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
 
@@ -428,28 +460,74 @@ export class DarazApiClient {
 
         const sellerSku = sku.SellerSku || `SKU_${p.item_id}_${sku.SkuId || "0"}`;
 
-        products.push({
-          item_id: String(p.item_id || sku.ShopSku || `ITEM_${Date.now()}`),
+        parsedSkus.push({
           seller_sku: sellerSku,
           daraz_sku_id: String(sku.SkuId || sku.ShopSku || ""),
-          title: rawAttributes.name_en || rawAttributes.name || sku.package_content || p.title || "Daraz Product",
-          category: String(p.primary_category || rawAttributes.category || "General"),
-          brand: String(rawAttributes.brand || "Generic"),
-          status: String(p.status || sku.Status || "active").toLowerCase(),
-          description,
+          shop_sku: String(sku.ShopSku || sku.SkuId || ""),
+          item_id: String(p.item_id || "0"),
           price_cents: priceCents,
           special_price_cents: specialPriceCents,
           quantity: parsedQuantity,
           reserved_quantity: parsedReserved,
+          status: String(sku.Status || p.status || "active").toLowerCase(),
           images: normalizedImages,
-          attributes: rawAttributes,
-          variations: skus,
-          product_url: p.url || p.product_url || rawAttributes.product_url || "",
+          package_content: sku.package_content || "",
+          attributes: sku,
+        });
+      });
+
+      const parentImages = Array.from(
+        new Set(productLevelImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
+      );
+
+      items.push({
+        item_id: String(p.item_id || `ITEM_${Date.now()}`),
+        title: rawAttributes.name_en || rawAttributes.name || p.title || "Daraz Product",
+        category: String(p.primary_category || rawAttributes.category || "General"),
+        brand: String(rawAttributes.brand || "Generic"),
+        status: String(p.status || "active").toLowerCase(),
+        description,
+        images: parentImages,
+        attributes: rawAttributes,
+        product_url: p.url || p.product_url || rawAttributes.product_url || "",
+        skus: parsedSkus,
+      });
+    });
+
+    return { items, total_items, raw_items_count };
+  }
+
+  /**
+   * Legacy Helper: Fetch Store Products as Flattened SKUs for backward compatibility (/products/get)
+   */
+  async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
+    const { items, total_items } = await this.getCatalogItems(offset, limit);
+    const products: DarazProductItem[] = [];
+
+    items.forEach((item) => {
+      item.skus.forEach((sku) => {
+        products.push({
+          item_id: item.item_id,
+          seller_sku: sku.seller_sku,
+          daraz_sku_id: sku.daraz_sku_id,
+          title: item.title,
+          category: item.category,
+          brand: item.brand,
+          status: sku.status || item.status,
+          description: item.description,
+          price_cents: sku.price_cents,
+          special_price_cents: sku.special_price_cents,
+          quantity: sku.quantity,
+          reserved_quantity: sku.reserved_quantity,
+          images: sku.images.length > 0 ? sku.images : item.images,
+          attributes: item.attributes,
+          variations: item.skus,
+          product_url: item.product_url,
         });
       });
     });
 
-    return { products, total };
+    return { products, total: total_items };
   }
 
   /**

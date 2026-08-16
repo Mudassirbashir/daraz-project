@@ -43,7 +43,8 @@ export async function GET(req: NextRequest) {
 
     // Execute parallel lightweight count queries scoped to userStoreIds
     const [
-      { count: totalProducts },
+      { count: totalItemsCount },
+      { count: totalSkusCount },
       { count: outOfStock },
       { count: lowStock },
       { count: totalOrders },
@@ -55,6 +56,7 @@ export async function GET(req: NextRequest) {
       { count: activeStores },
       { data: todayOrdersData },
     ] = await Promise.all([
+      supabase.from("daraz_products").select("*", { count: "exact", head: true }).in("store_id", userStoreIds),
       supabase.from("listings").select("*", { count: "exact", head: true }).in("store_id", userStoreIds),
       supabase.from("listings").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).eq("stock_quantity", 0),
       supabase.from("listings").select("*", { count: "exact", head: true }).in("store_id", userStoreIds).gt("stock_quantity", 0).lte("stock_quantity", 10),
@@ -69,11 +71,14 @@ export async function GET(req: NextRequest) {
     ]);
 
     const todaysRevenueCents = (todayOrdersData || []).reduce((acc: number, curr: any) => acc + (curr.total_amount_cents || 0), 0);
+    const resolvedParentItems = (typeof totalItemsCount === "number" && totalItemsCount > 0) ? totalItemsCount : (totalSkusCount || 0);
 
     return NextResponse.json({
       success: true,
       summary: {
-        totalProducts: totalProducts || 0,
+        totalItems: resolvedParentItems,
+        totalSkus: totalSkusCount || 0,
+        totalProducts: resolvedParentItems,
         outOfStock: outOfStock || 0,
         lowStock: lowStock || 0,
         totalOrders: totalOrders || 0,
