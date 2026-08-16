@@ -399,20 +399,30 @@ export class DarazApiClient {
       rawProducts = dataObj.products;
     } else if (Array.isArray(dataObj?.products?.product)) {
       rawProducts = dataObj.products.product;
+    } else if (Array.isArray(dataObj?.Products)) {
+      rawProducts = dataObj.Products;
+    } else if (Array.isArray(dataObj?.Products?.Product)) {
+      rawProducts = dataObj.Products.Product;
     } else if (Array.isArray(dataObj?.product)) {
       rawProducts = dataObj.product;
     }
 
-    const total_items = parseInt(String(dataObj?.total_products || dataObj?.total || rawProducts.length), 10) || rawProducts.length;
+    const total_items = parseInt(String(
+      dataObj?.total_products || dataObj?.total || dataObj?.TotalProducts || dataObj?.Total || rawProducts.length
+    ), 10) || rawProducts.length;
     const raw_items_count = rawProducts.length;
     const items: DarazCatalogItem[] = [];
 
     rawProducts.forEach((p) => {
-      const rawAttributes = p.attributes || {};
+      // Daraz Open Platform examples use PascalCase on some sellers and
+      // camelCase on others. Normalize both instead of creating placeholder
+      // rows when a response uses ItemId / Skus / Attributes.
+      const rawAttributes = p.attributes || p.Attributes || {};
       const productLevelImages: string[] = [];
 
-      if (Array.isArray(p.images)) {
-        p.images.forEach((img: any) => {
+      const rawProductImages = p.images || p.Images || [];
+      if (Array.isArray(rawProductImages)) {
+        rawProductImages.forEach((img: any) => {
           if (typeof img === "string") productLevelImages.push(img);
         });
       }
@@ -428,9 +438,11 @@ export class DarazApiClient {
         rawAttributes.description ||
         rawAttributes.short_description ||
         p.description ||
+        p.Description ||
         "No description provided.";
 
-      const rawSkus = Array.isArray(p.skus) && p.skus.length > 0 ? p.skus : [{}];
+      const skuCollection = p.skus || p.Skus || [];
+      const rawSkus = Array.isArray(skuCollection) && skuCollection.length > 0 ? skuCollection : [{}];
       const parsedSkus: DarazProductSku[] = [];
 
       rawSkus.forEach((sku: any) => {
@@ -447,29 +459,31 @@ export class DarazApiClient {
           new Set(skuImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
         );
 
-        const rawQty = sku.quantity ?? sku.Available ?? 0;
+        const rawQty = sku.quantity ?? sku.Quantity ?? sku.Available ?? sku.available ?? 0;
         const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
 
-        const rawReserved = sku.withholding_quantity ?? sku.reserved_stock ?? 0;
+        const rawReserved = sku.withholding_quantity ?? sku.WithholdingQuantity ?? sku.reserved_stock ?? sku.ReservedStock ?? 0;
         const parsedReserved = Math.max(0, parseInt(String(rawReserved), 10) || 0);
 
-        const priceCents = Math.round((parseFloat(String(sku.price || 0)) || 0) * 100);
-        const specialPriceCents = sku.special_price
-          ? Math.round(parseFloat(String(sku.special_price)) * 100)
+        const priceCents = Math.round((parseFloat(String(sku.price ?? sku.Price ?? 0)) || 0) * 100);
+        const specialPrice = sku.special_price ?? sku.SpecialPrice;
+        const specialPriceCents = specialPrice
+          ? Math.round(parseFloat(String(specialPrice)) * 100)
           : undefined;
 
-        const sellerSku = sku.SellerSku || `SKU_${p.item_id}_${sku.SkuId || "0"}`;
+        const itemId = String(p.item_id || p.ItemId || p.itemId || "");
+        const sellerSku = sku.SellerSku || sku.seller_sku || sku.sellerSku || `SKU_${itemId || "UNKNOWN"}_${sku.SkuId || sku.sku_id || sku.Sku || "0"}`;
 
         parsedSkus.push({
           seller_sku: sellerSku,
-          daraz_sku_id: String(sku.SkuId || sku.ShopSku || ""),
-          shop_sku: String(sku.ShopSku || sku.SkuId || ""),
-          item_id: String(p.item_id || "0"),
+          daraz_sku_id: String(sku.SkuId || sku.sku_id || sku.Sku || sku.ShopSku || ""),
+          shop_sku: String(sku.ShopSku || sku.shop_sku || sku.SkuId || sku.sku_id || ""),
+          item_id: itemId || "0",
           price_cents: priceCents,
           special_price_cents: specialPriceCents,
           quantity: parsedQuantity,
           reserved_quantity: parsedReserved,
-          status: String(sku.Status || p.status || "active").toLowerCase(),
+          status: String(sku.Status || sku.status || p.status || p.Status || "active").toLowerCase(),
           images: normalizedImages,
           package_content: sku.package_content || "",
           attributes: sku,
@@ -481,15 +495,15 @@ export class DarazApiClient {
       );
 
       items.push({
-        item_id: String(p.item_id || `ITEM_${Date.now()}`),
-        title: rawAttributes.name_en || rawAttributes.name || p.title || "Daraz Product",
-        category: String(p.primary_category || rawAttributes.category || "General"),
-        brand: String(rawAttributes.brand || "Generic"),
-        status: String(p.status || "active").toLowerCase(),
+        item_id: String(p.item_id || p.ItemId || p.itemId || `ITEM_${Date.now()}`),
+        title: rawAttributes.name_en || rawAttributes.NameEn || rawAttributes.name || rawAttributes.Name || p.title || p.Title || "Daraz Product",
+        category: String(p.primary_category || p.PrimaryCategory || rawAttributes.category || rawAttributes.Category || "General"),
+        brand: String(rawAttributes.brand || rawAttributes.Brand || "Generic"),
+        status: String(p.status || p.Status || "active").toLowerCase(),
         description,
         images: parentImages,
         attributes: rawAttributes,
-        product_url: p.url || p.product_url || rawAttributes.product_url || "",
+        product_url: p.url || p.Url || p.product_url || p.ProductUrl || rawAttributes.product_url || rawAttributes.ProductUrl || "",
         skus: parsedSkus,
       });
     });
@@ -1029,4 +1043,3 @@ export function sanitizeLogPayload(payload: any): any {
     return { sanitized: true };
   }
 }
-

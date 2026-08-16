@@ -151,7 +151,9 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
         // B. Sync Parent Catalog Items & SKU Variations with Complete Pagination
         let productOffset = 0;
-        const catalogLimit = 50;
+        // Daraz supports up to 500 parent items per request. Use the maximum
+        // safe page size, then continue until the API has no further items.
+        const catalogLimit = 500;
         let totalItemsCount = 0;
         let rawItemsReturned = 0;
         let currentPageNum = 1;
