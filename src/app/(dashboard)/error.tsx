@@ -11,7 +11,12 @@ export default function DashboardError({
   reset: () => void;
 }) {
   useEffect(() => {
-    console.error("[Dashboard Runtime Exception]:", error);
+    console.error("[DASHBOARD FATAL ERROR - Dashboard Error Boundary]:", {
+      name: error?.name,
+      message: error?.message,
+      stack: error?.stack,
+      digest: error?.digest,
+    });
   }, [error]);
 
   const isEnvVarError = error.message?.includes("Missing Environment Variable") || error.message?.includes("environment variable");

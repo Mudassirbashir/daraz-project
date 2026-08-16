@@ -65,40 +65,90 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   }
 
   // 1. Fetch Authorized Stores
-  let storesQuery = supabase
-    .from("daraz_stores")
-    .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
-    .order("created_at", { ascending: true });
+  let storesList: any[] = [];
+  try {
+    let storesQuery = supabase
+      .from("daraz_stores")
+      .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, last_sync_error, updated_at")
+      .order("created_at", { ascending: true });
 
-  if (userStoreIds.length > 0) {
-    storesQuery = storesQuery.in("id", userStoreIds);
+    if (userStoreIds.length > 0) {
+      storesQuery = storesQuery.in("id", userStoreIds);
+    }
+
+    const { data: storesData, error: storesErr } = await storesQuery;
+    if (storesErr) {
+      console.error("[DASHBOARD FATAL ERROR - Page Stores Query]:", {
+        name: storesErr.name,
+        message: storesErr.message,
+        code: (storesErr as any).code,
+        details: (storesErr as any).details,
+        hint: (storesErr as any).hint,
+      });
+    } else {
+      storesList = storesData || [];
+    }
+  } catch (ex: any) {
+    console.error("[DASHBOARD FATAL ERROR - Page Stores Exception]:", {
+      name: ex?.name,
+      message: ex?.message || String(ex),
+      stack: ex?.stack,
+    });
   }
-
-  const { data: storesData } = await storesQuery;
-  let storesList = storesData || [];
 
   // 2. Fetch Listings & Orders Metrics
-  let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
-  if (!isCombinedView && selectedStoreId) {
-    listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
-  } else if (userStoreIds.length > 0) {
-    listingsQuery = listingsQuery.in("store_id", userStoreIds);
+  let listingsData: any[] = [];
+  let ordersList: any[] = [];
+  try {
+    let listingsQuery = supabase.from("listings").select("store_id, stock_quantity");
+    if (!isCombinedView && selectedStoreId) {
+      listingsQuery = listingsQuery.eq("store_id", selectedStoreId);
+    } else if (userStoreIds.length > 0) {
+      listingsQuery = listingsQuery.in("store_id", userStoreIds);
+    }
+
+    let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
+    if (!isCombinedView && selectedStoreId) {
+      ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
+    } else if (userStoreIds.length > 0) {
+      ordersQuery = ordersQuery.in("store_id", userStoreIds);
+    }
+
+    const [listingsResult, ordersResult] = await Promise.all([
+      listingsQuery,
+      ordersQuery,
+    ]);
+
+    if (listingsResult.error) {
+      console.error("[DASHBOARD FATAL ERROR - Page Listings Query]:", {
+        name: listingsResult.error.name,
+        message: listingsResult.error.message,
+        code: (listingsResult.error as any).code,
+        details: (listingsResult.error as any).details,
+        hint: (listingsResult.error as any).hint,
+      });
+    } else {
+      listingsData = listingsResult.data || [];
+    }
+
+    if (ordersResult.error) {
+      console.error("[DASHBOARD FATAL ERROR - Page Orders Query]:", {
+        name: ordersResult.error.name,
+        message: ordersResult.error.message,
+        code: (ordersResult.error as any).code,
+        details: (ordersResult.error as any).details,
+        hint: (ordersResult.error as any).hint,
+      });
+    } else {
+      ordersList = ordersResult.data || [];
+    }
+  } catch (metricsEx: any) {
+    console.error("[DASHBOARD FATAL ERROR - Page Metrics Exception]:", {
+      name: metricsEx?.name,
+      message: metricsEx?.message || String(metricsEx),
+      stack: metricsEx?.stack,
+    });
   }
-
-  let ordersQuery = supabase.from("orders").select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at");
-  if (!isCombinedView && selectedStoreId) {
-    ordersQuery = ordersQuery.eq("store_id", selectedStoreId);
-  } else if (userStoreIds.length > 0) {
-    ordersQuery = ordersQuery.in("store_id", userStoreIds);
-  }
-
-  const [listingsResult, ordersResult] = await Promise.all([
-    listingsQuery,
-    ordersQuery,
-  ]);
-
-  const listingsData = listingsResult.data || [];
-  const ordersList = ordersResult.data || [];
 
   // Build per-store metrics map in memory (robust normalized string keys)
   const storeListingsMap: Record<string, { count: number; stock: number }> = {};
