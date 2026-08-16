@@ -232,7 +232,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                       </span>
                     </div>
                     <p className="text-[11px] font-mono text-slate-500 dark:text-slate-400 mt-0.5">
-                      Seller ID: {store.seller_id}
+                      {store.isConnected && store.seller_id && store.seller_id !== "N/A" ? `Seller ID: ${store.seller_id}` : "Disconnected Slot"}
                     </p>
                   </div>
                 </div>

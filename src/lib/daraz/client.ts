@@ -432,7 +432,7 @@ export class DarazApiClient {
           item_id: String(p.item_id || sku.ShopSku || `ITEM_${Date.now()}`),
           seller_sku: sellerSku,
           daraz_sku_id: String(sku.SkuId || sku.ShopSku || ""),
-          title: rawAttributes.name || sku.package_content || p.title || "Daraz Product",
+          title: rawAttributes.name_en || rawAttributes.name || sku.package_content || p.title || "Daraz Product",
           category: String(p.primary_category || rawAttributes.category || "General"),
           brand: String(rawAttributes.brand || "Generic"),
           status: String(p.status || sku.Status || "active").toLowerCase(),

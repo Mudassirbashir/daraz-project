@@ -67,9 +67,31 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
 
   if (!product) return null;
 
-  const images: string[] = Array.isArray(product.images) && product.images.length > 0
-    ? (product.images as string[])
-    : [];
+  let images: string[] = [];
+  if (Array.isArray(product.images)) {
+    images = product.images.filter(Boolean);
+  } else if (typeof product.images === "string" && product.images.trim()) {
+    try {
+      const parsed = JSON.parse(product.images);
+      if (Array.isArray(parsed)) images = parsed.filter(Boolean);
+      else if (typeof parsed === "string") images = [parsed];
+    } catch {
+      images = [product.images];
+    }
+  }
+  if (images.length === 0 && product.primary_image_url) {
+    if (typeof product.primary_image_url === "string" && (product.primary_image_url.startsWith("[") || product.primary_image_url.startsWith("{"))) {
+      try {
+        const parsed = JSON.parse(product.primary_image_url);
+        if (Array.isArray(parsed)) images = parsed.filter(Boolean);
+        else if (typeof parsed === "string") images = [parsed];
+      } catch {
+        images = [product.primary_image_url];
+      }
+    } else if (typeof product.primary_image_url === "string") {
+      images = [product.primary_image_url];
+    }
+  }
 
   const priceFormatted = (product.price_cents / 100).toLocaleString("en-PK", {
     style: "currency",

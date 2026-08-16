@@ -145,7 +145,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
         let ordersQuery = supabase
           .from("orders")
-          .select("id, store_id, status, workflow_status, is_packed, is_label_printed, total_amount_cents, order_date, created_at")
+          .select("id, store_id, status, workflow_status, total_amount_cents, order_date, created_at")
           .in("store_id", targetStoreIds);
 
         const [listingsResult, ordersResult] = await Promise.all([
@@ -371,7 +371,9 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                     </div>
                     <div>
                       <h3 className="font-bold text-slate-900 dark:text-white text-sm">{store.store_name}</h3>
-                      <p className="text-[10px] font-mono text-slate-400">Seller ID: {store.seller_id}</p>
+                      <p className="text-[10px] font-mono text-slate-400">
+                        {store.isConnected && store.seller_id && store.seller_id !== "N/A" ? `Seller ID: ${store.seller_id}` : "Disconnected Slot"}
+                      </p>
                     </div>
                   </div>
 

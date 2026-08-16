@@ -22,12 +22,28 @@ export function ProductImage({
 
   // Protocol & URL normalization
   let normalizedSrc = "";
-  if (src && typeof src === "string" && src.trim()) {
-    normalizedSrc = src.trim();
-    if (normalizedSrc.startsWith("//")) {
-      normalizedSrc = `https:${normalizedSrc}`;
-    } else if (normalizedSrc.startsWith("http://")) {
-      normalizedSrc = normalizedSrc.replace("http://", "https://");
+  let raw: any = src;
+
+  if (raw) {
+    if (typeof raw === "string" && (raw.trim().startsWith("[") || raw.trim().startsWith("{"))) {
+      try {
+        const parsed = JSON.parse(raw);
+        if (Array.isArray(parsed) && parsed.length > 0) raw = parsed[0];
+        else if (typeof parsed === "object" && parsed !== null) raw = Object.values(parsed)[0];
+      } catch {
+        // Keep raw string
+      }
+    } else if (Array.isArray(raw) && raw.length > 0) {
+      raw = raw[0];
+    }
+
+    if (typeof raw === "string" && raw.trim()) {
+      normalizedSrc = raw.trim();
+      if (normalizedSrc.startsWith("//")) {
+        normalizedSrc = `https:${normalizedSrc}`;
+      } else if (normalizedSrc.startsWith("http://")) {
+        normalizedSrc = normalizedSrc.replace("http://", "https://");
+      }
     }
   }
 

@@ -22,15 +22,31 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     const supabase = createAdminClient();
 
-    // Fetch order, store, and order items
-    const { data: order, error: fetchErr } = await supabase
+    // Fetch order, store, and order items by UUID id or daraz_order_id
+    let order: any = null;
+
+    const { data: primaryOrder } = await supabase
       .from("orders")
       .select("*, daraz_stores(*), order_items(*)")
       .eq("id", id)
-      .single();
+      .maybeSingle();
 
-    if (fetchErr || !order) {
-      return NextResponse.json({ success: false, error: "Order not found." }, { status: 404 });
+    if (primaryOrder) {
+      order = primaryOrder;
+    } else {
+      const { data: fallbackOrder } = await supabase
+        .from("orders")
+        .select("*, daraz_stores(*), order_items(*)")
+        .eq("daraz_order_id", id)
+        .maybeSingle();
+
+      if (fallbackOrder) {
+        order = fallbackOrder;
+      }
+    }
+
+    if (!order) {
+      return NextResponse.json({ success: false, error: `Order '${id}' not found in ERP system.` }, { status: 404 });
     }
 
     const store = order.daraz_stores;
