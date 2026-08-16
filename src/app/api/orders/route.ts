@@ -13,8 +13,8 @@ export async function GET(req: NextRequest) {
   const limit = isNaN(limitInput) || limitInput < 1 ? 25 : Math.min(limitInput, 100);
 
   const search = searchParams.get("search") || "";
-  const status = searchParams.get("status") || "all";
-  const storeId = searchParams.get("store_id") || "all";
+  const storeIdParam = searchParams.get("store_id") || searchParams.get("storeId") || "all";
+  const storeId = storeIdParam;
   const city = searchParams.get("city") || "all";
   const sortBy = searchParams.get("sort_by") || "order_date";
   const sortOrder = searchParams.get("sort_order") || "desc";
@@ -88,7 +88,7 @@ export async function GET(req: NextRequest) {
     // 4. Search Filter
     if (search.trim()) {
       const q = `%${search.trim()}%`;
-      query = query.or(`daraz_order_id.ilike.${q},customer_name.ilike.${q},tracking_number.ilike.${q}`);
+      query = query.or(`daraz_order_id.ilike.${q},customer_name.ilike.${q},tracking_number.ilike.${q},customer_phone.ilike.${q},customer_city.ilike.${q}`);
     }
 
     // 5. Sorting & Range

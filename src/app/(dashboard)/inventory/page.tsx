@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { InventoryDetailModal } from "@/components/inventory/InventoryDetailModal";
 import {
@@ -14,11 +15,14 @@ import {
   Columns,
   Eye,
   ChevronLeft,
-  ChevronRight
+  ChevronRight,
+  Store
 } from "lucide-react";
-import { createClient } from "@/lib/supabase/client";
 
-export default function InventoryPage() {
+function InventoryPageContent() {
+  const searchParams = useSearchParams();
+  const currentStoreId = searchParams.get("storeId") || searchParams.get("store_id") || "all";
+
   const [inventory, setInventory] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -42,6 +46,7 @@ export default function InventoryPage() {
   // Column Visibility State
   const [columnVisibility, setColumnVisibility] = useState({
     sellerSku: true,
+    store: true,
     title: true,
     location: true,
     available: true,
@@ -61,6 +66,7 @@ export default function InventoryPage() {
         limit: String(limit),
         search: searchQuery,
         stock_status: stockStatusFilter,
+        store_id: currentStoreId,
       });
 
       const res = await fetch(`/api/inventory?${params.toString()}`);
@@ -83,7 +89,7 @@ export default function InventoryPage() {
 
   useEffect(() => {
     fetchInventory();
-  }, [page, limit, searchQuery, stockStatusFilter]);
+  }, [page, limit, searchQuery, stockStatusFilter, currentStoreId]);
 
   const exportToCSV = () => {
     if (inventory.length === 0) {
@@ -91,9 +97,10 @@ export default function InventoryPage() {
       return;
     }
 
-    const headers = ["Product Code", "Product Name", "Shelf Location", "Stock Available", "On Hold", "Ready to Sell"];
+    const headers = ["Product Code", "Store", "Product Name", "Shelf Location", "Stock Available", "On Hold", "Ready to Sell"];
     const rows = inventory.map((item) => [
       `"${item.sku || ""}"`,
+      `"${item.store_name || "Daraz Store"}"`,
       `"${(item.title || "").replace(/"/g, '""')}"`,
       `"${item.storage_location || "Main Warehouse"}"`,
       item.quantity_on_hand || 0,
@@ -116,9 +123,17 @@ export default function InventoryPage() {
       {/* Header & Controls */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Stock</h1>
-          <p className="text-xs text-slate-500">
-            See how much product stock you have ready to sell.
+          <div className="flex items-center space-x-2">
+            <h1 className="text-2xl font-bold text-slate-900">Stock</h1>
+            {currentStoreId !== "all" && (
+              <span className="inline-flex items-center space-x-1 rounded-xl bg-orange-50 border border-orange-200 px-2.5 py-0.5 text-xs font-bold text-orange-700">
+                <Store className="h-3.5 w-3.5 text-orange-500" />
+                <span>Store Scoped</span>
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Store-isolated sellable product inventory from Daraz.
           </p>
         </div>
 
@@ -145,7 +160,7 @@ export default function InventoryPage() {
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
           <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Available Stock</span>
-          <p className="mt-1 text-2xl font-bold text-emerald-700">{metrics.totalAvailableStock || 0} units</p>
+          <p className="mt-1 text-2xl font-bold text-emerald-700">{(metrics.totalAvailableStock || 0).toLocaleString()} units</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -170,7 +185,7 @@ export default function InventoryPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search stock by product name or code..."
+            placeholder="Search stock by product name, Seller SKU, or item ID..."
             className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
           />
         </div>
@@ -184,10 +199,10 @@ export default function InventoryPage() {
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none"
           >
-            <option value="all">All Stock</option>
-            <option value="in_stock">In Stock</option>
-            <option value="low_stock">Low Stock Alert</option>
-            <option value="out_of_stock">Out of Stock</option>
+            <option value="all">All Stock Statuses</option>
+            <option value="in_stock">In Stock (&gt; 0)</option>
+            <option value="low_stock">Low Stock Alert (1-10 units)</option>
+            <option value="out_of_stock">Out of Stock (0 units)</option>
           </select>
 
           <div className="relative">
@@ -237,7 +252,8 @@ export default function InventoryPage() {
             <table className="w-full text-left">
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
-                  {columnVisibility.sellerSku && <th className="px-4 py-3">Product Code</th>}
+                  {columnVisibility.sellerSku && <th className="px-4 py-3">Product Code / SKU</th>}
+                  {columnVisibility.store && <th className="px-4 py-3">Store</th>}
                   {columnVisibility.title && <th className="px-4 py-3">Product Name</th>}
                   {columnVisibility.location && <th className="px-4 py-3">Shelf Location</th>}
                   {columnVisibility.available && <th className="px-4 py-3">Stock Available</th>}
@@ -258,12 +274,21 @@ export default function InventoryPage() {
                         <td className="px-4 py-3 font-mono font-bold text-slate-900">{i.sku || "SKU-001"}</td>
                       )}
 
+                      {columnVisibility.store && (
+                        <td className="px-4 py-3 font-semibold text-slate-700">
+                          <span className="inline-flex items-center space-x-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                            <Store className="h-3 w-3 text-slate-500" />
+                            <span>{i.store_name || "Daraz Store"}</span>
+                          </span>
+                        </td>
+                      )}
+
                       {columnVisibility.title && (
                         <td className="px-4 py-3 font-bold text-slate-900">{i.title || "Product Item"}</td>
                       )}
 
                       {columnVisibility.location && (
-                        <td className="px-4 py-3 font-mono text-slate-600">{i.storage_location || "Shelf A1"}</td>
+                        <td className="px-4 py-3 font-mono text-slate-600">{i.storage_location || "Main Warehouse"}</td>
                       )}
 
                       {columnVisibility.available && (
@@ -276,8 +301,14 @@ export default function InventoryPage() {
 
                       {columnVisibility.sellable && (
                         <td className="px-4 py-3">
-                          <span className={`inline-flex items-center px-2 py-0.5 rounded font-bold text-[11px] ${sellable > 0 ? "bg-emerald-50 text-emerald-700 border border-emerald-200" : "bg-red-50 text-red-700 border border-red-200"}`}>
-                            {sellable} ready
+                          <span className={`inline-flex items-center px-2 py-0.5 rounded font-bold text-[11px] ${
+                            onHand === 0
+                              ? "bg-red-50 text-red-700 border border-red-200"
+                              : onHand <= 10
+                              ? "bg-amber-50 text-amber-700 border border-amber-200"
+                              : "bg-emerald-50 text-emerald-700 border border-emerald-200"
+                          }`}>
+                            {sellable} ready {onHand === 0 ? "(Out of Stock)" : onHand <= 10 ? "(Low Stock)" : ""}
                           </span>
                         </td>
                       )}
@@ -301,7 +332,7 @@ export default function InventoryPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700">No products in stock yet.</p>
+            <p className="font-medium text-slate-700">No stock records found for this store/search criteria.</p>
           </div>
         )}
 
@@ -362,5 +393,18 @@ export default function InventoryPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function InventoryPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
+        <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
+        <span>Loading stock page...</span>
+      </div>
+    }>
+      <InventoryPageContent />
+    </Suspense>
   );
 }

@@ -1,55 +1,84 @@
 /**
  * Store Naming & Display Utilities
- * Standardizes all store names across ERP UI to generic identifiers (Store 1, Store 2, Store 3).
+ * Dynamic store naming: uses the official connected Daraz seller/store name
+ * (e.g., "ISD Traders", "M Saleem Mall", "Haleema Mall").
  */
 
 export interface StoreLike {
   id?: string;
   store_name?: string | null;
+  seller_id?: string | null;
   slot_number?: number | null;
   store_code?: string | null;
 }
 
 /**
- * Returns a standardized, generic display name for a Daraz store ("Store 1", "Store 2", "Store 3").
+ * Returns the official display name for a Daraz store.
+ * Prefers the real store_name returned by Daraz Open Platform API.
  */
 export function getStoreDisplayName(
   store?: StoreLike | null,
   fallbackIndex?: number
 ): string {
   if (!store) {
-    return typeof fallbackIndex === "number" ? `Store ${fallbackIndex + 1}` : "Store 1";
+    return typeof fallbackIndex === "number" ? `Store ${fallbackIndex + 1}` : "Daraz Store";
   }
 
-  // 1. If store has an explicit slot_number (1, 2, 3...)
+  // 1. Prefer official store_name if present and non-empty
+  if (store.store_name && store.store_name.trim()) {
+    const name = store.store_name.trim();
+    // If store_name is generic "Store N", check if seller_id or store_code is available
+    if (/^Store \d+$/i.test(name)) {
+      if (store.seller_id && store.seller_id !== "N/A" && !store.seller_id.startsWith("SELLER_")) {
+        return `Seller ${store.seller_id}`;
+      }
+    }
+    return name;
+  }
+
+  // 2. Fallback to seller_id if available
+  if (store.seller_id && store.seller_id !== "N/A" && !store.seller_id.startsWith("SELLER_")) {
+    return `Seller ${store.seller_id}`;
+  }
+
+  // 3. Fallback to store_code if available
+  if (store.store_code && store.store_code.trim()) {
+    return store.store_code.trim();
+  }
+
+  // 4. Fallback slot number
   if (typeof store.slot_number === "number" && store.slot_number > 0) {
     return `Store ${store.slot_number}`;
   }
 
-  // 2. If fallbackIndex is provided (0-indexed position from list)
   if (typeof fallbackIndex === "number" && fallbackIndex >= 0) {
     return `Store ${fallbackIndex + 1}`;
   }
 
-  // 3. Check if store_name already matches "Store N"
-  if (store.store_name && /^Store \d+$/i.test(store.store_name.trim())) {
-    const match = store.store_name.match(/\d+/);
-    if (match) {
-      return `Store ${match[0]}`;
-    }
-  }
-
-  // 4. Default fallback
-  return "Store 1";
+  return "Daraz Store";
 }
 
 /**
- * Returns a 2-character badge initial (e.g. "S1", "S2", "S3", "DS") for a store display name.
+ * Returns 2-character badge initials (e.g. "IT" for ISD Traders, "MS" for M Saleem Mall) for a store.
  */
 export function getStoreInitials(displayName: string): string {
-  const match = displayName.match(/\d+/);
-  if (match) {
-    return `S${match[0]}`;
+  if (!displayName || !displayName.trim()) return "DS";
+  const clean = displayName.trim();
+
+  // If match "Store N"
+  const storeNumMatch = clean.match(/^Store (\d+)$/i);
+  if (storeNumMatch) {
+    return `S${storeNumMatch[1]}`;
   }
+
+  const words = clean.split(/\s+/).filter(Boolean);
+  if (words.length >= 2) {
+    return (words[0][0] + words[1][0]).toUpperCase();
+  } else if (words.length === 1 && words[0].length >= 2) {
+    return words[0].slice(0, 2).toUpperCase();
+  } else if (words.length === 1 && words[0].length === 1) {
+    return words[0].toUpperCase();
+  }
+
   return "DS";
 }

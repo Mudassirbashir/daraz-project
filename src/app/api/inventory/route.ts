@@ -14,7 +14,8 @@ export async function GET(req: NextRequest) {
 
   const search = searchParams.get("search") || "";
   const stockStatus = searchParams.get("stock_status") || "all";
-  const storeId = searchParams.get("store_id") || "all";
+  const storeIdParam = searchParams.get("store_id") || searchParams.get("storeId") || "all";
+  const storeId = storeIdParam;
   const sortBy = searchParams.get("sort_by") || "created_at";
   const sortOrder = searchParams.get("sort_order") || "desc";
 
@@ -69,56 +70,79 @@ export async function GET(req: NextRequest) {
       targetStoreIds = [storeId];
     }
 
+    // Query listings as the authoritative store-isolated stock ledger
     let query = supabase
-      .from("inventory")
-      .select("*, listings!inner(store_id, daraz_item_id, daraz_sku_id, title, price_cents, special_price_cents, is_synced, last_synced_at, daraz_stores(id, store_name, store_code, region))", { count: "exact" })
-      .in("listings.store_id", targetStoreIds);
+      .from("listings")
+      .select("*, inventory(quantity_reserved, storage_location), daraz_stores(id, store_name, store_code, region, seller_id)", { count: "exact" })
+      .in("store_id", targetStoreIds);
 
     // 1. Filter by Stock Status
     if (stockStatus === "out_of_stock") {
-      query = query.eq("quantity_on_hand", 0);
+      query = query.eq("stock_quantity", 0);
     } else if (stockStatus === "low_stock") {
-      query = query.gt("quantity_on_hand", 0).lte("quantity_on_hand", 10);
+      query = query.gt("stock_quantity", 0).lte("stock_quantity", 10);
     } else if (stockStatus === "in_stock") {
-      query = query.gt("quantity_on_hand", 0);
+      query = query.gt("stock_quantity", 0);
     }
 
     // 2. Filter by Search
     if (search.trim()) {
       const q = `%${search.trim()}%`;
-      query = query.or(`sku.ilike.${q},title.ilike.${q},storage_location.ilike.${q}`);
+      query = query.or(`seller_sku.ilike.${q},title.ilike.${q},daraz_item_id.ilike.${q}`);
     }
 
     // 3. Sorting & Pagination Range
-    const validSortFields = ["created_at", "title", "sku", "quantity_on_hand"];
-    const safeSortBy = validSortFields.includes(sortBy) ? sortBy : "created_at";
+    const validSortFields = ["created_at", "title", "seller_sku", "stock_quantity"];
+    const safeSortBy = sortBy === "sku" ? "seller_sku" : sortBy === "quantity_on_hand" ? "stock_quantity" : validSortFields.includes(sortBy) ? sortBy : "created_at";
 
     query = query
       .order(safeSortBy, { ascending: sortOrder === "asc" })
       .range(offset, offset + limit - 1);
 
-    const { data: rawInventory, count, error } = await query;
+    const { data: listings, count, error } = await query;
 
     if (error) {
-      throw new Error(`Database inventory query error: ${error.message}`);
+      throw new Error(`Database stock listings query error: ${error.message}`);
     }
 
-    // Filter by store_id post-fetch if storeId specified
-    let filteredInventory = rawInventory || [];
-    if (storeId !== "all") {
-      filteredInventory = filteredInventory.filter((item: any) =>
-        item.listings?.some((l: any) => l.store_id === storeId)
-      );
-    }
+    // Map listings to standard inventory shape expected by frontend UI
+    const formattedInventory = (listings || []).map((l: any) => {
+      const invData = Array.isArray(l.inventory) ? l.inventory[0] : l.inventory;
+      const reserved = invData?.quantity_reserved || 0;
+      const location = invData?.storage_location || "Main Warehouse";
 
-    // Calculate Centralized Dashboard Metrics (Scoped to target active stores)
-    const { data: allItems } = await supabase
-      .from("inventory")
-      .select("quantity_on_hand, quantity_reserved, reorder_point, updated_at, listings!inner(store_id)")
-      .in("listings.store_id", targetStoreIds);
+      return {
+        id: l.id,
+        sku: l.seller_sku,
+        title: l.title,
+        quantity_on_hand: l.stock_quantity || 0,
+        quantity_reserved: reserved,
+        storage_location: location,
+        price_cents: l.price_cents,
+        special_price_cents: l.special_price_cents,
+        daraz_item_id: l.daraz_item_id,
+        daraz_sku_id: l.daraz_sku_id,
+        store_id: l.store_id,
+        store_name: l.daraz_stores?.store_name || "Daraz Store",
+        store_code: l.daraz_stores?.store_code || "STORE",
+        seller_id: l.daraz_stores?.seller_id || "N/A",
+        is_synced: l.is_synced,
+        last_synced_at: l.last_synced_at,
+        updated_at: l.updated_at,
+      };
+    });
+
+    // Calculate Centralized Stock Metrics scoped strictly to targetStoreIds
+    const { data: allListings } = await supabase
+      .from("listings")
+      .select("stock_quantity, daraz_item_id, updated_at")
+      .in("store_id", targetStoreIds);
+
+    const distinctParentItems = new Set((allListings || []).map((l: any) => l.daraz_item_id).filter(Boolean)).size;
+    const totalProductsCount = distinctParentItems > 0 ? distinctParentItems : (allListings || []).length;
 
     const metrics = {
-      totalProducts: allItems?.length || 0,
+      totalProducts: totalProductsCount,
       totalAvailableStock: 0,
       totalReservedStock: 0,
       lowStockProducts: 0,
@@ -128,17 +152,13 @@ export async function GET(req: NextRequest) {
 
     const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
 
-    (allItems || []).forEach((item: any) => {
-      const qty = item.quantity_on_hand || 0;
-      const rsv = item.quantity_reserved || 0;
-      const threshold = item.reorder_point || 10;
-
+    (allListings || []).forEach((item: any) => {
+      const qty = item.stock_quantity || 0;
       metrics.totalAvailableStock += qty;
-      metrics.totalReservedStock += rsv;
 
       if (qty === 0) {
         metrics.outOfStockProducts++;
-      } else if (qty <= threshold) {
+      } else if (qty <= 10) {
         metrics.lowStockProducts++;
       }
 
@@ -149,7 +169,7 @@ export async function GET(req: NextRequest) {
 
     return NextResponse.json({
       success: true,
-      inventory: filteredInventory,
+      inventory: formattedInventory,
       metrics,
       pagination: {
         page,

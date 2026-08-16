@@ -1,6 +1,7 @@
 "use client";
 
-import React, { useState, useEffect } from "react";
+import React, { useState, useEffect, Suspense } from "react";
+import { useSearchParams } from "next/navigation";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { OrderDetailsModal } from "@/components/orders/OrderDetailsModal";
 import { PackingModal } from "@/components/operations/PackingModal";
@@ -16,12 +17,13 @@ import {
   ChevronLeft,
   ChevronRight,
   Package,
-  Truck,
-  CheckCircle2,
-  Clock
+  Store
 } from "lucide-react";
 
-export default function OrdersPage() {
+function OrdersPageContent() {
+  const searchParams = useSearchParams();
+  const currentStoreId = searchParams.get("storeId") || searchParams.get("store_id") || "all";
+
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState("");
@@ -29,9 +31,12 @@ export default function OrdersPage() {
 
   // Metrics
   const [metrics, setMetrics] = useState({
+    totalOrders: 0,
     pending: 0,
+    readyToShip: 0,
     shipped: 0,
     delivered: 0,
+    canceled: 0,
   });
 
   // Pagination State
@@ -43,6 +48,7 @@ export default function OrdersPage() {
   // Column Visibility State
   const [columnVisibility, setColumnVisibility] = useState({
     orderId: true,
+    store: true,
     customer: true,
     amount: true,
     status: true,
@@ -63,6 +69,7 @@ export default function OrdersPage() {
         limit: String(limit),
         search: searchQuery,
         status: statusFilter,
+        store_id: currentStoreId,
       });
 
       const res = await fetch(`/api/orders?${params.toString()}`);
@@ -85,7 +92,7 @@ export default function OrdersPage() {
 
   useEffect(() => {
     fetchOrders();
-  }, [page, limit, searchQuery, statusFilter]);
+  }, [page, limit, searchQuery, statusFilter, currentStoreId]);
 
   const exportToCSV = () => {
     if (orders.length === 0) {
@@ -93,12 +100,13 @@ export default function OrdersPage() {
       return;
     }
 
-    const headers = ["Order ID", "Customer Name", "Total Amount (PKR)", "Status", "Tracking Number"];
+    const headers = ["Order ID", "Store", "Customer Name", "Total Amount (PKR)", "Status", "Tracking Number"];
     const rows = orders.map((o) => [
       `"${o.daraz_order_id || o.id.slice(0, 8)}"`,
+      `"${o.daraz_stores?.store_name || "Daraz Store"}"`,
       `"${(o.customer_name || "Daraz Customer").replace(/"/g, '""')}"`,
       ((o.total_amount_cents || 0) / 100).toFixed(2),
-      o.order_status || "Pending",
+      o.status || o.workflow_status || "Pending",
       `"${o.tracking_number || "N/A"}"`,
     ]);
 
@@ -117,9 +125,17 @@ export default function OrdersPage() {
       {/* Header & Actions */}
       <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
-          <p className="text-xs text-slate-500">
-            See what customers ordered and track package deliveries.
+          <div className="flex items-center space-x-2">
+            <h1 className="text-2xl font-bold text-slate-900">Orders</h1>
+            {currentStoreId !== "all" && (
+              <span className="inline-flex items-center space-x-1 rounded-xl bg-orange-50 border border-orange-200 px-2.5 py-0.5 text-xs font-bold text-orange-700">
+                <Store className="h-3.5 w-3.5 text-orange-500" />
+                <span>Store Scoped</span>
+              </span>
+            )}
+          </div>
+          <p className="text-xs text-slate-500 mt-0.5">
+            Authoritative order management synchronized with Daraz Seller Center.
           </p>
         </div>
 
@@ -140,8 +156,8 @@ export default function OrdersPage() {
       {/* Metrics Cards */}
       <div className="grid grid-cols-1 gap-4 sm:grid-cols-4 text-xs">
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
-          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">All Orders</span>
-          <p className="mt-1 text-2xl font-bold text-slate-900">{totalItems} orders</p>
+          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">Total Orders</span>
+          <p className="mt-1 text-2xl font-bold text-slate-900">{metrics.totalOrders || totalItems} orders</p>
         </div>
 
         <div className="rounded-2xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -171,7 +187,7 @@ export default function OrdersPage() {
               setSearchQuery(e.target.value);
               setPage(1);
             }}
-            placeholder="Search orders by order number or customer..."
+            placeholder="Search orders by order #, customer, tracking, or city..."
             className="w-full rounded-lg border border-slate-300 pl-10 pr-4 py-2 text-xs text-slate-900 focus:border-orange-500 focus:outline-none"
           />
         </div>
@@ -185,10 +201,12 @@ export default function OrdersPage() {
             }}
             className="rounded-lg border border-slate-300 bg-white px-3 py-2 text-xs font-semibold text-slate-700 focus:outline-none"
           >
-            <option value="all">All Orders</option>
-            <option value="pending">Waiting to Send</option>
-            <option value="shipped">On the Way</option>
+            <option value="all">All Statuses</option>
+            <option value="pending">Waiting to Send (Pending/Unpaid)</option>
+            <option value="ready_to_ship">Ready to Ship</option>
+            <option value="shipped">On the Way (Shipped)</option>
             <option value="delivered">Delivered</option>
+            <option value="canceled">Canceled / Returned</option>
           </select>
 
           <div className="relative">
@@ -231,7 +249,7 @@ export default function OrdersPage() {
         {loading ? (
           <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
             <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
-            <span>Loading orders...</span>
+            <span>Loading authoritative Daraz orders...</span>
           </div>
         ) : orders.length > 0 ? (
           <div className="overflow-x-auto">
@@ -239,6 +257,7 @@ export default function OrdersPage() {
               <thead className="bg-slate-50 text-slate-500 uppercase font-semibold border-b border-slate-200">
                 <tr>
                   {columnVisibility.orderId && <th className="px-4 py-3">Order Number</th>}
+                  {columnVisibility.store && <th className="px-4 py-3">Store</th>}
                   {columnVisibility.customer && <th className="px-4 py-3">Customer</th>}
                   {columnVisibility.amount && <th className="px-4 py-3">Order Total</th>}
                   {columnVisibility.status && <th className="px-4 py-3">Status</th>}
@@ -252,6 +271,7 @@ export default function OrdersPage() {
                     style: "currency",
                     currency: "PKR",
                   });
+                  const storeName = o.daraz_stores?.store_name || "Daraz Store";
 
                   return (
                     <tr key={o.id} className="hover:bg-slate-50/50 transition-colors">
@@ -259,8 +279,22 @@ export default function OrdersPage() {
                         <td className="px-4 py-3 font-mono font-bold text-slate-900">#{o.daraz_order_id || o.id.slice(0, 8)}</td>
                       )}
 
+                      {columnVisibility.store && (
+                        <td className="px-4 py-3 font-semibold text-slate-700">
+                          <span className="inline-flex items-center space-x-1 rounded-md bg-slate-100 px-2 py-0.5 text-[11px] font-bold text-slate-700">
+                            <Store className="h-3 w-3 text-slate-500" />
+                            <span>{storeName}</span>
+                          </span>
+                        </td>
+                      )}
+
                       {columnVisibility.customer && (
-                        <td className="px-4 py-3 font-bold text-slate-800">{o.customer_name || "Daraz Customer"}</td>
+                        <td className="px-4 py-3 font-bold text-slate-800">
+                          <div>{o.customer_name || "Daraz Customer"}</div>
+                          {o.customer_city && (
+                            <div className="text-[10px] text-slate-400 font-normal">{o.customer_city}</div>
+                          )}
+                        </td>
                       )}
 
                       {columnVisibility.amount && (
@@ -272,11 +306,13 @@ export default function OrdersPage() {
                           <span className={`inline-flex items-center px-2 py-0.5 rounded font-bold text-[10px] uppercase ${
                             (o.status || o.workflow_status) === "pending" || (o.status || o.workflow_status) === "unpaid"
                               ? "bg-amber-100 text-amber-800 border border-amber-200"
-                              : (o.status || o.workflow_status) === "shipped" || (o.status || o.workflow_status) === "ready_to_ship"
+                              : (o.status || o.workflow_status) === "ready_to_ship"
+                              ? "bg-blue-50 text-blue-800 border border-blue-200"
+                              : (o.status || o.workflow_status) === "shipped"
                               ? "bg-blue-100 text-blue-800 border border-blue-200"
                               : (o.status || o.workflow_status) === "delivered"
                               ? "bg-emerald-100 text-emerald-800 border border-emerald-200"
-                              : "bg-slate-100 text-slate-800 border border-slate-200"
+                              : "bg-red-100 text-red-800 border border-red-200"
                           }`}>
                             {(o.status || o.workflow_status || "pending").replace(/_/g, " ")}
                           </span>
@@ -315,7 +351,7 @@ export default function OrdersPage() {
         ) : (
           <div className="p-12 text-center text-xs text-slate-500 space-y-2">
             <AlertCircle className="mx-auto h-8 w-8 text-slate-300" />
-            <p className="font-medium text-slate-700">No orders yet. For now, you're all caught up.</p>
+            <p className="font-medium text-slate-700">No orders found for this search/filter criteria.</p>
           </div>
         )}
 
@@ -397,5 +433,18 @@ export default function OrdersPage() {
         />
       )}
     </div>
+  );
+}
+
+export default function OrdersPage() {
+  return (
+    <Suspense fallback={
+      <div className="p-12 text-center text-xs text-slate-500 flex items-center justify-center space-x-2">
+        <RefreshCw className="h-4 w-4 animate-spin text-orange-500" />
+        <span>Loading orders page...</span>
+      </div>
+    }>
+      <OrdersPageContent />
+    </Suspense>
   );
 }
