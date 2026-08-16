@@ -2,7 +2,7 @@ import React from "react";
 import { RoleBadge } from "./RoleBadge";
 import { StoreSwitcher, StoreOption } from "./StoreSwitcher";
 import { AppRole } from "@/types/database.types";
-import { Globe, RefreshCw, LogOut, AlertTriangle, Menu } from "lucide-react";
+import { Globe, RefreshCw, LogOut, AlertTriangle, Menu, Search } from "lucide-react";
 
 interface HeaderProps {
   userName?: string;
@@ -22,7 +22,7 @@ export function Header({
   const activeCount = stores.filter((s) => s.has_token).length;
 
   return (
-    <header className="sticky top-0 z-20 flex h-16 w-full items-center justify-between border-b border-slate-200/80 dark:border-slate-800/80 apple-glass px-4 sm:px-6 shadow-sm select-none shrink-0">
+    <header className="sticky top-0 z-20 flex min-h-[72px] w-full items-center justify-between gap-3 border-b border-slate-200/80 bg-white/90 px-3 py-3 shadow-[0_1px_0_rgba(15,23,42,0.04)] backdrop-blur-xl sm:px-6 dark:border-slate-800/80 dark:bg-slate-950/90 select-none shrink-0">
       {/* Mobile Hamburger & Region / Store Switcher */}
       <div className="flex items-center space-x-2 sm:space-x-3">
         {onToggleMobileMenu && (
@@ -53,17 +53,18 @@ export function Header({
         className="hidden md:flex flex-1 max-w-md mx-4"
       >
         <div className="relative w-full">
+          <Search className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-slate-400" />
           <input
             type="text"
             name="search"
             placeholder="Global Search: Order ID, SKU, Name, Phone, Tracking, Store..."
-            className="w-full rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50/80 dark:bg-slate-900/80 px-4 py-1.5 text-xs text-slate-900 dark:text-white placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 shadow-xs"
+            className="w-full rounded-2xl border border-slate-200 bg-slate-50 px-9 py-2 text-xs text-slate-900 placeholder-slate-400 focus:outline-none focus:ring-2 focus:ring-orange-500 dark:border-slate-800 dark:bg-slate-900 dark:text-white"
           />
         </div>
       </form>
 
       {/* Sync Status, User Role Badge & Logout Button */}
-      <div className="flex items-center space-x-2 sm:space-x-3">
+      <div className="flex items-center space-x-1.5 sm:space-x-3">
         {activeCount > 0 ? (
           <div
             title="Connected Daraz seller accounts"

@@ -13,7 +13,8 @@ import {
   RefreshCw,
   Settings,
   LogOut,
-  X
+  X,
+  Sparkles
 } from "lucide-react";
 import { AppRole } from "@/types/database.types";
 
@@ -120,17 +121,18 @@ export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseM
   const pathname = usePathname();
 
   const sidebarContent = (
-    <aside className="flex h-full w-64 flex-col bg-slate-950/95 text-slate-100 border-r border-slate-800/80 backdrop-blur-2xl select-none shrink-0">
+    <aside className="relative flex h-full w-[272px] flex-col overflow-hidden bg-[#101828] text-slate-100 shadow-[12px_0_40px_rgba(15,23,42,0.08)] select-none shrink-0">
+      <div className="pointer-events-none absolute -right-20 -top-20 h-52 w-52 rounded-full bg-orange-500/20 blur-3xl" />
       {/* Brand Header */}
-      <div className="flex h-16 items-center justify-between border-b border-slate-800/60 px-5">
+      <div className="relative flex h-[76px] items-center justify-between border-b border-white/10 px-5">
         <div className="flex items-center space-x-3">
-          <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gradient-to-tr from-orange-600 via-orange-500 to-amber-400 font-bold text-white text-lg shadow-lg shadow-orange-500/25 border border-white/20">
-            D
+          <div className="flex h-10 w-10 items-center justify-center rounded-2xl bg-gradient-to-br from-orange-400 via-orange-500 to-rose-500 font-black text-white text-lg shadow-lg shadow-orange-500/25 border border-white/20">
+            <Sparkles className="h-5 w-5" />
           </div>
           <div className="flex flex-col">
-            <span className="font-bold tracking-tight text-white leading-none text-sm">DARAZ HUB</span>
-            <span className="text-[10px] font-semibold text-orange-400/90 mt-0.5">
-              Simple Operations
+            <span className="font-extrabold tracking-tight text-white leading-none text-sm">Daraz Command</span>
+            <span className="text-[10px] font-semibold text-slate-400 mt-1">
+              Seller operations
             </span>
           </div>
         </div>
@@ -147,7 +149,7 @@ export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseM
       </div>
 
       {/* Navigation Menu */}
-      <nav className="flex-1 space-y-4 px-3 py-4 overflow-y-auto">
+      <nav className="relative flex-1 space-y-5 px-3 py-5 overflow-y-auto">
         {NAV_SECTIONS.map((section, sIdx) => {
           const visibleItems = section.items.filter((item) =>
             userRole === "super_admin" ? true : item.roles.includes(userRole)
@@ -157,7 +159,7 @@ export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseM
 
           return (
             <div key={sIdx} className="space-y-1">
-              <p className="px-3 text-[10px] font-bold tracking-wider text-slate-500 uppercase">
+              <p className="px-3 text-[10px] font-bold tracking-[0.16em] text-slate-500 uppercase">
                 {section.sectionTitle}
               </p>
               {visibleItems.map((item) => {
@@ -172,17 +174,17 @@ export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseM
                       if (onCloseMobile) onCloseMobile();
                     }}
                     title={`${item.title} — ${item.subtitle}`}
-                    className={`flex items-center justify-between rounded-xl px-3 py-2.5 text-xs transition-all duration-200 apple-press ${
+                    className={`group flex items-center justify-between rounded-2xl px-3 py-2.5 text-xs transition-all duration-200 apple-press ${
                       isActive
-                        ? "bg-gradient-to-r from-orange-500 to-amber-500 text-white font-bold shadow-md shadow-orange-500/25 border border-orange-400/30"
-                        : "text-slate-400 font-medium hover:bg-slate-900/80 hover:text-slate-100"
+                        ? "bg-white text-slate-950 font-bold shadow-lg shadow-black/10"
+                        : "text-slate-400 font-medium hover:bg-white/8 hover:text-white"
                     }`}
                   >
                     <div className="flex items-center min-w-0">
-                      <Icon className={`mr-2.5 h-4 w-4 flex-shrink-0 ${isActive ? "text-white" : "text-slate-400"}`} />
+                      <Icon className={`mr-2.5 h-4 w-4 flex-shrink-0 ${isActive ? "text-orange-500" : "text-slate-500 group-hover:text-orange-300"}`} />
                       <div className="flex flex-col min-w-0">
                         <span className="truncate leading-tight font-bold">{item.title}</span>
-                        <span className={`text-[10px] truncate leading-tight mt-0.5 ${isActive ? "text-orange-100" : "text-slate-500"}`}>
+                        <span className={`text-[10px] truncate leading-tight mt-0.5 ${isActive ? "text-slate-500" : "text-slate-500"}`}>
                           {item.subtitle}
                         </span>
                       </div>
@@ -201,13 +203,13 @@ export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseM
       </nav>
 
       {/* Sign Out Footer */}
-      <div className="border-t border-slate-800/60 p-3">
+      <div className="relative border-t border-white/10 p-3">
         <button
           onClick={() => {
             window.location.href = "/api/auth/logout";
           }}
           title="Sign out of your account"
-          className="flex w-full items-center rounded-xl px-3.5 py-2.5 text-xs font-semibold text-slate-400 hover:bg-red-500/10 hover:text-red-400 transition-all apple-press border border-transparent hover:border-red-500/20"
+          className="flex w-full items-center rounded-2xl px-3.5 py-2.5 text-xs font-semibold text-slate-400 hover:bg-red-500/10 hover:text-red-300 transition-all apple-press border border-transparent hover:border-red-500/20"
         >
           <LogOut className="mr-3 h-4 w-4" />
           <span>Sign Out</span>
@@ -228,7 +230,7 @@ export function Sidebar({ userRole = "super_admin", mobileOpen = false, onCloseM
             className="fixed inset-0 bg-slate-900/70 backdrop-blur-sm transition-opacity"
             onClick={onCloseMobile}
           />
-          <div className="relative z-10 h-full w-64 shadow-2xl animate-in slide-in-from-left duration-200">
+          <div className="relative z-10 h-full w-[272px] shadow-2xl animate-in slide-in-from-left duration-200">
             {sidebarContent}
           </div>
         </div>

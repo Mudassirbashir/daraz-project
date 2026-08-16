@@ -73,11 +73,39 @@
   body {
     @apply bg-slate-50 text-slate-900 antialiased selection:bg-orange-500/20 selection:text-orange-600 dark:bg-slate-950 dark:text-slate-100;
     font-feature-settings: "cv02", "cv03", "cv04", "cv11";
+    background-image: radial-gradient(circle at 85% -10%, rgba(251, 146, 60, 0.11), transparent 24rem), radial-gradient(circle at 15% 0%, rgba(59, 130, 246, 0.06), transparent 28rem);
   }
 
   h1, h2, h3, h4, h5, h6 {
     letter-spacing: -0.02em;
   }
+}
+
+@layer components {
+  .app-main > div > .space-y-6 > :where(div, section) {
+    scroll-margin-top: 6rem;
+  }
+
+  .app-main .rounded-2xl,
+  .app-main .rounded-3xl,
+  .app-main .rounded-xl {
+    border-color: rgba(226, 232, 240, 0.9);
+  }
+
+  .app-main input,
+  .app-main select {
+    min-height: 2.5rem;
+  }
+
+  .app-main button,
+  .app-main a {
+    -webkit-tap-highlight-color: transparent;
+  }
+}
+
+@media (max-width: 639px) {
+  .app-main { padding-bottom: 1.5rem; }
+  .app-main .overflow-x-auto { -webkit-overflow-scrolling: touch; }
 }
 
 @layer utilities {

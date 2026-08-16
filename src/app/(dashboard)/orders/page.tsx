@@ -123,7 +123,7 @@ export default function OrdersPage() {
           </p>
         </div>
 
-        <div className="flex items-center space-x-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <button
             onClick={exportToCSV}
             title="Download orders list as a CSV file"

@@ -151,7 +151,7 @@ export default function ProductDetailPage() {
           </div>
         </div>
 
-        <div className="flex items-center space-x-2 shrink-0">
+        <div className="flex flex-wrap items-center gap-2 shrink-0">
           <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-3 py-1.5 text-xs font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20">
             <CheckCircle2 className="h-3.5 w-3.5 text-blue-600 dark:text-blue-400" />
             <span>Live Synced</span>
