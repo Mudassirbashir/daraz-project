@@ -22,21 +22,30 @@ export async function GET(req: NextRequest) {
     try {
       const { data, error } = await supabase
         .from("daraz_stores")
-        .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at, slot_number")
+        .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at, slot_number, last_sync_error")
         .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
         .order("created_at", { ascending: true });
 
       if (error) {
-        if (error.message?.includes("slot_number")) {
-          const { data: fallback, error: fallbackErr } = await supabase
+        // Multi-tier fallback 1: Exclude slot_number
+        const { data: fb1, error: fb1Err } = await supabase
+          .from("daraz_stores")
+          .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at, last_sync_error")
+          .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
+          .order("created_at", { ascending: true });
+
+        if (fb1Err) {
+          // Multi-tier fallback 2: Base production columns baseline
+          const { data: fb2, error: fb2Err } = await supabase
             .from("daraz_stores")
-            .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at")
+            .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status")
             .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
             .order("created_at", { ascending: true });
-          if (fallbackErr) throw new Error(`Failed to fetch stores: ${fallbackErr.message}`);
-          storesList = fallback || [];
+
+          if (fb2Err) throw new Error(`Failed to fetch stores: ${fb2Err.message}`);
+          storesList = fb2 || [];
         } else {
-          throw new Error(`Failed to fetch stores: ${error.message}`);
+          storesList = fb1 || [];
         }
       } else {
         storesList = data || [];

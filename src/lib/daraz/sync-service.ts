@@ -350,7 +350,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
         // Update store status to success
         try {
-          await supabase
+          const { error: stErr } = await supabase
             .from("daraz_stores")
             .update({
               last_synced_at: timestamp,
@@ -358,6 +358,17 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               updated_at: timestamp,
             })
             .eq("id", store.id);
+
+          if (stErr) {
+            // Fallback if last_synced_at column is missing in production database
+            await supabase
+              .from("daraz_stores")
+              .update({
+                sync_status: "success",
+                updated_at: timestamp,
+              })
+              .eq("id", store.id);
+          }
         } catch (stErr: any) {
           console.error(`[SyncEngine] Failed to update store success status:`, stErr?.message || stErr);
         }
