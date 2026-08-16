@@ -46,6 +46,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const timestamp = new Date().toISOString();
 
     if (markAllPicked) {
+      // Verify order has at least one real order_items row before marking picked
+      const { data: existingItems, error: checkErr } = await supabase
+        .from("order_items")
+        .select("id")
+        .eq("order_id", id);
+
+      if (checkErr) {
+        return NextResponse.json(
+          { success: false, error: `Database error querying order items: ${checkErr.message}` },
+          { status: 500 }
+        );
+      }
+
+      if (!existingItems || existingItems.length === 0) {
+        return NextResponse.json(
+          { success: false, error: "Cannot mark order as picked because this order has no items." },
+          { status: 400 }
+        );
+      }
+
       // Mark all items as picked
       await supabase
         .from("order_items")
@@ -116,12 +136,26 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       }
 
       // Check if all items in order are now fully picked
-      const { data: allItems } = await supabase
+      const { data: allItems, error: allItemsErr } = await supabase
         .from("order_items")
         .select("quantity, picked_quantity, is_picked")
         .eq("order_id", id);
 
-      const allDone = allItems && allItems.every((i) => i.is_picked || i.picked_quantity >= i.quantity);
+      if (allItemsErr) {
+        return NextResponse.json(
+          { success: false, error: `Database error querying order items: ${allItemsErr.message}` },
+          { status: 500 }
+        );
+      }
+
+      if (!allItems || allItems.length === 0) {
+        return NextResponse.json(
+          { success: false, error: "Cannot mark order as picked because this order has no items." },
+          { status: 400 }
+        );
+      }
+
+      const allDone = allItems.length > 0 && allItems.every((i) => i.is_picked || i.picked_quantity >= i.quantity);
 
       const nextWorkflowStatus = allDone ? "picked" : "picking";
 

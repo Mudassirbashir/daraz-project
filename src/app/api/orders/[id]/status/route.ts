@@ -86,6 +86,8 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
     const ALLOWED_TRANSITIONS: Record<string, string[]> = {
       pending: ["packed", "ready_to_ship", "canceled"],
       unpaid: ["pending", "canceled"],
+      picking: ["picked", "canceled"],
+      picked: ["packed", "ready_to_ship", "canceled"],
       packed: ["ready_to_ship", "canceled"],
       ready_to_ship: ["shipped", "canceled"],
       shipped: ["delivered", "returned", "failed"],
