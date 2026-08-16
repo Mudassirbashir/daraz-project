@@ -137,16 +137,20 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
 
     // Record package details in daraz_packages table
     const packageIdToStore = darazResult.packageId || order.package_id || `PKG-${order.daraz_order_id}`;
-    await supabase.from("daraz_packages").upsert({
-      order_id: order.id,
-      daraz_order_id: order.daraz_order_id,
-      package_id: packageIdToStore,
-      tracking_number: order.tracking_number || null,
-      shipment_provider: order.shipping_provider || null,
-      package_status: "packed",
-      item_ids: itemIds,
-      updated_at: timestamp,
-    });
+    try {
+      await supabase.from("daraz_packages").upsert({
+        order_id: order.id,
+        daraz_order_id: order.daraz_order_id,
+        package_id: packageIdToStore,
+        tracking_number: order.tracking_number || null,
+        shipment_provider: order.shipping_provider || null,
+        package_status: "packed",
+        item_ids: itemIds,
+        updated_at: timestamp,
+      });
+    } catch (pkgDbErr: any) {
+      console.warn("[Pack Order API] Notice saving to daraz_packages table:", pkgDbErr.message);
+    }
 
     await supabase.from("order_activities").insert({
       order_id: order.id,
