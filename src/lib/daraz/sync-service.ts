@@ -11,6 +11,7 @@ export interface SyncResult {
   skippedItems: number;   // Items skipped due to missing stable IDs
   skippedSkus: number;    // SKUs skipped due to missing stable SellerSku
   ordersSynced: number;
+  orderItemsSynced?: number; // Total order item rows persisted
   importedCount: number;
   updatedCount: number;
   failedCount: number;
@@ -49,6 +50,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
   let totalSkippedItems = 0;
   let totalSkippedSkus = 0;
   let totalOrdersSynced = 0;
+  let totalOrderItemsSynced = 0;
   let totalImportedCount = 0;
   let totalUpdatedCount = 0;
   let totalFailedCount = 0;
@@ -76,7 +78,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         ? `Store ${targetStoreId} not found or has no active access token. Reconnect via My Stores.`
         : "No connected Daraz stores with active access tokens found. Please connect your Daraz store via My Stores.";
       errors.push(msg);
-      return buildResult(false, 0, 0, 0, 0, 0, 0, 0, 0, 0, Date.now() - startTime, errors, timestamp);
+      return buildResult(false, 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, Date.now() - startTime, errors, timestamp);
     }
 
     // ── 2. Process each connected store ──────────────────────────────────────
@@ -87,6 +89,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
       let storeSkippedItems = 0;
       let storeSkippedSkus = 0;
       let storeOrdersSynced = 0;
+      let storeOrderItemsSynced = 0;
       let storeImportedCount = 0;
       let storeUpdatedCount = 0;
       let storeFailedCount = 0;
@@ -534,6 +537,16 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               const exactCustomerName = `${exactFirstName} ${exactLastName}`.trim();
               const exactCity = ord.customer_city || shipping.city || billing.city || "Karachi";
 
+              // Check existing order status before upsert to record transition activity
+              const { data: existingOrder } = await supabase
+                .from("orders")
+                .select("id, status, workflow_status")
+                .eq("store_id", store.id)
+                .eq("daraz_order_id", ord.order_id)
+                .maybeSingle();
+
+              const previousStatus = existingOrder?.workflow_status || existingOrder?.status || null;
+
               // Multi-tier upsert: try extended schema first, fallback to baseline columns
               const extendedPayload = {
                 store_id: store.id,
@@ -600,6 +613,23 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 storeOrdersSynced++;
               }
 
+              // Record status transition activity if order status changed
+              if (dbOrderId && previousStatus && previousStatus !== mappedStatus) {
+                try {
+                  await supabase.from("order_activities").insert({
+                    order_id: dbOrderId,
+                    daraz_order_id: ord.order_id,
+                    previous_status: previousStatus,
+                    new_status: mappedStatus,
+                    actor: "System",
+                    source: "Daraz Sync",
+                    notes: `Order status automatically updated from '${previousStatus}' to '${mappedStatus}' during Daraz API sync.`,
+                  });
+                } catch (actErr: any) {
+                  console.warn(`[SyncEngine] Notice inserting order activity for order_id=${ord.order_id}: ${actErr.message}`);
+                }
+              }
+
               // Sync order items if order was persisted successfully
               if (dbOrderId) {
                 try {
@@ -620,12 +650,18 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       product_main_image: item.product_main_image || null,
                     }));
 
-                    await supabase
+                    const { error: itemsErr } = await supabase
                       .from("order_items")
                       .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+
+                    if (itemsErr) {
+                      console.warn(`[SyncEngine] Notice saving order_items order_id=${ord.order_id}: ${itemsErr.message}`);
+                    } else {
+                      storeOrderItemsSynced += items.length;
+                    }
                   }
-                } catch (_) {
-                  /* order_items table may not exist — graceful skip */
+                } catch (itemExc: any) {
+                  console.warn(`[SyncEngine] Notice fetching order_items order_id=${ord.order_id}: ${itemExc.message}`);
                 }
               }
             } catch (ordErr: any) {
@@ -695,6 +731,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         totalSkippedItems += storeSkippedItems;
         totalSkippedSkus += storeSkippedSkus;
         totalOrdersSynced += storeOrdersSynced;
+        totalOrderItemsSynced += storeOrderItemsSynced;
         totalImportedCount += storeImportedCount;
         totalUpdatedCount += storeUpdatedCount;
         totalFailedCount += storeFailedCount;
@@ -718,6 +755,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           skippedItems: totalSkippedItems,
           skippedSkus: totalSkippedSkus,
           ordersSynced: totalOrdersSynced,
+          orderItemsSynced: totalOrderItemsSynced,
           importedCount: totalImportedCount,
           updatedCount: totalUpdatedCount,
           failedCount: totalFailedCount,
@@ -738,6 +776,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
       totalSkippedItems,
       totalSkippedSkus,
       totalOrdersSynced,
+      totalOrderItemsSynced,
       totalImportedCount,
       totalUpdatedCount,
       totalFailedCount,
@@ -757,6 +796,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
       totalSkippedItems,
       totalSkippedSkus,
       totalOrdersSynced,
+      totalOrderItemsSynced,
       totalImportedCount,
       totalUpdatedCount,
       totalFailedCount,
@@ -775,6 +815,7 @@ function buildResult(
   skippedItems: number,
   skippedSkus: number,
   ordersSynced: number,
+  orderItemsSynced: number,
   importedCount: number,
   updatedCount: number,
   failedCount: number,
@@ -791,6 +832,7 @@ function buildResult(
     skippedItems,
     skippedSkus,
     ordersSynced,
+    orderItemsSynced,
     importedCount,
     updatedCount,
     failedCount,

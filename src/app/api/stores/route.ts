@@ -154,6 +154,7 @@ export async function GET(req: NextRequest) {
               ? "bg-amber-50 dark:bg-amber-500/10 text-amber-700 dark:text-amber-400 border-amber-200 dark:border-amber-500/20"
               : "bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border-emerald-200 dark:border-emerald-500/20",
           last_synced_at,
+          last_sync_error: store.last_sync_error || null,
           items_count: products_count,
           skus_count,
           products_count,

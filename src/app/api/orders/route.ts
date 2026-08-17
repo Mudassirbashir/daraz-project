@@ -13,6 +13,7 @@ export async function GET(req: NextRequest) {
   const limit = isNaN(limitInput) || limitInput < 1 ? 25 : Math.min(limitInput, 100);
 
   const search = searchParams.get("search") || "";
+  const status = searchParams.get("status") || "all";
   const storeIdParam = searchParams.get("store_id") || searchParams.get("storeId") || "all";
   const storeId = storeIdParam;
   const city = searchParams.get("city") || "all";
