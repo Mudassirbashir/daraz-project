@@ -1,13 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { safeGetUser } from "@/lib/supabase/auth-helper";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
   try {
     const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
+    const { user } = await safeGetUser(serverSupabase);
 
     const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
 

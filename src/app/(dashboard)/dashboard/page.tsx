@@ -13,6 +13,7 @@ import {
 } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
+import { safeGetUser } from "@/lib/supabase/auth-helper";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
 import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
@@ -54,14 +55,15 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   // Fetch logged-in user profile name & authorized stores
   let userName = "Team Member";
   let userStoreIds: string[] = [];
-  
+
   if (serverSupabase && supabase) {
     try {
-      const { data: userData, error: userErr } = await serverSupabase.auth.getUser();
-      if (userErr) {
-        logDashboardError("Dashboard Page Auth Check", userErr);
+      const safeUserRes = await safeGetUser(serverSupabase);
+      const user = safeUserRes.user;
+
+      if (safeUserRes.error && !safeUserRes.isClockSkew) {
+        logDashboardError("Dashboard Page Auth Check", safeUserRes.error);
       }
-      const user = userData?.user;
 
       if (user?.id) {
         const { data: profile, error: profileErr } = await supabase
@@ -102,7 +104,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     try {
       let storesQuery = supabase
         .from("daraz_stores")
-        .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, updated_at")
+        .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, updated_at, last_sync_error")
         .order("created_at", { ascending: true });
 
       if (userStoreIds.length > 0) {
@@ -111,7 +113,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
       const { data: storesData, error: storesErr } = await storesQuery;
       if (storesErr) {
-        queryErrorNotice = storesErr.message;
+        queryErrorNotice = `Store query notice: ${storesErr.message}`;
         logDashboardError("Dashboard Page Stores Query", storesErr);
       } else {
         storesList = storesData || [];
@@ -127,43 +129,44 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     .filter((s) => Boolean(s.is_active && s.access_token))
     .map((s) => s.id);
 
-  // 2. Fetch Listings & Orders Metrics (Scoped ONLY to Active Connected Stores)
-  let listingsData: any[] = [];
-  let ordersList: any[] = [];
+  // 2. Fetch Listings & Orders Metrics across all active stores
+  let allActiveListings: any[] = [];
+  let allActiveOrders: any[] = [];
 
   if (supabase && activeStoreIds.length > 0) {
     try {
-      let targetStoreIds = activeStoreIds;
-      if (!isCombinedView && selectedStoreId && selectedStoreId !== "all") {
-        targetStoreIds = activeStoreIds.includes(selectedStoreId) ? [selectedStoreId] : [];
-      }
-
-      if (targetStoreIds.length > 0) {
-        const [listingsRes, ordersRes] = await Promise.all([
-          fetchAllStoreListings(supabase, targetStoreIds, "store_id, stock_quantity, daraz_item_id"),
-          fetchAllStoreOrders(supabase, targetStoreIds, "id, store_id, status, workflow_status, total_amount_cents, order_date, created_at"),
-        ]);
-        listingsData = listingsRes;
-        ordersList = ordersRes;
-      }
+      const [listingsRes, ordersRes] = await Promise.all([
+        fetchAllStoreListings(supabase, activeStoreIds, "store_id, stock_quantity, daraz_item_id"),
+        fetchAllStoreOrders(supabase, activeStoreIds, "id, store_id, status, workflow_status, total_amount_cents, order_date, created_at"),
+      ]);
+      allActiveListings = listingsRes;
+      allActiveOrders = ordersRes;
     } catch (metricsEx: any) {
       logDashboardError("Dashboard Page Metrics Exception", metricsEx);
-      if (!queryErrorNotice) queryErrorNotice = metricsEx?.message || String(metricsEx);
+      if (!queryErrorNotice) queryErrorNotice = `Metrics query notice: ${metricsEx?.message || String(metricsEx)}`;
     }
   }
 
-  // Build per-store metrics map in memory
+  // Scope target store IDs for top KPI cards
+  let kpiTargetStoreIds = activeStoreIds;
+  if (!isCombinedView && selectedStoreId && selectedStoreId !== "all") {
+    kpiTargetStoreIds = activeStoreIds.includes(selectedStoreId) ? [selectedStoreId] : [];
+  }
+
+  const kpiListings = allActiveListings.filter((l: any) => kpiTargetStoreIds.includes(l.store_id));
+  const kpiOrders = allActiveOrders.filter((o: any) => kpiTargetStoreIds.includes(o.store_id));
+
+  // Build per-store metrics map in memory for store cards grid
   const storeListingsMap: Record<string, { skusCount: number; parentCount: number; stock: number }> = {};
-  listingsData.forEach((l: any) => {
+  allActiveListings.forEach((l: any) => {
     const key = String(l.store_id || "").toLowerCase();
     if (!storeListingsMap[key]) storeListingsMap[key] = { skusCount: 0, parentCount: 0, stock: 0 };
     storeListingsMap[key].skusCount += 1;
     storeListingsMap[key].stock += l.stock_quantity || 0;
   });
 
-  // Calculate distinct parent items per store
   const storeParentMap: Record<string, Set<string>> = {};
-  listingsData.forEach((l: any) => {
+  allActiveListings.forEach((l: any) => {
     const key = String(l.store_id || "").toLowerCase();
     if (!storeParentMap[key]) storeParentMap[key] = new Set();
     if (l.daraz_item_id) storeParentMap[key].add(l.daraz_item_id);
@@ -175,7 +178,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   });
 
   const storeOrdersMap: Record<string, { total: number; inProgress: number }> = {};
-  ordersList.forEach((o: any) => {
+  allActiveOrders.forEach((o: any) => {
     const key = String(o.store_id || "").toLowerCase();
     if (!storeOrdersMap[key]) storeOrdersMap[key] = { total: 0, inProgress: 0 };
     storeOrdersMap[key].total += 1;
@@ -209,17 +212,17 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   const totalStoresCount = enrichedStores.length;
   const isMaxStoresReached = totalStoresCount >= 3;
 
-  const totalDistinctParentItems = new Set(listingsData.map((l: any) => l.daraz_item_id).filter(Boolean)).size;
-  const totalProductsCount = totalDistinctParentItems > 0 ? totalDistinctParentItems : listingsData.length;
-  const totalStockUnits = listingsData.reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
-  const lowStockCount = listingsData.filter((item) => (item.stock_quantity || 0) <= 10).length;
+  const totalDistinctParentItems = new Set(kpiListings.map((l: any) => l.daraz_item_id).filter(Boolean)).size;
+  const totalProductsCount = totalDistinctParentItems > 0 ? totalDistinctParentItems : kpiListings.length;
+  const totalStockUnits = kpiListings.reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
+  const lowStockCount = kpiListings.filter((item) => (item.stock_quantity || 0) <= 10).length;
 
-  const totalOrdersCount = ordersList.length;
-  const inProgressOrdersCount = ordersList.filter((o: any) =>
+  const totalOrdersCount = kpiOrders.length;
+  const inProgressOrdersCount = kpiOrders.filter((o: any) =>
     ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(String(o.workflow_status || o.status || "").toLowerCase())
   ).length;
 
-  const totalRevenueCents = ordersList.reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);
+  const totalRevenueCents = kpiOrders.reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);
   const totalRevenueFormatted = (totalRevenueCents / 100).toLocaleString("en-PK", {
     style: "currency",
     currency: "PKR",

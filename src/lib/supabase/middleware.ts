@@ -54,13 +54,23 @@ export async function updateSession(request: NextRequest) {
       }
     );
 
-    const {
-      data: { user },
-      error: userError,
-    } = await supabase.auth.getUser();
-
-    if (userError) {
-      console.warn("[Middleware UpdateSession Auth Notice]:", userError.message);
+    let user = null;
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError) {
+        console.warn("[Middleware UpdateSession Auth Notice]:", userError.message);
+        if (
+          userError.message?.toLowerCase().includes("issued at future") ||
+          userError.message?.toLowerCase().includes("iat")
+        ) {
+          const { data: sessData } = await supabase.auth.getSession();
+          user = sessData?.session?.user || null;
+        }
+      } else {
+        user = userData?.user || null;
+      }
+    } catch (e: any) {
+      console.warn("[Middleware UpdateSession Exception]:", e?.message);
     }
 
     return { supabaseResponse, user, supabase };

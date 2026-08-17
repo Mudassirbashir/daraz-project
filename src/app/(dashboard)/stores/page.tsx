@@ -7,6 +7,8 @@ import { StoreCardActions } from "@/components/stores/StoreCardActions";
 import { StoreAutoSyncTrigger } from "@/components/stores/StoreAutoSyncTrigger";
 import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
 
+import { safeGetUser } from "@/lib/supabase/auth-helper";
+
 export const dynamic = "force-dynamic";
 
 interface StoresPageProps {
@@ -31,7 +33,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   let userStoreIds: string[] = [];
   try {
     const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
+    const { user } = await safeGetUser(serverSupabase);
     if (user?.id) {
       const { data: userStores } = await supabase
         .from("daraz_stores")

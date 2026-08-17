@@ -3,6 +3,7 @@ import { DashboardShell } from "@/components/common/DashboardShell";
 import { StoreOption } from "@/components/common/StoreSwitcher";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { safeGetUser } from "@/lib/supabase/auth-helper";
 import { AppRole } from "@/types/database.types";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
 
@@ -41,14 +42,10 @@ export default async function DashboardLayout({
   // Fetch authenticated user & profile
   let user: any = null;
   if (supabase) {
-    try {
-      const { data, error: userErr } = await supabase.auth.getUser();
-      if (userErr) {
-        logDashboardError("Layout getUser Auth Check", userErr);
-      }
-      user = data?.user || null;
-    } catch (authEx: any) {
-      logDashboardError("Layout getUser Auth Exception", authEx);
+    const safeRes = await safeGetUser(supabase);
+    user = safeRes.user;
+    if (safeRes.error && !safeRes.isClockSkew) {
+      logDashboardError("Layout getUser Auth Check", safeRes.error);
     }
   }
 
