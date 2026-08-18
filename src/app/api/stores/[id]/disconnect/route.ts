@@ -66,37 +66,36 @@ export async function POST(
     try { await supabase.from("sync_runs").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("daraz_api_logs").delete().eq("store_id", storeId); } catch (_) {}
 
-    const disconnectData: Record<string, any> = {
-      is_active: false,
-      sync_status: "disconnected",
-      access_token: null,
-      refresh_token: null,
-      token_expires_at: null,
-      seller_id: null,
-      slot_number: null,
-      last_synced_at: null,
-      updated_at: new Date().toISOString(),
-    };
-
-    let updateErr: any = null;
-    const { error } = await supabase
+    // First attempt complete row deletion from daraz_stores as requested by user
+    let disconnectErr: any = null;
+    const { error: deleteStoreErr } = await supabase
       .from("daraz_stores")
-      .update(disconnectData)
+      .delete()
       .eq("id", storeId);
 
-    if (error && error.message?.includes("slot_number")) {
-      const { slot_number, ...fallbackDisconnectData } = disconnectData;
-      const { error: fallbackErr } = await supabase
+    if (deleteStoreErr) {
+      console.warn(`[Disconnect API] Row deletion failed (${deleteStoreErr.message}), falling back to soft deactivation.`);
+      // Fallback: soft deactivation without touching NOT NULL column seller_id
+      const fallbackDisconnectData: Record<string, any> = {
+        is_active: false,
+        sync_status: "disconnected",
+        access_token: null,
+        refresh_token: null,
+        token_expires_at: null,
+        last_synced_at: null,
+        updated_at: new Date().toISOString(),
+      };
+
+      const { error: updateErr } = await supabase
         .from("daraz_stores")
         .update(fallbackDisconnectData)
         .eq("id", storeId);
-      updateErr = fallbackErr;
-    } else {
-      updateErr = error;
+
+      disconnectErr = updateErr;
     }
 
-    if (updateErr) {
-      throw new Error(`Database error while disconnecting store: ${updateErr.message}`);
+    if (disconnectErr) {
+      throw new Error(`Database error while disconnecting store: ${disconnectErr.message}`);
     }
 
     // Insert audit log
