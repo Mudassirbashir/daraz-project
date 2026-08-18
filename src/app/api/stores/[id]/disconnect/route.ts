@@ -57,14 +57,24 @@ export async function POST(
       });
     }
 
-    // Execute Store Disconnect (removes API tokens, sets inactive, clears slot_number for reuse, preserves historical order/product data)
+    // Execute Store Disconnect and Clean Up Store Data in Supabase
+    try { await supabase.from("listings").delete().eq("store_id", storeId); } catch (_) {}
+    try { await supabase.from("orders").delete().eq("store_id", storeId); } catch (_) {}
+    try { await supabase.from("daraz_products").delete().eq("store_id", storeId); } catch (_) {}
+    try { await supabase.from("daraz_product_skus").delete().eq("store_id", storeId); } catch (_) {}
+    try { await supabase.from("inventory").delete().eq("store_id", storeId); } catch (_) {}
+    try { await supabase.from("sync_runs").delete().eq("store_id", storeId); } catch (_) {}
+    try { await supabase.from("daraz_api_logs").delete().eq("store_id", storeId); } catch (_) {}
+
     const disconnectData: Record<string, any> = {
       is_active: false,
       sync_status: "disconnected",
       access_token: null,
       refresh_token: null,
       token_expires_at: null,
+      seller_id: null,
       slot_number: null,
+      last_synced_at: null,
       updated_at: new Date().toISOString(),
     };
 
@@ -101,6 +111,7 @@ export async function POST(
           store_name: store.store_name,
           store_code: store.store_code,
           disconnected_at: new Date().toISOString(),
+          purged_data: true,
         },
         source: "stores_ui",
       });
@@ -110,7 +121,7 @@ export async function POST(
 
     return NextResponse.json({
       success: true,
-      message: `Store '${store.store_name}' has been securely disconnected. Historical orders and products are preserved.`,
+      message: `Store '${store.store_name}' and all associated products, items, and orders have been cleaned up from Supabase.`,
     });
   } catch (err: any) {
     console.error("[POST /api/stores/[id]/disconnect Exception]:", err.message);

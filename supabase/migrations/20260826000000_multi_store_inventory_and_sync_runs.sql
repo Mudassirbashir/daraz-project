@@ -123,3 +123,31 @@ CREATE INDEX IF NOT EXISTS idx_inventory_store_sku ON public.inventory(store_id,
 -- 5. Add reserved_quantity to listings table for direct projection
 ALTER TABLE public.listings
   ADD COLUMN IF NOT EXISTS reserved_quantity INT NOT NULL DEFAULT 0;
+
+-- 6. Create order_items table for normalized order line items
+CREATE TABLE IF NOT EXISTS public.order_items (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  order_id UUID NOT NULL REFERENCES public.orders(id) ON DELETE CASCADE,
+  daraz_order_id TEXT NOT NULL,
+  order_item_id TEXT NOT NULL,
+  name TEXT,
+  seller_sku TEXT,
+  shop_sku TEXT,
+  item_id TEXT,
+  product_id TEXT,
+  quantity INTEGER DEFAULT 1,
+  item_price_cents BIGINT DEFAULT 0,
+  paid_price_cents BIGINT DEFAULT 0,
+  status TEXT,
+  shipment_provider TEXT,
+  tracking_code TEXT,
+  product_main_image TEXT,
+  raw_item_payload JSONB,
+  created_at TIMESTAMPTZ DEFAULT NOW(),
+  updated_at TIMESTAMPTZ DEFAULT NOW(),
+  CONSTRAINT unique_order_item_per_order UNIQUE (order_id, order_item_id)
+);
+
+CREATE INDEX IF NOT EXISTS idx_order_items_order_id ON public.order_items(order_id);
+CREATE INDEX IF NOT EXISTS idx_order_items_seller_sku ON public.order_items(seller_sku);
+

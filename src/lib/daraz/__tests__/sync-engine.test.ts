@@ -1,3 +1,7 @@
+declare const describe: (name: string, fn: () => void) => void;
+declare const test: (name: string, fn: () => void) => void;
+declare const expect: (actual: any) => any;
+
 import { executeDarazSync } from "../sync-service";
 import { DarazApiClient } from "../client";
 import { pullStockForStore } from "../stock-sync";

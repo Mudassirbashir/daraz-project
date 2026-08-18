@@ -566,9 +566,9 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         let ordersPaginationSucceeded = false;
         let ordersFetchError: string | null = null;
 
-        const isFirstTimeSync = !store.last_synced_at;
+        const isFirstTimeSync = !store.last_synced_at || store.sync_status === "disconnected";
         let incrementalUpdateAfter = "2020-01-01T00:00:00Z";
-        if (!targetStoreId && store.last_synced_at) {
+        if (!targetStoreId && store.last_synced_at && store.sync_status !== "disconnected") {
           const safeOverlapMs = 24 * 60 * 60 * 1000;
           const lastSyncTime = new Date(store.last_synced_at).getTime();
           if (!isNaN(lastSyncTime)) {
