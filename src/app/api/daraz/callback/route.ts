@@ -157,7 +157,7 @@ export async function GET(req: NextRequest) {
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
     // 5. Fetch Live Seller Profile First to get verified Seller ID & Name
-    let verifiedSellerId = String(seller_id || account || "");
+    let verifiedSellerId = String(seller_id || account || "").trim();
     let verifiedStoreName = account || "Daraz Store";
 
     try {
@@ -179,8 +179,9 @@ export async function GET(req: NextRequest) {
       console.warn("[Daraz OAuth Callback] Pre-verification profile notice:", profileErr.message);
     }
 
+    // REQUIREMENT: Never invent fallback seller IDs if profile cannot be verified
     if (!verifiedSellerId) {
-      verifiedSellerId = `SELLER_${Date.now()}`;
+      throw new Error("Unable to verify official Daraz seller account identity from Seller Center. Authentication aborted.");
     }
 
     // 6. Compute Deterministic Lowest Available Slot Number (1, 2, 3...)
@@ -236,21 +237,34 @@ export async function GET(req: NextRequest) {
 
     const incomingStoreCode = `DARAZ-${storeRegion}-${cleanSellerCode}`;
 
-    // 8. 3-Tier Reconciliation Algorithm:
-    // Lookup existing store by seller_id first, then fallback to lookup by store_code
+    // 8. Canonical Store Matching Algorithm:
+    // Locate existing store by seller_id first. Relink legacy duplicates if present.
     let targetStore: any = null;
 
     try {
-      const { data: storeBySeller } = await supabase
+      const { data: storeBySellerList } = await supabase
         .from("daraz_stores")
         .select("*")
         .eq("seller_id", verifiedSellerId)
-        .maybeSingle();
+        .order("created_at", { ascending: true });
 
-      if (storeBySeller) {
-        targetStore = storeBySeller;
+      if (storeBySellerList && storeBySellerList.length > 0) {
+        targetStore = storeBySellerList[0];
+
+        // If legacy duplicates exist for this seller, relink records to canonical targetStore
+        if (storeBySellerList.length > 1) {
+          const duplicateIds = storeBySellerList.slice(1).map((s) => s.id);
+          console.log(`[Daraz OAuth Callback] Relinking data from ${duplicateIds.length} duplicate store(s) to canonical store ${targetStore.id}`);
+          await supabase.from("listings").update({ store_id: targetStore.id }).in("store_id", duplicateIds);
+          await supabase.from("orders").update({ store_id: targetStore.id }).in("store_id", duplicateIds);
+          try { await supabase.from("daraz_products").update({ store_id: targetStore.id }).in("store_id", duplicateIds); } catch (_) {}
+          try { await supabase.from("daraz_product_skus").update({ store_id: targetStore.id }).in("store_id", duplicateIds); } catch (_) {}
+          try { await supabase.from("inventory").update({ store_id: targetStore.id }).in("store_id", duplicateIds); } catch (_) {}
+          try { await supabase.from("sync_runs").update({ store_id: targetStore.id }).in("store_id", duplicateIds); } catch (_) {}
+          await supabase.from("daraz_stores").update({ is_active: false, sync_status: "merged_duplicate" }).in("id", duplicateIds);
+        }
       } else {
-        // Fallback: Lookup by store_code or default slot store_code
+        // Fallback: Lookup by store_code
         const { data: storeByCode } = await supabase
           .from("daraz_stores")
           .select("*")
@@ -258,11 +272,9 @@ export async function GET(req: NextRequest) {
           .maybeSingle();
 
         if (storeByCode) {
-          // Check seller ownership of the store_code
           if (!storeByCode.seller_id || storeByCode.seller_id === verifiedSellerId) {
             targetStore = storeByCode;
           } else {
-            // Occupied by a different seller! Return clear conflict error without touching existing store
             console.warn(`[Daraz OAuth Callback] Store code conflict: '${storeByCode.store_code}' belongs to seller '${storeByCode.seller_id}', not '${verifiedSellerId}'.`);
             return NextResponse.redirect(
               `${baseUrl}/stores?error=store_code_conflict&message=${encodeURIComponent(

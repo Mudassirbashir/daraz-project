@@ -34,6 +34,22 @@ export async function POST(req: NextRequest) {
       }
     }
 
+    // Require authorization for target store if specified
+    if (user?.id && targetStoreId && !isCronAuthorized) {
+      const { createAdminClient } = await import("@/lib/supabase/admin");
+      const adminSupabase = createAdminClient();
+      const { data: storeCheck } = await adminSupabase
+        .from("daraz_stores")
+        .select("id")
+        .eq("id", targetStoreId)
+        .or(`user_id.eq.${user.id},user_id.is.null`)
+        .maybeSingle();
+
+      if (!storeCheck) {
+        return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
+      }
+    }
+
     // Modular Stock-Only Sync requested
     if (targetModule === "stock" && targetStoreId) {
       const stockRes = await pullStockForStore(targetStoreId);

@@ -1,6 +1,6 @@
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "../supabase/admin";
 import { DarazApiClient, sanitizeLogPayload, humanizeDarazApiError } from "./client";
-import { DarazOrderStatus } from "@/types/database.types";
+import { DarazOrderStatus } from "../../types/database.types";
 import { mapDarazOrderStatus } from "./order-status";
 
 export interface SyncResult {
@@ -306,34 +306,47 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                   /* daraz_product_skus table may not exist — graceful skip */
                 }
 
-                // ── Inventory upsert ──────────────────────────────────────
-                // IMPORTANT: The inventory table uses `sku` as its global unique key.
-                // Two different stores CAN share the same seller_sku string. To avoid
-                // one store's sync overwriting another store's inventory, we upsert
-                // the listings table (which IS store-scoped) as the authoritative
-                // per-store stock record, and treat `inventory` as a global sku ledger
-                // (not the primary source of per-store stock truth).
+                // ── Inventory upsert (store-scoped) ──────────────────────
                 let invItemId: string | null = null;
                 try {
                   const { data: invItem } = await supabase
                     .from("inventory")
                     .upsert(
                       {
+                        store_id: store.id,
                         sku: sku.seller_sku,
                         title: item.title,
                         category: item.category || "General",
                         quantity_on_hand: sku.quantity,
                         quantity_reserved: sku.reserved_quantity || 0,
+                        is_synced: true,
+                        last_synced_at: timestamp,
+                        updated_at: timestamp,
                       },
-                      { onConflict: "sku" }
+                      { onConflict: "store_id,sku" }
                     )
                     .select("id")
                     .single();
                   invItemId = invItem?.id || null;
                 } catch (invErr: any) {
-                  console.warn(
-                    `[SyncEngine] Inventory upsert notice for SKU ${sku.seller_sku}: ${invErr.message}`
-                  );
+                  try {
+                    const { data: fallbackInv } = await supabase
+                      .from("inventory")
+                      .upsert(
+                        {
+                          sku: sku.seller_sku,
+                          title: item.title,
+                          category: item.category || "General",
+                          quantity_on_hand: sku.quantity,
+                          quantity_reserved: sku.reserved_quantity || 0,
+                          updated_at: timestamp,
+                        },
+                        { onConflict: "sku" }
+                      )
+                      .select("id")
+                      .single();
+                    invItemId = fallbackInv?.id || null;
+                  } catch (_) {}
                 }
 
                 // ── Listings upsert (authoritative per-store SKU record) ──
@@ -790,10 +803,37 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
     const durationMs = Date.now() - startTime;
 
-    // ── 3. Write diagnostic API log ─────────────────────────────────────────
+    // ── 3. Write diagnostic API log & sync_runs record ───────────────────────
     try {
+      const primaryStoreId = targetStoreId || connectedStores[0]?.id;
+      if (primaryStoreId) {
+        await supabase.from("sync_runs").insert({
+          store_id: primaryStoreId,
+          trigger_type: targetStoreId ? "manual_sync" : "cron_sync",
+          status: errors.length > 0 ? "completed_with_errors" : "completed",
+          started_at: startedTimeIso,
+          completed_at: timestamp,
+          duration_ms: durationMs,
+          parent_items_fetched: totalItemsSynced,
+          skus_fetched: totalSkusSynced,
+          orders_fetched: totalOrdersSynced,
+          order_items_fetched: totalOrderItemsSynced,
+          rows_inserted: totalImportedCount,
+          rows_updated: totalUpdatedCount,
+          rows_skipped_invalid: totalSkippedItems + totalSkippedSkus,
+          sanitized_errors: errors.map((e) => humanizeDarazApiError("SYNC_ERROR", e)),
+          reconciliation_summary: {
+            itemsSynced: totalItemsSynced,
+            skusSynced: totalSkusSynced,
+            ordersSynced: totalOrdersSynced,
+            importedCount: totalImportedCount,
+            updatedCount: totalUpdatedCount,
+          },
+        });
+      }
+
       await supabase.from("daraz_api_logs").insert({
-        store_id: targetStoreId || connectedStores[0]?.id,
+        store_id: primaryStoreId,
         sync_type: targetStoreId ? "store_sync" : "cron_sync",
         status: errors.length > 0 ? "completed_with_errors" : "completed",
         records_synced: totalItemsSynced + totalSkusSynced + totalOrdersSynced,

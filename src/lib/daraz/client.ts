@@ -1,5 +1,5 @@
 import { generateDarazSignature } from "./signature";
-import { createAdminClient } from "@/lib/supabase/admin";
+import { createAdminClient } from "../supabase/admin";
 
 export interface DarazStoreProfile {
   seller_id: string;
