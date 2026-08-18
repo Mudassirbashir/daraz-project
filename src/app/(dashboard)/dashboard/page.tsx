@@ -113,14 +113,20 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
       const { data: storesData, error: storesErr } = await storesQuery;
       if (storesErr) {
-        queryErrorNotice = `Store query notice: ${storesErr.message}`;
-        logDashboardError("Dashboard Page Stores Query", storesErr);
+        const isClockSkew = storesErr.message?.toLowerCase().includes("issued at future") || storesErr.message?.toLowerCase().includes("iat");
+        if (!isClockSkew) {
+          queryErrorNotice = `Store query notice: ${storesErr.message}`;
+          logDashboardError("Dashboard Page Stores Query", storesErr);
+        }
       } else {
         storesList = storesData || [];
       }
     } catch (ex: any) {
-      queryErrorNotice = ex?.message || String(ex);
-      logDashboardError("Dashboard Page Stores Exception", ex);
+      const isClockSkew = ex?.message?.toLowerCase().includes("issued at future");
+      if (!isClockSkew) {
+        queryErrorNotice = ex?.message || String(ex);
+        logDashboardError("Dashboard Page Stores Exception", ex);
+      }
     }
   }
 
@@ -183,7 +189,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     if (!storeOrdersMap[key]) storeOrdersMap[key] = { total: 0, inProgress: 0 };
     storeOrdersMap[key].total += 1;
     const statusNorm = String(o.workflow_status || o.status || "").toLowerCase();
-    if (["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(statusNorm)) {
+    if (["pending", "unpaid", "ready_to_ship", "picking", "packed", "to_pack", "to_ship"].includes(statusNorm)) {
       storeOrdersMap[key].inProgress += 1;
     }
   });
@@ -219,7 +225,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
   const totalOrdersCount = kpiOrders.length;
   const inProgressOrdersCount = kpiOrders.filter((o: any) =>
-    ["pending", "unpaid", "ready_to_ship", "shipped", "picking", "packed"].includes(String(o.workflow_status || o.status || "").toLowerCase())
+    ["pending", "unpaid", "ready_to_ship", "picking", "packed", "to_pack", "to_ship"].includes(String(o.workflow_status || o.status || "").toLowerCase())
   ).length;
 
   const totalRevenueCents = kpiOrders.reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);

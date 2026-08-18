@@ -100,13 +100,29 @@ function OrdersPageContent() {
       return;
     }
 
-    const headers = ["Order ID", "Store", "Customer Name", "Total Amount (PKR)", "Status", "Tracking Number"];
+    const headers = [
+      "Store Name",
+      "Seller ID",
+      "Daraz Order ID",
+      "Order Date",
+      "Customer Name",
+      "Order Status",
+      "Workflow Status",
+      "Total Amount (PKR)",
+      "Shipping Provider",
+      "Tracking Number"
+    ];
+
     const rows = orders.map((o) => [
+      `"${(o.daraz_stores?.store_name || "Daraz Store").replace(/"/g, '""')}"`,
+      `"${o.daraz_stores?.seller_id || "N/A"}"`,
       `"${o.daraz_order_id || o.id.slice(0, 8)}"`,
-      `"${o.daraz_stores?.store_name || "Daraz Store"}"`,
+      `"${o.order_date ? new Date(o.order_date).toLocaleString() : "N/A"}"`,
       `"${(o.customer_name || "Daraz Customer").replace(/"/g, '""')}"`,
+      `"${o.status || "pending"}"`,
+      `"${o.workflow_status || o.status || "pending"}"`,
       ((o.total_amount_cents || 0) / 100).toFixed(2),
-      o.status || o.workflow_status || "Pending",
+      `"${(o.shipping_provider || "Daraz Express").replace(/"/g, '""')}"`,
       `"${o.tracking_number || "N/A"}"`,
     ]);
 
@@ -114,7 +130,7 @@ function OrdersPageContent() {
     const encodedUri = encodeURI(csvContent);
     const link = document.createElement("a");
     link.setAttribute("href", encodedUri);
-    link.setAttribute("download", `Orders_List_${Date.now()}.csv`);
+    link.setAttribute("download", `Daraz_Orders_Export_${Date.now()}.csv`);
     document.body.appendChild(link);
     link.click();
     document.body.removeChild(link);

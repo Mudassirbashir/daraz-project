@@ -103,7 +103,19 @@ export async function pullStockForStore(storeId: string): Promise<StockSyncResul
       timestamp,
     };
   } catch (err: any) {
-    errors.push(err.message || String(err));
+    const errorMsg = err.message || String(err);
+    errors.push(errorMsg);
+    try {
+      const supabase = createAdminClient();
+      await supabase
+        .from("daraz_stores")
+        .update({
+          last_sync_error: errorMsg,
+          updated_at: timestamp,
+        })
+        .eq("id", storeId);
+    } catch (_) {}
+
     return {
       success: false,
       storeId,

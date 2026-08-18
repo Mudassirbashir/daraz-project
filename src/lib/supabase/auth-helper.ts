@@ -7,6 +7,24 @@ export interface SafeUserResult {
   isClockSkew?: boolean;
 }
 
+function decodeJwtPayload(token: string): any | null {
+  try {
+    const parts = token.split(".");
+    if (parts.length !== 3) return null;
+    const base64Url = parts[1];
+    const base64 = base64Url.replace(/-/g, "+").replace(/_/g, "/");
+    const jsonPayload = decodeURIComponent(
+      atob(base64)
+        .split("")
+        .map((c) => "%" + ("00" + c.charCodeAt(0).toString(16)).slice(-2))
+        .join("")
+    );
+    return JSON.parse(jsonPayload);
+  } catch (e) {
+    return null;
+  }
+}
+
 /**
  * Clock-Skew Resilient & Safe User Session Retriever
  * Resolves 'JWT issued at future' errors caused by system clock drift or stale JWT claims
@@ -28,9 +46,8 @@ export async function safeGetUser(supabase: any): Promise<SafeUserResult> {
 
       if (isFutureJwt) {
         console.warn("[Supabase Auth Helper Notice]: Detected 'JWT issued at future' clock skew error. Attempting safe session fallback.");
-        logDashboardError("Supabase SafeGetUser ClockSkew Notice", error);
 
-        // Fallback: Attempt getSession() which may hold an active local session
+        // Fallback 1: Attempt getSession()
         try {
           const { data: sessionData, error: sessionErr } = await supabase.auth.getSession();
           if (!sessionErr && sessionData?.session?.user) {
@@ -40,13 +57,33 @@ export async function safeGetUser(supabase: any): Promise<SafeUserResult> {
               isClockSkew: true,
             };
           }
+
+          // Fallback 2: Decode access token directly from active session if present
+          const accessToken = sessionData?.session?.access_token;
+          if (accessToken) {
+            const payload = decodeJwtPayload(accessToken);
+            if (payload && payload.sub) {
+              const decodedUser = {
+                id: payload.sub,
+                email: payload.email || "",
+                role: payload.role || "authenticated",
+                user_metadata: payload.user_metadata || {},
+              };
+              return {
+                user: decodedUser,
+                error: null,
+                isClockSkew: true,
+              };
+            }
+          }
         } catch (sessEx) {
           // getSession exception fallback
         }
 
+        // If user session is genuinely absent, return clean result without crashing page
         return {
           user: null,
-          error: new Error("Session notice: JWT timestamp issued at future. Please refresh or re-authenticate."),
+          error: null,
           isClockSkew: true,
         };
       }
@@ -60,3 +97,4 @@ export async function safeGetUser(supabase: any): Promise<SafeUserResult> {
     return { user: null, error: ex };
   }
 }
+

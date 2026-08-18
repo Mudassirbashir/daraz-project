@@ -1,6 +1,7 @@
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DarazApiClient, sanitizeLogPayload } from "./client";
 import { DarazOrderStatus } from "@/types/database.types";
+import { mapDarazOrderStatus } from "./order-status";
 
 export interface SyncResult {
   success: boolean;
@@ -472,6 +473,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         let totalOrdersReported = 0;
         let fetchedOrdersThisPage = 0;
         let orderPageNum = 1;
+        let ordersPaginationSucceeded = false;
 
         // For a targeted single-store sync or a store with no prior sync, fetch full history.
         // For scheduled cron syncs with a known last_synced_at, use a 24-hour safe overlap window.
@@ -507,26 +509,20 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
           for (const ord of pageOrders.orders) {
             try {
-              let mappedStatus: DarazOrderStatus = "pending";
-              const normStatus = (ord.statuses || "").toLowerCase().replace(/[-\s]+/g, "_");
-
-              if (["ready_to_ship", "to_ship", "to_pack"].includes(normStatus)) {
-                mappedStatus = "ready_to_ship";
-              } else if (["shipped", "in_transit"].includes(normStatus)) {
-                mappedStatus = "shipped";
-              } else if (normStatus === "delivered") {
-                mappedStatus = "delivered";
-              } else if (["canceled", "cancelled"].includes(normStatus)) {
-                mappedStatus = "canceled";
-              } else if (normStatus === "returned") {
-                mappedStatus = "returned";
-              } else if (normStatus === "failed") {
-                mappedStatus = "failed";
-              } else if (normStatus === "unpaid") {
-                mappedStatus = "unpaid";
-              } else {
-                mappedStatus = "pending";
+              // ---------------------------------------------------------------
+              // REQUIREMENT: Skip malformed order records missing stable order_id
+              // ---------------------------------------------------------------
+              if (!ord.order_id || !ord.order_id.trim()) {
+                console.warn(
+                  `[SyncEngine] storeId=${store.id} store=${store.store_code}: Skipping malformed order missing stable order_id.`
+                );
+                storeSkippedItems++;
+                continue;
               }
+
+              const mappedObj = mapDarazOrderStatus(ord.statuses || "");
+              const mappedStatus: DarazOrderStatus = mappedObj.normalizedStatus;
+              const workflowStatus: string = mappedObj.workflowStatus;
 
               const rawObj = ord.raw || {};
               const shipping = rawObj.address_shipping || {};
@@ -547,7 +543,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
               const previousStatus = existingOrder?.workflow_status || existingOrder?.status || null;
 
-              // Multi-tier upsert: try extended schema first, fallback to baseline columns
+              // Store-scoped order payload preserving store_id & seller_id
               const extendedPayload = {
                 store_id: store.id,
                 daraz_order_id: ord.order_id,
@@ -563,7 +559,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 payment_method: ord.payment_method || null,
                 total_amount_cents: ord.price_cents,
                 status: mappedStatus,
-                workflow_status: mappedStatus,
+                workflow_status: workflowStatus,
                 is_payout_settled: false,
                 order_date: ord.created_at || timestamp,
                 raw_payload: rawObj,
@@ -592,7 +588,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 .single();
 
               if (extErr) {
-                // Fallback to baseline columns
                 const { data: baseData, error: baseErr } = await supabase
                   .from("orders")
                   .upsert(baselinePayload, { onConflict: "daraz_order_id" })
@@ -601,7 +596,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
                 if (baseErr) {
                   console.error(
-                    `[SyncEngine] Order upsert failed order_id=${ord.order_id}: extended_err="${extErr.message}" baseline_err="${baseErr.message}"`
+                    `[SyncEngine] Order upsert failed order_id=${ord.order_id} store=${store.store_code}: extended_err="${extErr.message}" baseline_err="${baseErr.message}"`
                   );
                   storeFailedCount++;
                 } else {
@@ -614,16 +609,16 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               }
 
               // Record status transition activity if order status changed
-              if (dbOrderId && previousStatus && previousStatus !== mappedStatus) {
+              if (dbOrderId && previousStatus && previousStatus !== workflowStatus) {
                 try {
                   await supabase.from("order_activities").insert({
                     order_id: dbOrderId,
                     daraz_order_id: ord.order_id,
                     previous_status: previousStatus,
-                    new_status: mappedStatus,
+                    new_status: workflowStatus,
                     actor: "System",
                     source: "Daraz Sync",
-                    notes: `Order status automatically updated from '${previousStatus}' to '${mappedStatus}' during Daraz API sync.`,
+                    notes: `Order status updated from '${previousStatus}' to '${workflowStatus}' during Daraz API sync.`,
                   });
                 } catch (actErr: any) {
                   console.warn(`[SyncEngine] Notice inserting order activity for order_id=${ord.order_id}: ${actErr.message}`);
@@ -635,20 +630,43 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 try {
                   const items = await darazClient.getOrderItems(ord.order_id);
                   if (items && items.length > 0) {
-                    const itemPayloads = items.map((item) => ({
-                      order_id: dbOrderId,
-                      daraz_order_id: ord.order_id,
-                      order_item_id: item.order_item_id,
-                      name: item.name,
-                      seller_sku: item.seller_sku,
-                      shop_sku: item.shop_sku || null,
-                      item_price_cents: item.item_price_cents,
-                      paid_price_cents: item.paid_price_cents,
-                      status: item.status,
-                      shipment_provider: item.shipment_provider || null,
-                      tracking_code: item.tracking_code || null,
-                      product_main_image: item.product_main_image || null,
-                    }));
+                    const itemPayloads = await Promise.all(
+                      items.map(async (item) => {
+                        let matchedProductId: string | null = null;
+                        // Requirement: Match SKU strictly scoped to store_id + seller_sku
+                        if (item.seller_sku) {
+                          try {
+                            const { data: listingMatch } = await supabase
+                              .from("listings")
+                              .select("daraz_item_id")
+                              .eq("store_id", store.id)
+                              .eq("seller_sku", item.seller_sku)
+                              .maybeSingle();
+
+                            if (listingMatch?.daraz_item_id) {
+                              matchedProductId = listingMatch.daraz_item_id;
+                            }
+                          } catch (_) {}
+                        }
+
+                        return {
+                          order_id: dbOrderId,
+                          daraz_order_id: ord.order_id,
+                          order_item_id: item.order_item_id,
+                          name: item.name,
+                          seller_sku: item.seller_sku,
+                          shop_sku: item.shop_sku || null,
+                          item_id: item.order_item_id,
+                          product_id: matchedProductId,
+                          item_price_cents: item.item_price_cents,
+                          paid_price_cents: item.paid_price_cents,
+                          status: item.status,
+                          shipment_provider: item.shipment_provider || null,
+                          tracking_code: item.tracking_code || null,
+                          product_main_image: item.product_main_image || null,
+                        };
+                      })
+                    );
 
                     const { error: itemsErr } = await supabase
                       .from("order_items")
@@ -667,7 +685,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             } catch (ordErr: any) {
               storeFailedCount++;
               console.error(
-                `[SyncEngine] Order processing error order_id=${ord.order_id}: ${ordErr.message}`
+                `[SyncEngine] Order processing error order_id=${ord.order_id} store=${store.store_code}: ${ordErr.message}`
               );
             }
           }
@@ -675,6 +693,10 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           orderOffset += fetchedOrdersThisPage;
           orderPageNum++;
         } while (fetchedOrdersThisPage > 0 && orderOffset < totalOrdersReported);
+
+        if (fetchedOrdersThisPage === 0 || orderOffset >= totalOrdersReported) {
+          ordersPaginationSucceeded = true;
+        }
 
         // ── 2g. Post-sync database verification ──────────────────────────
         const { count: dbListingsCount } = await supabase
