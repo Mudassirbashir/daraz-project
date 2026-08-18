@@ -63,12 +63,14 @@ export interface DarazOrderItemDetail {
   product_main_image: string;
   seller_sku: string;
   shop_sku: string;
+  quantity: number;
   item_price_cents: number;
   paid_price_cents: number;
   status: string;
   shipment_provider: string;
   tracking_code: string;
   reason?: string;
+  raw?: Record<string, any>;
 }
 
 export interface DarazOrderItem {
@@ -777,12 +779,14 @@ export class DarazApiClient {
         product_main_image: item.product_main_image || "",
         seller_sku: item.sku || item.seller_sku || "",
         shop_sku: item.shop_sku || item.daraz_sku || "",
+        quantity: Math.max(1, parseInt(String(item.quantity || 1), 10) || 1),
         item_price_cents: Math.round((parseFloat(String(item.item_price || 0)) || 0) * 100),
         paid_price_cents: Math.round((parseFloat(String(item.paid_price || item.item_price || 0)) || 0) * 100),
         status: String(item.status || "pending").toLowerCase(),
         shipment_provider: item.shipment_provider || "Daraz Express",
         tracking_code: item.tracking_code || "",
         reason: item.reason || "",
+        raw: item,
       }));
     } catch (err: any) {
       console.error(`[DarazApiClient] getOrderItems error for Order ${orderId}:`, err.message);

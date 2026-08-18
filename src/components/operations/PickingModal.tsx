@@ -24,6 +24,8 @@ interface PickingModalProps {
 export function PickingModal({ order, onClose, onPickingCompleted }: PickingModalProps) {
   const initialItems: OrderItem[] = (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0)
     ? order.order_items
+    : (order.items && Array.isArray(order.items) && order.items.length > 0)
+    ? order.items
     : [];
 
   const [items, setItems] = useState<OrderItem[]>(initialItems);

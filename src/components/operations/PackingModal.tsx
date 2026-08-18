@@ -25,17 +25,12 @@ export function PackingModal({
 
   if (!order) return null;
 
-  // Mock order items list if items not populated
-  const items = order.items && order.items.length > 0
+  // Real order items list
+  const items = (order.order_items && Array.isArray(order.order_items) && order.order_items.length > 0)
+    ? order.order_items
+    : (order.items && Array.isArray(order.items) && order.items.length > 0)
     ? order.items
-    : [
-        {
-          id: "item-1",
-          name: order.product_title || `Daraz Order Items (SKU: ${order.tracking_number || order.daraz_order_id})`,
-          sku: order.tracking_number || `SKU_${order.daraz_order_id}`,
-          quantity: 1,
-        },
-      ];
+    : [];
 
   const allItemsChecked = items.every((_: any, idx: number) => checkedItems[idx]);
 
@@ -157,7 +152,14 @@ export function PackingModal({
           </h3>
 
           <div className="space-y-2 border border-slate-200 dark:border-slate-800 rounded-2xl p-3 bg-white dark:bg-slate-900">
-            {items.map((it: any, idx: number) => {
+            {items.length === 0 ? (
+              <div className="p-4 text-center text-slate-500 dark:text-slate-400">
+                <AlertCircle className="mx-auto h-6 w-6 text-amber-500 mb-1" />
+                <p className="font-bold">No line items found for this order.</p>
+                <p className="text-[11px]">Run a manual store sync ("Update Data") to pull item details from Daraz Open Platform.</p>
+              </div>
+            ) : (
+              items.map((it: any, idx: number) => {
               const isChecked = Boolean(checkedItems[idx]) || packingState === "packed" || order.is_packed;
 
               return (
@@ -190,7 +192,8 @@ export function PackingModal({
                   </span>
                 </div>
               );
-            })}
+            })
+            )}
           </div>
         </div>
 

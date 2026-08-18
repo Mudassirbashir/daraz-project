@@ -1,5 +1,5 @@
 import { createAdminClient } from "@/lib/supabase/admin";
-import { DarazApiClient, sanitizeLogPayload } from "./client";
+import { DarazApiClient, sanitizeLogPayload, humanizeDarazApiError } from "./client";
 import { DarazOrderStatus } from "@/types/database.types";
 import { mapDarazOrderStatus } from "./order-status";
 
@@ -385,6 +385,11 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           catalogPaginationSucceeded = true;
         }
 
+        // Fix #3: Check zero products returned case
+        if (catalogPaginationSucceeded && storeSkusSynced === 0 && storeItemsSynced === 0) {
+          storeErrorMsg = "No products found on your Daraz Seller Center yet.";
+        }
+
         console.log(
           `[SyncEngine] Catalog pagination complete for ${store.store_code}: ` +
           `items=${storeItemsSynced} skus=${storeSkusSynced} ` +
@@ -475,8 +480,8 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         let orderPageNum = 1;
         let ordersPaginationSucceeded = false;
 
-        // For a targeted single-store sync or a store with no prior sync, fetch full history.
-        // For scheduled cron syncs with a known last_synced_at, use a 24-hour safe overlap window.
+        // Fix #2: First-time sync vs Incremental sync detection
+        const isFirstTimeSync = !store.last_synced_at;
         let incrementalUpdateAfter = "2020-01-01T00:00:00Z";
         if (!targetStoreId && store.last_synced_at) {
           const safeOverlapMs = 24 * 60 * 60 * 1000;
@@ -485,6 +490,12 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             incrementalUpdateAfter = new Date(lastSyncTime - safeOverlapMs).toISOString();
           }
         }
+
+        console.log(
+          `[SyncEngine] store=${store.store_code}: Executing ${
+            isFirstTimeSync ? "FIRST-TIME FULL HISTORICAL ORDER SYNC" : "INCREMENTAL ORDER SYNC"
+          } (update_after=${incrementalUpdateAfter})`
+        );
 
         do {
           let pageOrders;
@@ -625,57 +636,75 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 }
               }
 
-              // Sync order items if order was persisted successfully
+              // Fix #1: Order line items persistence with optimization rule (1d)
               if (dbOrderId) {
                 try {
-                  const items = await darazClient.getOrderItems(ord.order_id);
-                  if (items && items.length > 0) {
-                    const itemPayloads = await Promise.all(
-                      items.map(async (item) => {
-                        let matchedProductId: string | null = null;
-                        // Requirement: Match SKU strictly scoped to store_id + seller_sku
-                        if (item.seller_sku) {
-                          try {
-                            const { data: listingMatch } = await supabase
-                              .from("listings")
-                              .select("daraz_item_id")
-                              .eq("store_id", store.id)
-                              .eq("seller_sku", item.seller_sku)
-                              .maybeSingle();
-
-                            if (listingMatch?.daraz_item_id) {
-                              matchedProductId = listingMatch.daraz_item_id;
-                            }
-                          } catch (_) {}
-                        }
-
-                        return {
-                          order_id: dbOrderId,
-                          daraz_order_id: ord.order_id,
-                          order_item_id: item.order_item_id,
-                          name: item.name,
-                          seller_sku: item.seller_sku,
-                          shop_sku: item.shop_sku || null,
-                          item_id: item.order_item_id,
-                          product_id: matchedProductId,
-                          item_price_cents: item.item_price_cents,
-                          paid_price_cents: item.paid_price_cents,
-                          status: item.status,
-                          shipment_provider: item.shipment_provider || null,
-                          tracking_code: item.tracking_code || null,
-                          product_main_image: item.product_main_image || null,
-                        };
-                      })
-                    );
-
-                    const { error: itemsErr } = await supabase
+                  let shouldFetchItems = false;
+                  if (!existingOrder || previousStatus !== workflowStatus) {
+                    shouldFetchItems = true;
+                  } else {
+                    const { count: currentItemsCount } = await supabase
                       .from("order_items")
-                      .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+                      .select("*", { count: "exact", head: true })
+                      .eq("order_id", dbOrderId);
 
-                    if (itemsErr) {
-                      console.warn(`[SyncEngine] Notice saving order_items order_id=${ord.order_id}: ${itemsErr.message}`);
-                    } else {
-                      storeOrderItemsSynced += items.length;
+                    if (!currentItemsCount || currentItemsCount === 0) {
+                      shouldFetchItems = true;
+                    }
+                  }
+
+                  if (shouldFetchItems) {
+                    const items = await darazClient.getOrderItems(ord.order_id);
+                    if (items && items.length > 0) {
+                      const itemPayloads = await Promise.all(
+                        items.map(async (item) => {
+                          let matchedProductId: string | null = null;
+                          // Requirement: Match SKU strictly scoped to store_id + seller_sku
+                          if (item.seller_sku) {
+                            try {
+                              const { data: listingMatch } = await supabase
+                                .from("listings")
+                                .select("daraz_item_id")
+                                .eq("store_id", store.id)
+                                .eq("seller_sku", item.seller_sku)
+                                .maybeSingle();
+
+                              if (listingMatch?.daraz_item_id) {
+                                matchedProductId = listingMatch.daraz_item_id;
+                              }
+                            } catch (_) {}
+                          }
+
+                          return {
+                            order_id: dbOrderId,
+                            daraz_order_id: ord.order_id,
+                            order_item_id: item.order_item_id,
+                            name: item.name,
+                            seller_sku: item.seller_sku,
+                            shop_sku: item.shop_sku || null,
+                            item_id: item.order_item_id,
+                            product_id: matchedProductId,
+                            quantity: item.quantity || 1,
+                            item_price_cents: item.item_price_cents,
+                            paid_price_cents: item.paid_price_cents,
+                            status: item.status,
+                            shipment_provider: item.shipment_provider || null,
+                            tracking_code: item.tracking_code || null,
+                            product_main_image: item.product_main_image || null,
+                            raw_item_payload: item.raw || item,
+                          };
+                        })
+                      );
+
+                      const { error: itemsErr } = await supabase
+                        .from("order_items")
+                        .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+
+                      if (itemsErr) {
+                        console.warn(`[SyncEngine] Notice saving order_items order_id=${ord.order_id}: ${itemsErr.message}`);
+                      } else {
+                        storeOrderItemsSynced += items.length;
+                      }
                     }
                   }
                 } catch (itemExc: any) {
@@ -723,11 +752,10 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           `[SyncEngine] Store ${store.store_code} exception: ${storeErrorMsg}`
         );
       } finally {
-        // ── ALWAYS release the row lock ────────────────────────────────────
-        // Success: sync_status = connected, last_synced_at = now, last_sync_error = null
-        // Failure: sync_status = error, last_sync_error = exact message
+        // Fix #3: Humanize last_sync_error and clear on success
         try {
-          const finalStatus = storeErrorMsg ? "error" : "connected";
+          const finalStatus = storeErrorMsg && !storeErrorMsg.includes("No products found") ? "error" : "connected";
+          const humanErrorMsg = storeErrorMsg ? humanizeDarazApiError("SYNC_NOTICE", storeErrorMsg) : null;
           await supabase
             .from("daraz_stores")
             .update({

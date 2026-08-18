@@ -1,6 +1,7 @@
 import crypto from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DarazOrderStatus } from "@/types/database.types";
+import { DarazApiClient } from "./client";
 
 export interface WebhookProcessResult {
   success: boolean;
@@ -321,6 +322,82 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       } else {
         actionTaken = existingOrder ? "order_status_updated" : "order_created";
         console.log(`[DARAZ WEBHOOK] Successfully updated Order ${darazOrderId} status to '${mappedStatus}'.`);
+
+        // Fetch internal order UUID and sync order items
+        const { data: dbOrder } = await supabase
+          .from("orders")
+          .select("id")
+          .eq("daraz_order_id", darazOrderId)
+          .maybeSingle();
+
+        if (dbOrder?.id) {
+          try {
+            const { data: storeRecord } = await supabase
+              .from("daraz_stores")
+              .select("access_token, refresh_token, api_app_key, api_app_secret")
+              .eq("id", targetStoreId)
+              .single();
+
+            if (storeRecord?.access_token) {
+              const webhookDarazClient = new DarazApiClient({
+                accessToken: storeRecord.access_token,
+                refreshToken: storeRecord.refresh_token || "",
+                appKey: storeRecord.api_app_key || process.env.DARAZ_APP_KEY || "",
+                appSecret: storeRecord.api_app_secret || process.env.DARAZ_APP_SECRET || "",
+              });
+
+              const items = await webhookDarazClient.getOrderItems(darazOrderId);
+              if (items && items.length > 0) {
+                const itemPayloads = await Promise.all(
+                  items.map(async (item) => {
+                    let matchedProductId: string | null = null;
+                    if (item.seller_sku) {
+                      try {
+                        const { data: listingMatch } = await supabase
+                          .from("listings")
+                          .select("daraz_item_id")
+                          .eq("store_id", targetStoreId)
+                          .eq("seller_sku", item.seller_sku)
+                          .maybeSingle();
+
+                        if (listingMatch?.daraz_item_id) {
+                          matchedProductId = listingMatch.daraz_item_id;
+                        }
+                      } catch (_) {}
+                    }
+
+                    return {
+                      order_id: dbOrder.id,
+                      daraz_order_id: darazOrderId,
+                      order_item_id: item.order_item_id,
+                      name: item.name,
+                      seller_sku: item.seller_sku,
+                      shop_sku: item.shop_sku || null,
+                      item_id: item.order_item_id,
+                      product_id: matchedProductId,
+                      quantity: item.quantity || 1,
+                      item_price_cents: item.item_price_cents,
+                      paid_price_cents: item.paid_price_cents,
+                      status: item.status,
+                      shipment_provider: item.shipment_provider || null,
+                      tracking_code: item.tracking_code || null,
+                      product_main_image: item.product_main_image || null,
+                      raw_item_payload: item.raw || item,
+                    };
+                  })
+                );
+
+                await supabase
+                  .from("order_items")
+                  .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+
+                console.log(`[DARAZ WEBHOOK] Successfully synced ${items.length} order items for Order ${darazOrderId}`);
+              }
+            }
+          } catch (itemErr: any) {
+            console.warn(`[DARAZ WEBHOOK] Notice fetching order items for Order ${darazOrderId}: ${itemErr.message}`);
+          }
+        }
       }
     } catch (ordErr: any) {
       console.error(`[DARAZ WEBHOOK] Order processing exception for Order ${darazOrderId}:`, ordErr.message);
