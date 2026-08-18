@@ -60,16 +60,18 @@ export async function pullStockForStore(storeId: string): Promise<StockSyncResul
               .from("listings")
               .update({
                 stock_quantity: sku.quantity,
+                reserved_quantity: sku.reserved_quantity || 0,
                 price_cents: sku.price_cents,
                 special_price_cents: sku.special_price_cents || null,
                 last_synced_at: timestamp,
-                sync_status: "synced",
+                is_synced: true,
               })
               .eq("store_id", store.id)
               .eq("seller_sku", sku.seller_sku);
 
             if (listingErr) {
               console.warn(`[StockSync] Notice updating listing store=${store.store_code} sku=${sku.seller_sku}: ${listingErr.message}`);
+              errors.push(`Listing update error SKU ${sku.seller_sku}: ${listingErr.message}`);
             }
 
             // Update daraz_product_skus table if present

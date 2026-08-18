@@ -405,7 +405,7 @@ export class DarazApiClient {
    * Items or SKUs missing stable identifiers are logged and skipped instead of generating
    * fake placeholder identities, which could corrupt catalog data.
    */
-  async getCatalogItems(offset = 0, limit = 500): Promise<{
+  async getCatalogItems(offset = 0, limit = 50): Promise<{
     items: DarazCatalogItem[];
     total_items: number;
     raw_items_count: number;
