@@ -71,7 +71,7 @@ export async function GET(req: NextRequest) {
       sign_method: "sha256",
     };
 
-    const signature = generateDarazSignature(apiPath, params, appSecret);
+    const signature = await generateDarazSignature(apiPath, params, appSecret);
     params.sign = signature;
 
     const queryString = new URLSearchParams(params).toString();
