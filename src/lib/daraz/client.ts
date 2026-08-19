@@ -18,6 +18,41 @@ export interface DarazClientConfig {
   accessToken?: string;
 }
 
+export interface DarazCatalogSku {
+  seller_sku: string;
+  daraz_sku_id?: string;
+  shop_sku?: string;
+  item_id?: string;
+  price_cents: number;
+  special_price_cents?: number;
+  quantity: number;
+  reserved_quantity?: number;
+  status?: string;
+  images?: string[];
+  [key: string]: any;
+}
+
+export interface DarazCatalogItem {
+  item_id: string;
+  title: string;
+  category?: string;
+  brand?: string;
+  status?: string;
+  description?: string;
+  images?: string[];
+  attributes?: Record<string, any>;
+  skus: DarazCatalogSku[];
+  [key: string]: any;
+}
+
+export interface DarazCatalogResult {
+  items: DarazCatalogItem[];
+  total_items: number;
+  raw_items_count: number;
+  skipped_items: number;
+  skipped_skus: number;
+}
+
 export interface DarazOrderItem {
   order_item_id?: string | number;
   item_id?: string | number;
@@ -147,7 +182,7 @@ export class DarazClient {
     };
   }
 
-  public async getCatalogItems(offset = 0, limit = 50): Promise<any> {
+  public async getCatalogItems(offset = 0, limit = 50): Promise<DarazCatalogResult> {
     const response: any = await this.get('/products/get', {
       filter: 'all',
       offset: String(offset),
@@ -469,7 +504,7 @@ export class DarazApiClient {
     return this.client.getStoreProfile();
   }
 
-  async getCatalogItems(offset = 0, limit = 50): Promise<any> {
+  async getCatalogItems(offset = 0, limit = 50): Promise<DarazCatalogResult> {
     return this.client.getCatalogItems(offset, limit);
   }
 

@@ -212,9 +212,9 @@ export async function POST(req: NextRequest) {
             } else {
               // Product/Listing targeted retry
               const { items } = await darazClient.getCatalogItems(0, 50);
-              const targetItem = items.find((it) => it.skus.some((s) => s.seller_sku === errRecord.entity_id || it.item_id === errRecord.entity_id));
+              const targetItem = (items || []).find((it: any) => Array.isArray(it.skus) && it.skus.some((s: any) => s.seller_sku === errRecord.entity_id || it.item_id === errRecord.entity_id));
               if (targetItem) {
-                const targetSku = targetItem.skus.find((s) => s.seller_sku === errRecord.entity_id) || targetItem.skus[0];
+                const targetSku = targetItem.skus.find((s: any) => s.seller_sku === errRecord.entity_id) || targetItem.skus[0];
                 if (targetSku) {
                   const listingPayload = {
                     store_id: errRecord.store_id,
