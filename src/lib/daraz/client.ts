@@ -71,6 +71,7 @@ export interface DarazOrderItemDetail {
   tracking_code: string;
   reason?: string;
   raw?: Record<string, any>;
+  item_id?: string;
 }
 
 export interface DarazOrderItem {
@@ -774,6 +775,7 @@ export class DarazApiClient {
 
       return rawItems.map((item) => ({
         order_item_id: String(item.order_item_id || item.item_id),
+        item_id: String(item.order_item_id || item.item_id || ""),
         order_id: String(item.order_id || orderId),
         name: item.name || "",
         product_main_image: item.product_main_image || "",
