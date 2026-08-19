@@ -27,7 +27,43 @@ DARAZ_API_BASE_URL=https://api.daraz.pk/rest
 
 NEXT_PUBLIC_APP_URL=https://your-vercel-app.vercel.app
 CRON_SECRET=your-secure-random-cron-secret
+DARAZ_ENCRYPTION_SECRET=your-32-byte-aes-256-encryption-key
 ```
+
+---
+
+## 🗄️ Database Migrations & Schema Overview
+
+Apply all migration SQL scripts located in `supabase/migrations/` sequentially or via Supabase CLI:
+
+```bash
+npx supabase db push
+```
+
+### Key Tables & Composite Identity Controls:
+1. **`daraz_stores`**: Multi-tenant Daraz Pakistan store slots with `encrypted_access_token`, `encrypted_refresh_token`, `encrypted_api_app_secret`, and `token_refresh_locked_until` DB lock.
+2. **`master_skus`**: Central inventory ledger master catalog storing `physical_quantity`, `reserved_quantity`, `damaged_quantity`, and `safety_stock_quantity`.
+3. **`barcode_mappings`**: EAN/UPC/Custom barcode to Master SKU mapping table per store with `(barcode, store_id, seller_sku)` unique constraint.
+4. **`inventory_ledger`**: Audit ledger tracking every stock movement (`INBOUND`, `OUTBOUND`, `ORDER_RESERVED`, `ORDER_FULFILLED`, `RETURN_RESTOCKED`, `ADJUSTMENT`, `SAFETY_BUFFER_CHANGE`).
+5. **`background_jobs`**: Asynchronous task queue runner table (`orders_sync`, `products_sync`, `inventory_push`, `token_refresh`, `fulfillment_push`) with exponential backoff scheduling.
+
+---
+
+## 📡 API Routes Map
+
+- `POST /api/sync`: Full catalog, stock, and orders incremental sync trigger.
+- `POST /api/sync/retry`: Asynchronous background job manual retry endpoint.
+- `POST /api/stores/[id]/test-connection`: Real-time Daraz Seller Center API connectivity diagnostic test.
+- `GET /api/dashboard/stock-mismatch`: Stock discrepancy report API between physical ledger stock and Daraz allocated stock.
+- `GET /api/auth/daraz/callback`: Daraz OAuth authorization code callback handler.
+
+---
+
+## ⚙️ Background Worker Queue Design & Error Model
+
+- **Queue Execution**: Jobs in `background_jobs` are polled or scheduled via serverless cron.
+- **Exponential Backoff**: Retries up to 5 attempts with delay calculated as `2^attempts * 10s` (10s, 20s, 40s, 80s, 160s).
+- **Credentials Masking**: All API request/response payloads written to logs pass through `sanitizeLogPayload` redacting tokens and secrets.
 
 ### 3. Deploy
 - Default Build Command: `npm run build` (`next build`)

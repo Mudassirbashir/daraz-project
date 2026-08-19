@@ -6,7 +6,7 @@ export type Json =
   | { [key: string]: Json | undefined }
   | Json[];
 
-export type AppRole = 'super_admin' | 'product_manager' | 'ops_manager';
+export type AppRole = 'super_admin' | 'product_manager' | 'ops_manager' | 'admin' | 'warehouse_operator' | 'viewer';
 
 export type ProductDevStage =
   | 'ideation'

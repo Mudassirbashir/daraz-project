@@ -22,6 +22,21 @@ const ROLE_STYLES: Record<AppRole, { defaultName: string; label: string; classNa
     label: "Ops Manager",
     className: "bg-emerald-50/90 text-emerald-800 border-emerald-200/80 dark:bg-emerald-500/10 dark:text-emerald-300 dark:border-emerald-500/20",
   },
+  admin: {
+    defaultName: "Admin",
+    label: "Admin",
+    className: "bg-indigo-50/90 text-indigo-800 border-indigo-200/80 dark:bg-indigo-500/10 dark:text-indigo-300 dark:border-indigo-500/20",
+  },
+  warehouse_operator: {
+    defaultName: "Warehouse Operator",
+    label: "Warehouse Operator",
+    className: "bg-amber-50/90 text-amber-800 border-amber-200/80 dark:bg-amber-500/10 dark:text-amber-300 dark:border-amber-500/20",
+  },
+  viewer: {
+    defaultName: "Viewer",
+    label: "Viewer",
+    className: "bg-slate-50/90 text-slate-800 border-slate-200/80 dark:bg-slate-500/10 dark:text-slate-300 dark:border-slate-500/20",
+  },
 };
 
 export function RoleBadge({ role, userName }: RoleBadgeProps) {
