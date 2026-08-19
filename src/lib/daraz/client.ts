@@ -486,52 +486,7 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
 }
 
 /**
- * High-level DarazApiClient adapter wrapping DarazClient for existing callers & test runner
+ * High-level DarazApiClient alias mapping directly to DarazClient
  */
-export class DarazApiClient {
-  private client: DarazClient;
-
-  constructor(options: DarazClientConfig = {}) {
-    this.client = new DarazClient(options);
-  }
-
-  async getOrderDetails(orderId: string | number): Promise<any> {
-    return this.client.getOrderDetails(orderId);
-  }
-
-  async getOrderItems(orderId: string | number): Promise<any[]> {
-    return this.client.getOrderItems(orderId);
-  }
-
-  async getStoreProfile(): Promise<any> {
-    return this.client.getStoreProfile();
-  }
-
-  async getCatalogItems(offset = 0, limit = 50): Promise<DarazCatalogResult> {
-    return this.client.getCatalogItems(offset, limit);
-  }
-
-  async getOrders(offset = 0, limit = 100, updateAfter?: string): Promise<any> {
-    return this.client.getOrders(offset, limit, updateAfter);
-  }
-
-  async packOrder(itemIds: string[], shippingProvider: string): Promise<{ success: boolean; packageId?: string }> {
-    return this.client.packOrder(itemIds, shippingProvider);
-  }
-
-  async setReadyToShip(itemIds: string[], trackingNumber: string, shippingProvider: string, packageId?: string): Promise<{ success: boolean }> {
-    return this.client.setReadyToShip(itemIds, trackingNumber, shippingProvider, packageId);
-  }
-
-  async getShippingDocument(itemIds: string[], docType = 'shippingLabel', packageId?: string): Promise<{ file: string; mimeType: string; raw: any }> {
-    return this.client.getShippingDocument(itemIds, docType, packageId);
-  }
-
-  async updatePriceAndQuantity(skuUpdates: Array<{ sellerSku: string; itemId?: string | number; skuId?: string | number; quantity?: number; priceCents?: number; specialPriceCents?: number }>): Promise<boolean> {
-    return this.client.updatePriceAndQuantity(skuUpdates);
-  }
-
-  async updateProduct(itemId: string, sku: string, attributes: Record<string, any>, images?: string[]): Promise<boolean> {
-    return this.client.updateProduct(itemId, sku, attributes, images);
-  }
-}
+export const DarazApiClient = DarazClient;
+export type DarazApiClient = DarazClient;
