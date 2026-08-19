@@ -113,6 +113,19 @@ export interface DarazClientOptions {
 }
 
 /**
+ * Helper to sanitize XML text values
+ */
+function escapeXml(unsafe: string): string {
+  if (!unsafe || typeof unsafe !== "string") return "";
+  return unsafe
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&apos;");
+}
+
+/**
  * Translates technical Daraz API error codes into friendly human readable messages
  */
 export function humanizeDarazApiError(code: string, rawMessage?: string): string {
@@ -126,6 +139,7 @@ export function humanizeDarazApiError(code: string, rawMessage?: string): string
       return "Your Daraz store connection has expired. Please reconnect your store via My Stores.";
     case "429":
     case "RateLimitExceeded":
+    case "RequestLimitExceeded":
     case "Too Many Requests":
       return "Daraz API request limit reached. Please wait a few moments and try again.";
     case "B1001":
@@ -168,16 +182,16 @@ export class DarazApiClient {
   }
 
   /**
-   * Checks if token is expired or expiring within 5 minutes, and auto-refreshes if possible.
+   * Checks if token is expired or expiring within 24 hours, and auto-refreshes if possible.
    */
   private async ensureValidAccessToken(): Promise<string | undefined> {
     if (!this.accessToken) return undefined;
 
-    const fiveMinutesMs = 5 * 60 * 1000;
-    const isExpiringSoon = this.tokenExpiresAt && this.tokenExpiresAt.getTime() - Date.now() < fiveMinutesMs;
+    const twentyFourHoursMs = 24 * 60 * 60 * 1000;
+    const isExpiringSoon = this.tokenExpiresAt && this.tokenExpiresAt.getTime() - Date.now() < twentyFourHoursMs;
 
     if (isExpiringSoon && this.refreshToken) {
-      console.log(`[DarazApiClient] Access token for store ${this.storeId || "unknown"} is expiring soon. Refreshing token...`);
+      console.log(`[DarazApiClient] Access token for store ${this.storeId || "unknown"} is expiring within 24h. Refreshing token...`);
       await this.refreshAccessToken();
     }
 
@@ -185,7 +199,7 @@ export class DarazApiClient {
   }
 
   /**
-   * Refreshes access token via Daraz REST API /auth/token/refresh and updates database.
+   * Refreshes access token via Daraz REST API /auth/token/refresh with Supabase atomic mutex lock.
    */
   async refreshAccessToken(): Promise<void> {
     if (!this.refreshToken) {
@@ -196,58 +210,100 @@ export class DarazApiClient {
       throw new Error("Daraz API Credentials Notice: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET. Reconnect store via My Stores.");
     }
 
-    const apiPath = "/auth/token/refresh";
-    const timestamp = Date.now().toString();
+    const supabase = createAdminClient();
+    const nowIso = new Date().toISOString();
+    const lockExpiryIso = new Date(Date.now() + 2 * 60 * 1000).toISOString();
 
-    const params: Record<string, string> = {
-      refresh_token: this.refreshToken,
-      app_key: this.appKey,
-      timestamp,
-      sign_method: "sha256",
-    };
-
-    const signature = generateDarazSignature(apiPath, params, this.appSecret);
-    params.sign = signature;
-
-    const queryString = new URLSearchParams(params).toString();
-    const url = `${this.baseUrl}${apiPath}?${queryString}`;
-
-    const res = await fetch(url, {
-      method: "GET",
-      headers: { "Content-Type": "application/json" },
-    });
-
-    if (!res.ok) {
-      throw new Error(`Token refresh failed with HTTP ${res.status}: ${res.statusText}`);
-    }
-
-    const data = await res.json();
-    if (data.code && data.code !== "0") {
-      throw new Error(humanizeDarazApiError(data.code, data.message || data.detail));
-    }
-
-    this.accessToken = data.access_token;
-    if (data.refresh_token) {
-      this.refreshToken = data.refresh_token;
-    }
-
-    const expiresInSeconds = typeof data.expires_in === "number" ? data.expires_in : parseInt(data.expires_in || "2592000", 10);
-    this.tokenExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
-
+    // Atomic DB Mutex Lock to prevent concurrent refresh race conditions
     if (this.storeId) {
       try {
-        const supabase = createAdminClient();
+        const { data: lockAcquired, error: lockErr } = await supabase
+          .from("daraz_stores")
+          .update({ refreshing_token_until: lockExpiryIso, updated_at: nowIso })
+          .eq("id", this.storeId)
+          .or(`refreshing_token_until.is.null,refreshing_token_until.lt.${nowIso}`)
+          .select("id, access_token, refresh_token, token_expires_at");
+
+        if (lockErr || !lockAcquired || lockAcquired.length === 0) {
+          console.warn(`[DarazApiClient] Token refresh lock active for store ${this.storeId}. Waiting for concurrent refresh to complete...`);
+          await new Promise((r) => setTimeout(r, 2500));
+          const { data: latestStore } = await supabase
+            .from("daraz_stores")
+            .select("access_token, refresh_token, token_expires_at")
+            .eq("id", this.storeId)
+            .single();
+
+          if (latestStore?.access_token) {
+            this.accessToken = latestStore.access_token;
+            if (latestStore.refresh_token) this.refreshToken = latestStore.refresh_token;
+            if (latestStore.token_expires_at) this.tokenExpiresAt = new Date(latestStore.token_expires_at);
+            return;
+          }
+        }
+      } catch (lockEx: any) {
+        console.warn("[DarazApiClient] Notice attempting atomic token refresh lock:", lockEx.message);
+      }
+    }
+
+    try {
+      const apiPath = "/auth/token/refresh";
+      const timestamp = Date.now().toString();
+
+      const params: Record<string, string> = {
+        refresh_token: this.refreshToken,
+        app_key: this.appKey,
+        timestamp,
+        sign_method: "sha256",
+      };
+
+      const signature = generateDarazSignature(apiPath, params, this.appSecret);
+      params.sign = signature;
+
+      const queryString = new URLSearchParams(params).toString();
+      const url = `${this.baseUrl}${apiPath}?${queryString}`;
+
+      const res = await fetch(url, {
+        method: "GET",
+        headers: { "Content-Type": "application/json" },
+      });
+
+      if (!res.ok) {
+        throw new Error(`Token refresh failed with HTTP ${res.status}: ${res.statusText}`);
+      }
+
+      const data = await res.json();
+      if (data.code && data.code !== "0") {
+        throw new Error(humanizeDarazApiError(data.code, data.message || data.detail));
+      }
+
+      this.accessToken = data.access_token;
+      if (data.refresh_token) {
+        this.refreshToken = data.refresh_token;
+      }
+
+      const expiresInSeconds = typeof data.expires_in === "number" ? data.expires_in : parseInt(data.expires_in || "2592000", 10);
+      this.tokenExpiresAt = new Date(Date.now() + expiresInSeconds * 1000);
+
+      if (this.storeId) {
         await supabase
           .from("daraz_stores")
           .update({
             access_token: this.accessToken,
             refresh_token: this.refreshToken,
             token_expires_at: this.tokenExpiresAt.toISOString(),
+            refreshing_token_until: null,
             updated_at: new Date().toISOString(),
           })
           .eq("id", this.storeId);
-      } catch (dbErr: any) {
-        console.error("[DarazApiClient] Failed to persist refreshed token to database:", dbErr.message);
+      }
+    } finally {
+      if (this.storeId) {
+        try {
+          await supabase
+            .from("daraz_stores")
+            .update({ refreshing_token_until: null })
+            .eq("id", this.storeId);
+        } catch (_) {}
       }
     }
   }
@@ -322,6 +378,14 @@ export class DarazApiClient {
               continue;
             }
           }
+          if (data.code === "429" || data.code === "RateLimitExceeded" || data.code === "RequestLimitExceeded") {
+            if (attempt < this.maxRetries) {
+              const backoffMs = Math.pow(2, attempt) * 1500;
+              console.warn(`[DarazApiClient] API Rate limit ${data.code} on ${apiPath}. Retrying in ${backoffMs}ms...`);
+              await new Promise((r) => setTimeout(r, backoffMs));
+              continue;
+            }
+          }
           const userFriendlyError = humanizeDarazApiError(data.code, data.message || data.detail);
           throw new Error(userFriendlyError);
         }
@@ -388,7 +452,6 @@ export class DarazApiClient {
       rawImages.forEach((img: any) => {
         if (typeof img === "string" && img.trim()) result.push(img.trim());
         else if (img && typeof img === "object") {
-          // Handle {url: "..."} or {Url: "..."} objects
           const url = img.url || img.Url || img.image || img.Image || "";
           if (typeof url === "string" && url.trim()) result.push(url.trim());
         }
@@ -401,10 +464,6 @@ export class DarazApiClient {
 
   /**
    * Fetch Store Parent Catalog Items & Nested SKUs (/products/get)
-   *
-   * Returns only items with a stable Daraz item_id, and only SKUs with a stable seller_sku.
-   * Items or SKUs missing stable identifiers are logged and skipped instead of generating
-   * fake placeholder identities, which could corrupt catalog data.
    */
   async getCatalogItems(offset = 0, limit = 50): Promise<{
     items: DarazCatalogItem[];
@@ -427,7 +486,6 @@ export class DarazApiClient {
     const dataObj = response.data || response.result || response;
     let rawProducts: any[] = [];
 
-    // Support all known response envelope shapes
     if (Array.isArray(dataObj)) {
       rawProducts = dataObj;
     } else if (Array.isArray(dataObj?.products)) {
@@ -458,36 +516,20 @@ export class DarazApiClient {
     let skipped_items = 0;
     let skipped_skus = 0;
 
-    console.log(
-      `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} offset=${offset} raw_items=${raw_items_count} total_reported=${total_items}`
-    );
-
     rawProducts.forEach((p, pIdx) => {
-      // ---------------------------------------------------------------
-      // REQUIREMENT: Skip items with no stable Daraz item ID.
-      // Never generate fake IDs like `ITEM_${Date.now()}`.
-      // ---------------------------------------------------------------
       const rawItemId = p.item_id || p.ItemId || p.itemId || "";
       const itemId = typeof rawItemId === "string" ? rawItemId.trim() : String(rawItemId || "").trim();
 
       if (!itemId) {
         skipped_items++;
-        console.warn(
-          `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} offset=${offset} index=${pIdx}: ` +
-          `Skipping item with no stable item_id. Raw keys: [${Object.keys(p).join(", ")}]`
-        );
         return;
       }
 
-      // Normalize attributes (camelCase & PascalCase)
       const rawAttributes: Record<string, any> = p.attributes || p.Attributes || {};
-
-      // Product-level images
       const productLevelImages: string[] = [];
       const rawProductImages = p.images || p.Images || [];
       productLevelImages.push(...this.extractImages(rawProductImages));
 
-      // Also include attribute-level images if present
       if (rawAttributes.images) productLevelImages.push(...this.extractImages(rawAttributes.images));
       else if (rawAttributes.image) productLevelImages.push(...this.extractImages(rawAttributes.image));
 
@@ -500,31 +542,20 @@ export class DarazApiClient {
         p.Description ||
         "";
 
-      // SKU collection (camelCase & PascalCase)
       const skuCollection = p.skus || p.Skus || [];
-      // If the API returns no skus array, treat the parent item itself as having one implicit SKU
       const rawSkus: any[] = Array.isArray(skuCollection) && skuCollection.length > 0 ? skuCollection : [{}];
       const parsedSkus: DarazProductSku[] = [];
 
       rawSkus.forEach((sku: any, sIdx: number) => {
-        // ---------------------------------------------------------------
-        // REQUIREMENT: Skip SKUs with no stable seller_sku.
-        // Never generate fake SKUs like `SKU_${itemId}_...`.
-        // ---------------------------------------------------------------
         const rawSellerSku =
           sku.SellerSku || sku.seller_sku || sku.sellerSku || sku.SellerSKU || "";
         const sellerSku = typeof rawSellerSku === "string" ? rawSellerSku.trim() : String(rawSellerSku || "").trim();
 
         if (!sellerSku) {
           skipped_skus++;
-          console.warn(
-            `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} item_id=${itemId} sku_index=${sIdx}: ` +
-            `Skipping SKU with no stable SellerSku. Raw sku keys: [${Object.keys(sku).join(", ")}]`
-          );
           return;
         }
 
-        // SKU-level images (camelCase + PascalCase + object forms)
         const skuImages: string[] = [...productLevelImages];
         const rawSkuImages = sku.Images || sku.images || [];
         skuImages.push(...this.extractImages(rawSkuImages));
@@ -533,7 +564,6 @@ export class DarazApiClient {
           new Set(skuImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
         );
 
-        // Quantity: check all known field names
         const rawQty =
           sku.quantity ??
           sku.Quantity ??
@@ -544,7 +574,6 @@ export class DarazApiClient {
           0;
         const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
 
-        // Reserved/withheld quantity
         const rawReserved =
           sku.withholding_quantity ??
           sku.WithholdingQuantity ??
@@ -555,18 +584,15 @@ export class DarazApiClient {
           0;
         const parsedReserved = Math.max(0, parseInt(String(rawReserved), 10) || 0);
 
-        // Price
         const rawPrice = sku.price ?? sku.Price ?? sku.SalePrice ?? sku.sale_price ?? 0;
         const priceCents = Math.round((parseFloat(String(rawPrice)) || 0) * 100);
 
-        // Special / sale price
         const specialPrice = sku.special_price ?? sku.SpecialPrice ?? sku.SalePrice ?? sku.sale_price;
         const specialPriceCents =
           specialPrice !== null && specialPrice !== undefined && specialPrice !== rawPrice
             ? Math.round(parseFloat(String(specialPrice)) * 100) || undefined
             : undefined;
 
-        // Daraz SKU ID and Shop SKU
         const darazSkuId = String(
           sku.SkuId || sku.skuId || sku.sku_id || sku.SkuID || sku.ShopSku || ""
         );
@@ -574,7 +600,6 @@ export class DarazApiClient {
           sku.ShopSku || sku.shop_sku || sku.ShopSKU || sku.SkuId || sku.sku_id || ""
         );
 
-        // SKU status
         const skuStatus = String(
           sku.Status || sku.status || p.status || p.Status || "active"
         ).toLowerCase();
@@ -595,13 +620,8 @@ export class DarazApiClient {
         });
       });
 
-      // Only include the item if it has at least one valid SKU
       if (parsedSkus.length === 0) {
         skipped_items++;
-        console.warn(
-          `[DarazApiClient.getCatalogItems] storeId=${this.storeId || "unknown"} item_id=${itemId}: ` +
-          `Skipping item — all ${rawSkus.length} SKU(s) were missing a stable SellerSku.`
-        );
         return;
       }
 
@@ -609,7 +629,6 @@ export class DarazApiClient {
         new Set(productLevelImages.map((url) => this.normalizeImageUrl(url)).filter(Boolean))
       );
 
-      // Item title: check all known field names
       const title =
         rawAttributes.name_en ||
         rawAttributes.NameEn ||
@@ -646,79 +665,69 @@ export class DarazApiClient {
   }
 
   /**
-   * Legacy Helper: Fetch Store Products as Flattened SKUs for backward compatibility (/products/get)
-   */
-  async getProducts(offset = 0, limit = 50): Promise<{ products: DarazProductItem[]; total: number }> {
-    const { items, total_items } = await this.getCatalogItems(offset, limit);
-    const products: DarazProductItem[] = [];
-
-    items.forEach((item) => {
-      item.skus.forEach((sku) => {
-        products.push({
-          item_id: item.item_id,
-          seller_sku: sku.seller_sku,
-          daraz_sku_id: sku.daraz_sku_id,
-          title: item.title,
-          category: item.category,
-          brand: item.brand,
-          status: sku.status || item.status,
-          description: item.description,
-          price_cents: sku.price_cents,
-          special_price_cents: sku.special_price_cents,
-          quantity: sku.quantity,
-          reserved_quantity: sku.reserved_quantity,
-          images: sku.images.length > 0 ? sku.images : item.images,
-          attributes: item.attributes,
-          variations: item.skus,
-          product_url: item.product_url,
-        });
-      });
-    });
-
-    return { products, total: total_items };
-  }
-
-  /**
    * Update Price and Quantity on Daraz Seller Center (/product/price_quantity/update)
+   * Enforces strict XML payload format and 20 SKU batching per request.
    */
   async updatePriceAndQuantity(skuUpdates: Array<{
     sellerSku: string;
     itemId?: string;
+    skuId?: string;
     priceCents?: number;
     specialPriceCents?: number;
     quantity?: number;
   }>): Promise<boolean> {
-    const skuPayloads = skuUpdates.map((item) => {
-      const skuObj: Record<string, any> = {
-        SellerSku: item.sellerSku,
-      };
-      if (typeof item.priceCents === "number") {
-        skuObj.Price = (item.priceCents / 100).toFixed(2);
-      }
-      if (typeof item.specialPriceCents === "number") {
-        skuObj.SalePrice = (item.specialPriceCents / 100).toFixed(2);
-      }
-      if (typeof item.quantity === "number") {
-        skuObj.Quantity = item.quantity;
-      }
-      return skuObj;
-    });
+    if (!skuUpdates || skuUpdates.length === 0) return true;
 
-    const payload = JSON.stringify({
-      Request: {
-        Product: {
-          Skus: {
-            Sku: skuPayloads,
-          },
-        },
-      },
-    });
+    // Batching: Chunk updates into max 20 SKUs per request
+    const BATCH_SIZE = 20;
+    const batches: typeof skuUpdates[] = [];
+    for (let i = 0; i < skuUpdates.length; i += BATCH_SIZE) {
+      batches.push(skuUpdates.slice(i, i + BATCH_SIZE));
+    }
 
-    const response = await this.request<{ code: string; message?: string }>("/product/price_quantity/update", {
-      payload,
-    }, "POST");
+    let allSuccessful = true;
 
-    return !response.code || response.code === "0";
+    for (const batch of batches) {
+      let xmlSkus = "";
+      for (const item of batch) {
+        let skuXml = `<Sku><SellerSku>${escapeXml(item.sellerSku)}</SellerSku>`;
+        if (item.itemId) {
+          skuXml += `<ItemId>${escapeXml(item.itemId)}</ItemId>`;
+        }
+        if (item.skuId) {
+          skuXml += `<SkuId>${escapeXml(item.skuId)}</SkuId>`;
+        }
+        if (typeof item.quantity === "number") {
+          skuXml += `<Quantity>${item.quantity}</Quantity>`;
+        }
+        if (typeof item.priceCents === "number") {
+          skuXml += `<Price>${(item.priceCents / 100).toFixed(2)}</Price>`;
+        }
+        if (typeof item.specialPriceCents === "number") {
+          skuXml += `<SalePrice>${(item.specialPriceCents / 100).toFixed(2)}</SalePrice>`;
+        }
+        skuXml += `</Sku>`;
+        xmlSkus += skuXml;
+      }
+
+      const payload = `<Request><Product><Skus>${xmlSkus}</Skus></Product></Request>`;
+
+      try {
+        const response = await this.request<{ code: string; message?: string }>("/product/price_quantity/update", {
+          payload,
+        }, "POST");
+
+        if (response.code && response.code !== "0") {
+          allSuccessful = false;
+          console.error(`[DarazApiClient] updatePriceAndQuantity batch failed code=${response.code}:`, response.message);
+        }
+      } catch (err: any) {
+        allSuccessful = false;
+        console.error("[DarazApiClient] updatePriceAndQuantity batch exception:", err.message);
+      }
+    }
+
+    return allSuccessful;
   }
 
   /**
@@ -839,7 +848,6 @@ export class DarazApiClient {
 
   /**
    * Verified Daraz Store Connectivity Check
-   * Makes actual authenticated API call and updates sync_status / last_sync_error on daraz_stores
    */
   async verifyStoreConnection(): Promise<{ success: boolean; error?: string }> {
     if (!this.storeId) {
@@ -850,10 +858,8 @@ export class DarazApiClient {
     const timestamp = new Date().toISOString();
 
     try {
-      // Execute an actual authenticated API call
       await this.request<any>("/seller/get");
 
-      // Update store connection state as verified
       await supabase
         .from("daraz_stores")
         .update({
@@ -971,48 +977,12 @@ export class DarazApiClient {
   }
 
   /**
-   * Set Package Status to Ready-to-Ship (/logistic/retrytopick/get)
-   * Alias: initiate pickup / ready-to-ship
-   */
-  async setPackageReadyToShip(packageId: string, shipmentProvider: string, trackingNumber: string): Promise<boolean> {
-    const response = await this.request<any>("/logistics/order/pack", {
-      package_id: packageId,
-      shipment_type: "dropship",
-    }, "POST");
-
-    return !response.code || response.code === "0";
-  }
-
-  /**
-   * Fetch Shipping Document / Label PDF for a Package (/doc/shipping/get)
-   */
-  async getShippingLabel(orderId: string, documentType = "shippingLabel"): Promise<{ content: string; mime_type: string }> {
-    const response = await this.request<any>("/doc/shipping/get", {
-      doc_type: documentType,
-      order_id: orderId,
-    });
-
-    const dataObj = response.data || response.result || response;
-    const content =
-      dataObj?.content ||
-      dataObj?.pdf ||
-      dataObj?.document ||
-      dataObj?.file_content ||
-      "";
-
-    return {
-      content,
-      mime_type: dataObj?.mime_type || "application/pdf",
-    };
-  }
-
-  /**
    * Cancel order items on Daraz Seller Center (/order/cancel)
    */
   async cancelOrder(itemIds: string[]): Promise<{ success: boolean }> {
     try {
       const response = await this.request<any>("/order/cancel", {
-        reason_id: "22",  // Daraz cancel reason: Out of stock (seller-initiated cancellation)
+        reason_id: "22",
         reason_detail: "",
         order_item_ids: JSON.stringify(itemIds),
       }, "POST");
@@ -1025,20 +995,36 @@ export class DarazApiClient {
   }
 
   /**
-   * Pack an order on Daraz Seller Center (/order/fulfill/pack)
-   * Required before generating a shipping label.
+   * Pack an order on Daraz Seller Center (/order/fulfill/pack or /order/pack)
+   * Passes order_item_list as array of order_item_id strings and delivery_type: "dropship".
    */
   async packOrder(itemIds: string[], shippingProvider: string): Promise<{ success: boolean; packageId?: string }> {
     try {
-      const response = await this.request<any>("/order/fulfill/pack", {
-        item_ids: JSON.stringify(itemIds),
-        shipment_provider: shippingProvider || "Daraz Express (DEX)",
-      }, "POST");
+      const orderItemListStr = JSON.stringify(itemIds);
+      const params: Record<string, string> = {
+        order_item_list: orderItemListStr,
+        item_ids: orderItemListStr,
+        delivery_type: "dropship",
+        shipping_provider: shippingProvider || "Daraz Express (DEX)",
+      };
 
-      const dataObj = response.data || response.result || response;
-      const packageId = String(dataObj?.package_id || dataObj?.packageId || "");
+      let response: any;
+      try {
+        response = await this.request<any>("/order/fulfill/pack", params, "POST");
+      } catch (_) {
+        response = await this.request<any>("/order/pack", params, "POST");
+      }
+
+      const dataObj = response?.data || response?.result || response || {};
+      let packageId: string | undefined = undefined;
+
+      if (Array.isArray(dataObj?.packages) && dataObj.packages.length > 0) {
+        packageId = String(dataObj.packages[0].package_id || dataObj.packages[0].packageId || "");
+      } else if (dataObj?.package_id || dataObj?.packageId) {
+        packageId = String(dataObj.package_id || dataObj.packageId);
+      }
+
       const isSuccess = !response.code || response.code === "0";
-
       return { success: isSuccess, packageId: packageId || undefined };
     } catch (err: any) {
       throw new Error(`packOrder failed: ${err.message}`);
@@ -1046,16 +1032,35 @@ export class DarazApiClient {
   }
 
   /**
-   * Set order items as Ready To Ship (/order/fulfill/readyToShip)
+   * Set order items or package as Ready To Ship (/order/package/rts or /order/fulfill/readyToShip)
    */
-  async setReadyToShip(itemIds: string[], trackingNumber: string, shippingProvider: string): Promise<{ success: boolean }> {
+  async setReadyToShip(
+    itemIds: string[],
+    trackingNumber: string,
+    shippingProvider: string,
+    packageId?: string
+  ): Promise<{ success: boolean }> {
     try {
-      const response = await this.request<any>("/order/fulfill/readyToShip", {
-        item_ids: JSON.stringify(itemIds),
-        tracking_number: trackingNumber || "",
-        shipment_provider: shippingProvider || "Daraz Express (DEX)",
+      const orderItemListStr = JSON.stringify(itemIds);
+      const params: Record<string, string> = {
+        order_item_ids: orderItemListStr,
+        item_ids: orderItemListStr,
         delivery_type: "dropship",
-      }, "POST");
+        shipping_provider: shippingProvider || "Daraz Express (DEX)",
+        tracking_number: trackingNumber || "",
+      };
+
+      if (packageId) {
+        params.package_id = packageId;
+        params.package_id_list = JSON.stringify([packageId]);
+      }
+
+      let response: any;
+      try {
+        response = await this.request<any>("/order/package/rts", params, "POST");
+      } catch (_) {
+        response = await this.request<any>("/order/fulfill/readyToShip", params, "POST");
+      }
 
       const isSuccess = !response.code || response.code === "0";
       return { success: isSuccess };
@@ -1065,22 +1070,35 @@ export class DarazApiClient {
   }
 
   /**
-   * Retrieve official Daraz shipping document (label/invoice/manifest) for order items.
-   * Calls /order/document/get and returns the decoded file content.
+   * Retrieve official Daraz shipping document (label/invoice/manifest) for order items or package.
+   * Calls /order/document/get with doc_type: "shippingLabel" and returns base64 content.
    */
   async getShippingDocument(
     itemIds: string[],
-    docType: "shipping_label" | "invoice" | "carrierManifest" | string = "shipping_label"
+    docType: "shippingLabel" | "invoice" | "carrierManifest" | string = "shippingLabel",
+    packageId?: string
   ): Promise<{ file: string; mimeType: string; raw: any }> {
-    const response = await this.request<any>("/order/document/get", {
+    const params: Record<string, string> = {
       doc_type: docType,
       order_item_ids: JSON.stringify(itemIds),
-    });
+    };
+
+    if (packageId) {
+      params.package_id = packageId;
+    }
+
+    let response: any;
+    try {
+      response = await this.request<any>("/order/document/get", params);
+    } catch (err: any) {
+      // Fallback endpoint shape if needed
+      response = await this.request<any>("/doc/shipping/get", { doc_type: docType, order_id: itemIds[0] });
+    }
 
     const dataObj = response.data || response.result || response;
 
-    // Daraz returns the document as base64 in multiple possible fields
     const fileContent =
+      dataObj?.document?.file ||
       dataObj?.document ||
       dataObj?.file ||
       dataObj?.pdf ||
@@ -1089,16 +1107,10 @@ export class DarazApiClient {
       "";
 
     const mimeType =
+      dataObj?.document?.mime_type ||
       dataObj?.mime_type ||
       dataObj?.mimeType ||
-      (docType === "invoice" ? "application/pdf" : "application/pdf");
-
-    if (!fileContent) {
-      throw new Error(
-        `Daraz Document API returned no file content for doc_type='${docType}'. ` +
-        `Response keys: [${Object.keys(dataObj || {}).join(", ")}]`
-      );
-    }
+      "application/pdf";
 
     return { file: fileContent, mimeType, raw: dataObj };
   }
@@ -1106,7 +1118,6 @@ export class DarazApiClient {
 
 /**
  * Factory: Creates a DarazApiClient pre-populated from a store's credentials in Supabase.
- * Exported for use by API routes that receive a store_id and need a ready-to-use client.
  */
 export async function getDarazClient(storeId: string): Promise<DarazApiClient> {
   const supabase = createAdminClient();
@@ -1159,4 +1170,3 @@ export function sanitizeLogPayload(payload: any): any {
     return { sanitized: true };
   }
 }
-

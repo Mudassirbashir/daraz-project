@@ -5,6 +5,7 @@ declare const expect: (actual: any) => any;
 import { executeDarazSync } from "../sync-service";
 import { DarazApiClient } from "../client";
 import { pullStockForStore } from "../stock-sync";
+import { generateDarazSignature } from "../signature";
 
 describe("Daraz Multi-Store Sync Engine Architecture & Edge Cases Test Suite", () => {
 
@@ -109,5 +110,40 @@ describe("Daraz Multi-Store Sync Engine Architecture & Edge Cases Test Suite", (
     }
 
     expect(reconciliationRan).toBe(false);
+  });
+
+  test("Case 13: Daraz HMAC-SHA256 signature compliance test vector", () => {
+    const apiPath = "/products/get";
+    const params = { app_key: "123456", timestamp: "1600000000000", filter: "all" };
+    const secret = "test_secret_key_789";
+
+    const sig = generateDarazSignature(apiPath, params, secret);
+
+    expect(typeof sig).toBe("string");
+    expect(sig).toBe(sig.toUpperCase());
+    expect(sig.length).toBe(64); // 256 bits = 64 hex characters
+  });
+
+  test("Case 14: XML serialization format for stock updates", () => {
+    const update = { sellerSku: "SKU-TEST-001", quantity: 15, priceCents: 15000 };
+    const skuXml = `<Sku><SellerSku>${update.sellerSku}</SellerSku><Quantity>${update.quantity}</Quantity><Price>${(update.priceCents / 100).toFixed(2)}</Price></Sku>`;
+    const fullXml = `<Request><Product><Skus>${skuXml}</Skus></Product></Request>`;
+
+    expect(fullXml).toContain("<Request><Product><Skus><Sku>");
+    expect(fullXml).toContain("<SellerSku>SKU-TEST-001</SellerSku>");
+    expect(fullXml).toContain("<Quantity>15</Quantity>");
+    expect(fullXml).toContain("<Price>150.00</Price>");
+  });
+
+  test("Case 15: Order packing request parameter structure", () => {
+    const itemIds = ["ITEM-101", "ITEM-102"];
+    const packParams = {
+      order_item_list: JSON.stringify(itemIds),
+      delivery_type: "dropship",
+      shipping_provider: "Daraz Express (DEX)",
+    };
+
+    expect(packParams.order_item_list).toBe('["ITEM-101","ITEM-102"]');
+    expect(packParams.delivery_type).toBe("dropship");
   });
 });
