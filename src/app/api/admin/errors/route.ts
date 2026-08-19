@@ -128,11 +128,11 @@ export async function POST(req: NextRequest) {
               const freshOrder = await darazClient.getOrderDetails(errRecord.entity_id);
               if (freshOrder) {
                 let rawStatus = "pending";
-                if (Array.isArray(freshOrder.statuses) && freshOrder.statuses.length > 0) {
+                if (Array.isArray(freshOrder?.statuses) && freshOrder.statuses.length > 0) {
                   rawStatus = String(freshOrder.statuses[0]);
-                } else if (typeof freshOrder.statuses === "string" && freshOrder.statuses.trim()) {
+                } else if (typeof freshOrder?.statuses === "string" && freshOrder.statuses.trim()) {
                   rawStatus = freshOrder.statuses.trim();
-                } else if (typeof freshOrder.status === "string" && freshOrder.status.trim()) {
+                } else if (typeof freshOrder?.status === "string" && freshOrder.status.trim()) {
                   rawStatus = freshOrder.status.trim();
                 }
 

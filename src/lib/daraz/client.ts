@@ -18,6 +18,44 @@ export interface DarazClientConfig {
   accessToken?: string;
 }
 
+export interface DarazOrderItem {
+  order_item_id?: string | number;
+  item_id?: string | number;
+  order_id?: string | number;
+  name?: string;
+  seller_sku?: string;
+  shop_sku?: string;
+  quantity?: number;
+  item_price_cents?: number;
+  paid_price_cents?: number;
+  status?: string;
+  shipment_provider?: string;
+  tracking_code?: string;
+  product_main_image?: string;
+  raw?: any;
+  [key: string]: any;
+}
+
+export interface DarazOrder {
+  order_id?: string | number;
+  order_number?: string | number;
+  package_id?: string;
+  statuses?: string[];
+  status?: string;
+  customer_first_name?: string;
+  customer_last_name?: string;
+  customer_city?: string;
+  customer_phone?: string;
+  customer_address?: string;
+  price?: number | string;
+  price_cents?: number;
+  tracking_code?: string;
+  created_at?: string;
+  items?: DarazOrderItem[];
+  raw?: any;
+  [key: string]: any;
+}
+
 export class DarazClient {
   private appKey: string;
   private appSecret: string;
@@ -85,6 +123,235 @@ export class DarazClient {
       body,
     });
     return this.parseResponse<T>(res, normPath);
+  }
+
+  public async getOrderDetails(orderId: string | number): Promise<any> {
+    const response: any = await this.get('/order/get', { order_id: String(orderId) });
+    return response.data || response;
+  }
+
+  public async getOrderItems(orderId: string | number): Promise<any[]> {
+    const response: any = await this.get('/order/items/get', { order_id: String(orderId) });
+    return response.data || response;
+  }
+
+  public async getStoreProfile(): Promise<any> {
+    const response: any = await this.get('/seller/get');
+    const dataObj = response.data || response.result || response || {};
+    return {
+      seller_id: String(dataObj.seller_id || dataObj.short_code || 'SELLER_UNKNOWN'),
+      name: dataObj.name || dataObj.short_code || 'Daraz Store',
+      short_code: dataObj.short_code || 'STORE-01',
+      email: dataObj.email || '',
+      location: dataObj.location || 'Pakistan',
+    };
+  }
+
+  public async getCatalogItems(offset = 0, limit = 50): Promise<any> {
+    const response: any = await this.get('/products/get', {
+      filter: 'all',
+      offset: String(offset),
+      limit: String(limit),
+    });
+
+    const dataObj = response.data || response.result || response;
+    let rawProducts: any[] = [];
+
+    if (Array.isArray(dataObj)) rawProducts = dataObj;
+    else if (Array.isArray(dataObj?.products)) rawProducts = dataObj.products;
+    else if (Array.isArray(dataObj?.products?.product)) rawProducts = dataObj.products.product;
+    else if (Array.isArray(dataObj?.Products)) rawProducts = dataObj.Products;
+    else if (Array.isArray(dataObj?.Products?.Product)) rawProducts = dataObj.Products.Product;
+    else if (Array.isArray(dataObj?.product)) rawProducts = dataObj.product;
+
+    const total_items = parseInt(String(dataObj?.total_products ?? dataObj?.total ?? rawProducts.length), 10) || rawProducts.length;
+    const raw_items_count = rawProducts.length;
+    const items: any[] = [];
+    let skipped_items = 0;
+    let skipped_skus = 0;
+
+    rawProducts.forEach((p) => {
+      const rawItemId = p.item_id || p.ItemId || p.itemId || '';
+      const itemId = String(rawItemId || '').trim();
+
+      if (!itemId) {
+        skipped_items++;
+        return;
+      }
+
+      const rawAttributes: Record<string, any> = p.attributes || p.Attributes || {};
+      const skuCollection = p.skus || p.Skus || [];
+      const rawSkus: any[] = Array.isArray(skuCollection) && skuCollection.length > 0 ? skuCollection : [{}];
+      const parsedSkus: any[] = [];
+
+      rawSkus.forEach((sku: any) => {
+        const rawSellerSku = sku.SellerSku || sku.seller_sku || sku.sellerSku || sku.SellerSKU || '';
+        const sellerSku = String(rawSellerSku || '').trim();
+
+        if (!sellerSku) {
+          skipped_skus++;
+          return;
+        }
+
+        const rawQty = sku.quantity ?? sku.Quantity ?? sku.Available ?? sku.available ?? 0;
+        const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
+
+        const rawReserved = sku.withholding_quantity ?? sku.WithholdingQuantity ?? sku.reserved_quantity ?? sku.ReservedQuantity ?? 0;
+        const parsedReserved = Math.max(0, parseInt(String(rawReserved), 10) || 0);
+
+        const rawPrice = sku.price ?? sku.Price ?? sku.SalePrice ?? sku.sale_price ?? 0;
+        const priceCents = Math.round((parseFloat(String(rawPrice)) || 0) * 100);
+
+        const specialPrice = sku.special_price ?? sku.SpecialPrice ?? sku.SalePrice ?? sku.sale_price;
+        const specialPriceCents = specialPrice !== null && specialPrice !== undefined && specialPrice !== rawPrice
+          ? Math.round(parseFloat(String(specialPrice)) * 100) || undefined
+          : undefined;
+
+        parsedSkus.push({
+          seller_sku: sellerSku,
+          daraz_sku_id: String(sku.SkuId || sku.skuId || sku.sku_id || sku.ShopSku || ''),
+          shop_sku: String(sku.ShopSku || sku.shop_sku || sku.SkuId || ''),
+          item_id: itemId,
+          price_cents: priceCents,
+          special_price_cents: specialPriceCents,
+          quantity: parsedQuantity,
+          reserved_quantity: parsedReserved,
+          status: String(sku.Status || sku.status || p.status || 'active').toLowerCase(),
+          images: [],
+        });
+      });
+
+      if (parsedSkus.length === 0) {
+        skipped_items++;
+        return;
+      }
+
+      const title = rawAttributes.name_en || rawAttributes.NameEn || rawAttributes.name || rawAttributes.Name || p.title || p.Title || p.name || '';
+
+      items.push({
+        item_id: itemId,
+        title,
+        category: String(p.primary_category || p.PrimaryCategory || 'General'),
+        brand: String(rawAttributes.brand || rawAttributes.Brand || 'Generic'),
+        status: String(p.status || p.Status || 'active').toLowerCase(),
+        description: p.description || '',
+        images: [],
+        attributes: rawAttributes,
+        skus: parsedSkus,
+      });
+    });
+
+    return { items, total_items, raw_items_count, skipped_items, skipped_skus };
+  }
+
+  public async getOrders(offset = 0, limit = 100, updateAfter?: string): Promise<any> {
+    const params: Record<string, string> = {
+      sort_by: 'created_at',
+      sort_direction: 'DESC',
+      offset: String(offset),
+      limit: String(limit),
+      update_after: updateAfter || '2020-01-01T00:00:00Z',
+    };
+
+    const response: any = await this.get('/orders/get', params);
+    const dataObj = response.data || response.result || response;
+    let rawOrders: any[] = [];
+
+    if (Array.isArray(dataObj)) rawOrders = dataObj;
+    else if (Array.isArray(dataObj?.orders)) rawOrders = dataObj.orders;
+    else if (Array.isArray(dataObj?.orders?.order)) rawOrders = dataObj.orders.order;
+
+    const total = dataObj?.countTotal ?? dataObj?.count ?? rawOrders.length;
+
+    const orders = rawOrders.map((o) => {
+      const addressShipping = o.address_shipping || {};
+      const addressBilling = o.address_billing || {};
+      let rawStatus = 'pending';
+      if (Array.isArray(o.statuses) && o.statuses.length > 0) rawStatus = String(o.statuses[0]);
+      else if (typeof o.statuses === 'string' && o.statuses.trim()) rawStatus = o.statuses.trim();
+
+      return {
+        order_id: String(o.order_id || o.orderId || ''),
+        order_number: String(o.order_number || o.order_id || ''),
+        package_id: String(o.package_id || ''),
+        customer_first_name: o.customer_first_name || addressShipping.first_name || addressBilling.first_name || 'Customer',
+        customer_city: addressShipping.city || addressBilling.city || 'Karachi',
+        price_cents: Math.round((parseFloat(String(o.price || 0)) || 0) * 100),
+        statuses: rawStatus.toLowerCase().replace(/[-\s]+/g, '_'),
+        created_at: String(o.created_at || ''),
+        items: [],
+        raw: o,
+      };
+    });
+
+    return { orders, total };
+  }
+
+  public async updatePriceAndQuantity(skuUpdates: Array<{ sellerSku: string; itemId?: string | number; skuId?: string | number; quantity?: number; priceCents?: number; specialPriceCents?: number }>): Promise<boolean> {
+    if (!skuUpdates || skuUpdates.length === 0) return true;
+    const itemsXml = skuUpdates.map((s) => {
+      let xml = `<Sku><SellerSku><![CDATA[${s.sellerSku}]]></SellerSku>`;
+      if (s.itemId) xml += `<ItemId>${s.itemId}</ItemId>`;
+      if (s.skuId) xml += `<SkuId>${s.skuId}</SkuId>`;
+      if (s.quantity !== undefined) xml += `<Quantity>${s.quantity}</Quantity>`;
+      if (s.priceCents !== undefined) xml += `<Price>${(s.priceCents / 100).toFixed(2)}</Price>`;
+      if (s.specialPriceCents !== undefined) xml += `<SalePrice>${(s.specialPriceCents / 100).toFixed(2)}</SalePrice>`;
+      xml += `</Sku>`;
+      return xml;
+    }).join('');
+    const payload = `<Request><Product><Skus>${itemsXml}</Skus></Product></Request>`;
+    const res: any = await this.post('/product/price_quantity/update', { payload });
+    return !res.code || res.code === '0' || res.code === 0;
+  }
+
+  public async updateProduct(itemId: string, sku: string, attributes: Record<string, any>, images?: string[]): Promise<boolean> {
+    const payload = JSON.stringify({ Request: { Product: { ItemId: itemId, Attributes: attributes, Skus: { Sku: [{ SellerSku: sku, Images: images ? { Image: images } : undefined }] } } } });
+    const res: any = await this.post('/product/update', { payload });
+    return !res.code || res.code === '0' || res.code === 0;
+  }
+
+  public async packOrder(itemIds: string[], shippingProvider: string): Promise<{ success: boolean; packageId?: string }> {
+    const orderItemListStr = JSON.stringify(itemIds);
+    const res: any = await this.post('/order/pack', {
+      order_item_list: orderItemListStr,
+      delivery_type: 'dropship',
+      shipping_provider: shippingProvider || 'Daraz Express (DEX)',
+    });
+    const dataObj = res?.data || res?.result || res || {};
+    let packageId: string | undefined = undefined;
+    if (Array.isArray(dataObj?.packages) && dataObj.packages.length > 0) {
+      packageId = String(dataObj.packages[0].package_id || dataObj.packages[0].packageId || '');
+    } else if (dataObj?.package_id || dataObj?.packageId) {
+      packageId = String(dataObj.package_id || dataObj.packageId);
+    }
+    return { success: !res.code || res.code === '0' || res.code === 0, packageId };
+  }
+
+  public async setReadyToShip(itemIds: string[], trackingNumber: string, shippingProvider: string, packageId?: string): Promise<{ success: boolean }> {
+    const params: Record<string, string> = {
+      order_item_ids: JSON.stringify(itemIds),
+      delivery_type: 'dropship',
+      shipping_provider: shippingProvider || 'Daraz Express (DEX)',
+      tracking_number: trackingNumber || '',
+    };
+    if (packageId) params.package_id = packageId;
+    const res: any = await this.post('/order/package/rts', params);
+    return { success: !res.code || res.code === '0' || res.code === 0 };
+  }
+
+  public async getShippingDocument(itemIds: string[], docType = 'shippingLabel', packageId?: string): Promise<{ file: string; mimeType: string; raw: any }> {
+    const params: Record<string, string> = {
+      doc_type: docType,
+      order_item_ids: JSON.stringify(itemIds),
+    };
+    if (packageId) params.package_id = packageId;
+    const res: any = await this.get('/order/document/get', params);
+    const dataObj = res.data || res.result || res;
+    return {
+      file: dataObj?.document?.file || dataObj?.document || dataObj?.file || '',
+      mimeType: dataObj?.document?.mime_type || dataObj?.mime_type || 'application/pdf',
+      raw: dataObj,
+    };
   }
 
   private async parseResponse<T>(res: Response, path: string): Promise<T> {
@@ -190,188 +457,43 @@ export class DarazApiClient {
     });
   }
 
+  async getOrderDetails(orderId: string | number): Promise<any> {
+    return this.client.getOrderDetails(orderId);
+  }
+
+  async getOrderItems(orderId: string | number): Promise<any[]> {
+    return this.client.getOrderItems(orderId);
+  }
+
   async getStoreProfile(): Promise<any> {
-    const response: any = await this.client.get('/seller/get');
-    const dataObj = response.data || response.result || response || {};
-    return {
-      seller_id: String(dataObj.seller_id || dataObj.short_code || 'SELLER_UNKNOWN'),
-      name: dataObj.name || dataObj.short_code || 'Daraz Store',
-      short_code: dataObj.short_code || 'STORE-01',
-      email: dataObj.email || '',
-      location: dataObj.location || 'Pakistan',
-    };
+    return this.client.getStoreProfile();
   }
 
   async getCatalogItems(offset = 0, limit = 50): Promise<any> {
-    const response: any = await this.client.get('/products/get', {
-      filter: 'all',
-      offset: String(offset),
-      limit: String(limit),
-    });
-
-    const dataObj = response.data || response.result || response;
-    let rawProducts: any[] = [];
-
-    if (Array.isArray(dataObj)) rawProducts = dataObj;
-    else if (Array.isArray(dataObj?.products)) rawProducts = dataObj.products;
-    else if (Array.isArray(dataObj?.products?.product)) rawProducts = dataObj.products.product;
-    else if (Array.isArray(dataObj?.Products)) rawProducts = dataObj.Products;
-    else if (Array.isArray(dataObj?.Products?.Product)) rawProducts = dataObj.Products.Product;
-    else if (Array.isArray(dataObj?.product)) rawProducts = dataObj.product;
-
-    const total_items = parseInt(String(dataObj?.total_products ?? dataObj?.total ?? rawProducts.length), 10) || rawProducts.length;
-    const raw_items_count = rawProducts.length;
-    const items: any[] = [];
-    let skipped_items = 0;
-    let skipped_skus = 0;
-
-    rawProducts.forEach((p) => {
-      const rawItemId = p.item_id || p.ItemId || p.itemId || '';
-      const itemId = String(rawItemId || '').trim();
-
-      if (!itemId) {
-        skipped_items++;
-        return;
-      }
-
-      const rawAttributes: Record<string, any> = p.attributes || p.Attributes || {};
-      const skuCollection = p.skus || p.Skus || [];
-      const rawSkus: any[] = Array.isArray(skuCollection) && skuCollection.length > 0 ? skuCollection : [{}];
-      const parsedSkus: any[] = [];
-
-      rawSkus.forEach((sku: any) => {
-        const rawSellerSku = sku.SellerSku || sku.seller_sku || sku.sellerSku || sku.SellerSKU || '';
-        const sellerSku = String(rawSellerSku || '').trim();
-
-        if (!sellerSku) {
-          skipped_skus++;
-          return;
-        }
-
-        const rawQty = sku.quantity ?? sku.Quantity ?? sku.Available ?? sku.available ?? 0;
-        const parsedQuantity = Math.max(0, parseInt(String(rawQty), 10) || 0);
-
-        const rawReserved = sku.withholding_quantity ?? sku.WithholdingQuantity ?? sku.reserved_quantity ?? sku.ReservedQuantity ?? 0;
-        const parsedReserved = Math.max(0, parseInt(String(rawReserved), 10) || 0);
-
-        const rawPrice = sku.price ?? sku.Price ?? sku.SalePrice ?? sku.sale_price ?? 0;
-        const priceCents = Math.round((parseFloat(String(rawPrice)) || 0) * 100);
-
-        const specialPrice = sku.special_price ?? sku.SpecialPrice ?? sku.SalePrice ?? sku.sale_price;
-        const specialPriceCents = specialPrice !== null && specialPrice !== undefined && specialPrice !== rawPrice
-          ? Math.round(parseFloat(String(specialPrice)) * 100) || undefined
-          : undefined;
-
-        parsedSkus.push({
-          seller_sku: sellerSku,
-          daraz_sku_id: String(sku.SkuId || sku.skuId || sku.sku_id || sku.ShopSku || ''),
-          shop_sku: String(sku.ShopSku || sku.shop_sku || sku.SkuId || ''),
-          item_id: itemId,
-          price_cents: priceCents,
-          special_price_cents: specialPriceCents,
-          quantity: parsedQuantity,
-          reserved_quantity: parsedReserved,
-          status: String(sku.Status || sku.status || p.status || 'active').toLowerCase(),
-          images: [],
-        });
-      });
-
-      if (parsedSkus.length === 0) {
-        skipped_items++;
-        return;
-      }
-
-      const title = rawAttributes.name_en || rawAttributes.NameEn || rawAttributes.name || rawAttributes.Name || p.title || p.Title || p.name || '';
-
-      items.push({
-        item_id: itemId,
-        title,
-        category: String(p.primary_category || p.PrimaryCategory || 'General'),
-        brand: String(rawAttributes.brand || rawAttributes.Brand || 'Generic'),
-        status: String(p.status || p.Status || 'active').toLowerCase(),
-        description: p.description || '',
-        images: [],
-        attributes: rawAttributes,
-        skus: parsedSkus,
-      });
-    });
-
-    return { items, total_items, raw_items_count, skipped_items, skipped_skus };
+    return this.client.getCatalogItems(offset, limit);
   }
 
   async getOrders(offset = 0, limit = 100, updateAfter?: string): Promise<any> {
-    const params: Record<string, string> = {
-      sort_by: 'created_at',
-      sort_direction: 'DESC',
-      offset: String(offset),
-      limit: String(limit),
-      update_after: updateAfter || '2020-01-01T00:00:00Z',
-    };
-
-    const response: any = await this.client.get('/orders/get', params);
-    const dataObj = response.data || response.result || response;
-    let rawOrders: any[] = [];
-
-    if (Array.isArray(dataObj)) rawOrders = dataObj;
-    else if (Array.isArray(dataObj?.orders)) rawOrders = dataObj.orders;
-    else if (Array.isArray(dataObj?.orders?.order)) rawOrders = dataObj.orders.order;
-
-    const total = dataObj?.countTotal ?? dataObj?.count ?? rawOrders.length;
-
-    const orders = rawOrders.map((o) => {
-      const addressShipping = o.address_shipping || {};
-      const addressBilling = o.address_billing || {};
-      let rawStatus = 'pending';
-      if (Array.isArray(o.statuses) && o.statuses.length > 0) rawStatus = String(o.statuses[0]);
-      else if (typeof o.statuses === 'string' && o.statuses.trim()) rawStatus = o.statuses.trim();
-
-      return {
-        order_id: String(o.order_id || o.orderId || ''),
-        order_number: String(o.order_number || o.order_id || ''),
-        package_id: String(o.package_id || ''),
-        customer_first_name: o.customer_first_name || addressShipping.first_name || addressBilling.first_name || 'Customer',
-        customer_city: addressShipping.city || addressBilling.city || 'Karachi',
-        price_cents: Math.round((parseFloat(String(o.price || 0)) || 0) * 100),
-        statuses: rawStatus.toLowerCase().replace(/[-\s]+/g, '_'),
-        created_at: String(o.created_at || ''),
-        items: [],
-        raw: o,
-      };
-    });
-
-    return { orders, total };
+    return this.client.getOrders(offset, limit, updateAfter);
   }
 
   async packOrder(itemIds: string[], shippingProvider: string): Promise<{ success: boolean; packageId?: string }> {
-    const orderItemListStr = JSON.stringify(itemIds);
-    const res: any = await this.client.post('/order/pack', {
-      order_item_list: orderItemListStr,
-      delivery_type: 'dropship',
-      shipping_provider: shippingProvider || 'Daraz Express (DEX)',
-    });
-
-    const dataObj = res?.data || res?.result || res || {};
-    let packageId: string | undefined = undefined;
-
-    if (Array.isArray(dataObj?.packages) && dataObj.packages.length > 0) {
-      packageId = String(dataObj.packages[0].package_id || dataObj.packages[0].packageId || '');
-    } else if (dataObj?.package_id || dataObj?.packageId) {
-      packageId = String(dataObj.package_id || dataObj.packageId);
-    }
-
-    return { success: !res.code || res.code === '0' || res.code === 0, packageId };
+    return this.client.packOrder(itemIds, shippingProvider);
   }
 
   async setReadyToShip(itemIds: string[], trackingNumber: string, shippingProvider: string, packageId?: string): Promise<{ success: boolean }> {
-    const params: Record<string, string> = {
-      order_item_ids: JSON.stringify(itemIds),
-      delivery_type: 'dropship',
-      shipping_provider: shippingProvider || 'Daraz Express (DEX)',
-      tracking_number: trackingNumber || '',
-    };
-    if (packageId) params.package_id = packageId;
+    return this.client.setReadyToShip(itemIds, trackingNumber, shippingProvider, packageId);
+  }
 
-    const res: any = await this.client.post('/order/package/rts', params);
-    return { success: !res.code || res.code === '0' || res.code === 0 };
+  async getShippingDocument(itemIds: string[], docType = 'shippingLabel', packageId?: string): Promise<{ file: string; mimeType: string; raw: any }> {
+    return this.client.getShippingDocument(itemIds, docType, packageId);
+  }
+
+  async updatePriceAndQuantity(skuUpdates: Array<{ sellerSku: string; itemId?: string | number; skuId?: string | number; quantity?: number; priceCents?: number; specialPriceCents?: number }>): Promise<boolean> {
+    return this.client.updatePriceAndQuantity(skuUpdates);
+  }
+
+  async updateProduct(itemId: string, sku: string, attributes: Record<string, any>, images?: string[]): Promise<boolean> {
+    return this.client.updateProduct(itemId, sku, attributes, images);
   }
 }
