@@ -49,34 +49,45 @@ export async function pullStockForStore(storeId: string) {
     const { client } = await getValidStoreAccessToken(storeId);
     const supabase = createAdminClient();
 
-    const catalogRes: any = await client.get('/products/get', { filter: 'all', offset: '0', limit: '100' });
-    const dataObj = catalogRes.data || catalogRes.result || catalogRes;
-    let products: any[] = [];
-    if (Array.isArray(dataObj)) products = dataObj;
-    else if (Array.isArray(dataObj?.products)) products = dataObj.products;
+    let offset = 0;
+    const limit = 50;
+    let hasMore = true;
 
-    for (const p of products) {
-      const skus = p.skus || p.Skus || [];
-      for (const sku of skus) {
-        const sellerSku = sku.seller_sku || sku.SellerSku;
-        if (!sellerSku) continue;
-
-        const qty = Math.max(0, parseInt(String(sku.quantity ?? sku.Quantity ?? 0), 10) || 0);
-        const price = Math.round((parseFloat(String(sku.price ?? sku.Price ?? 0)) || 0) * 100);
-
-        await supabase
-          .from('listings')
-          .update({
-            stock_quantity: qty,
-            price_cents: price,
-            last_synced_at: timestamp,
-            is_synced: true,
-          })
-          .eq('store_id', storeId)
-          .eq('seller_sku', sellerSku);
-
-        skusUpdated++;
+    while (hasMore) {
+      const catalogRes = await client.getCatalogItems(offset, limit);
+      if (!catalogRes || !catalogRes.items || catalogRes.items.length === 0) {
+        break;
       }
+
+      for (const p of catalogRes.items) {
+        const skus = p.skus || [];
+        for (const sku of skus) {
+          const sellerSku = sku.seller_sku;
+          if (!sellerSku) continue;
+
+          const qty = Math.max(0, parseInt(String(sku.quantity ?? 0), 10) || 0);
+          const price = sku.price_cents || 0;
+
+          await supabase
+            .from('listings')
+            .update({
+              stock_quantity: qty,
+              price_cents: price,
+              last_synced_at: timestamp,
+              is_synced: true,
+            })
+            .eq('store_id', storeId)
+            .eq('seller_sku', sellerSku);
+
+          skusUpdated++;
+        }
+      }
+
+      offset += catalogRes.raw_items_count || catalogRes.items.length;
+      if (offset >= catalogRes.total_items || catalogRes.items.length === 0) {
+        hasMore = false;
+      }
+      await new Promise((r) => setTimeout(r, 100)); // Throttling delay
     }
 
     return { success: true, storeId, skusUpdated, errors, timestamp };

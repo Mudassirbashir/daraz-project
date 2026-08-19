@@ -2,6 +2,7 @@ import { createAdminClient } from "../supabase/admin";
 import { DarazApiClient, sanitizeLogPayload, humanizeDarazApiError } from "./client";
 import { DarazOrderStatus } from "../../types/database.types";
 import { mapDarazOrderStatus } from "./order-status";
+import { getValidStoreAccessToken } from "./store-utils";
 
 export interface ModuleResult {
   status: "passed" | "failed" | "skipped";
@@ -193,14 +194,20 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           }
         }
 
-        const darazClient = new DarazApiClient({
-          storeId: store.id,
-          accessToken: store.access_token || undefined,
-          refreshToken: store.refresh_token || undefined,
-          tokenExpiresAt: store.token_expires_at || undefined,
-          appKey: store.api_app_key || undefined,
-          appSecret: store.api_app_secret || undefined,
-        });
+        let darazClient: DarazApiClient;
+        try {
+          const valid = await getValidStoreAccessToken(store.id);
+          darazClient = valid.client;
+        } catch (_) {
+          darazClient = new DarazApiClient({
+            storeId: store.id,
+            accessToken: store.access_token || undefined,
+            refreshToken: store.refresh_token || undefined,
+            tokenExpiresAt: store.token_expires_at || undefined,
+            appKey: store.api_app_key || undefined,
+            appSecret: store.api_app_secret || undefined,
+          });
+        }
 
         // ── MODULE 1: Store Profile ──────────────────────────────────────────
         const profileStart = Date.now();
@@ -255,13 +262,33 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
         do {
           let pageItems;
-          try {
-            pageItems = await darazClient.getCatalogItems(productOffset, catalogPageSize);
-          } catch (pageErr: any) {
-            catalogFetchError = `Catalog page ${catalogPageNum} fetch error (offset=${productOffset}): ${pageErr.message}`;
-            console.error(`[SyncEngine] ${catalogFetchError}`);
-            errors.push(catalogFetchError);
-            break;
+          let pageAttempts = 0;
+          const maxPageAttempts = 3;
+          let pageFetchSuccess = false;
+
+          while (pageAttempts < maxPageAttempts && !pageFetchSuccess) {
+            try {
+              pageItems = await darazClient.getCatalogItems(productOffset, catalogPageSize);
+              pageFetchSuccess = true;
+            } catch (pageErr: any) {
+              pageAttempts++;
+              if (pageAttempts < maxPageAttempts) {
+                console.warn(`[SyncEngine] Catalog page ${catalogPageNum} fetch retry ${pageAttempts}/${maxPageAttempts} (offset=${productOffset}): ${pageErr.message}`);
+                await new Promise((r) => setTimeout(r, 1000 * pageAttempts));
+              } else {
+                catalogFetchError = `Catalog page ${catalogPageNum} fetch error (offset=${productOffset}): ${pageErr.message}`;
+                console.error(`[SyncEngine] ${catalogFetchError}`);
+                errors.push(catalogFetchError);
+              }
+            }
+          }
+
+          if (!pageFetchSuccess || !pageItems) {
+            // Non-breaking page failure: advance offset and continue to attempt remaining pages
+            productOffset += catalogPageSize;
+            catalogPageNum++;
+            await new Promise((r) => setTimeout(r, 200));
+            continue;
           }
 
           reportedTotal = pageItems.total_items;
@@ -348,7 +375,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       quantity: sku.quantity,
                       reserved_quantity: sku.reserved_quantity || 0,
                       status: sku.status || item.status,
-                      images: sku.images.length > 0 ? sku.images : item.images,
+                      images: Array.isArray(sku.images) && sku.images.length > 0 ? sku.images : item.images || [],
                       package_content: sku.package_content || null,
                       is_synced: true,
                       last_synced_at: timestamp,
@@ -609,13 +636,33 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
         do {
           let pageOrders;
-          try {
-            pageOrders = await darazClient.getOrders(orderOffset, ordersPageSize, incrementalUpdateAfter);
-          } catch (ordPageErr: any) {
-            ordersFetchError = `Orders page ${orderPageNum} fetch error (offset=${orderOffset}): ${ordPageErr.message}`;
-            console.error(`[SyncEngine] ${ordersFetchError}`);
-            errors.push(ordersFetchError);
-            break;
+          let ordAttempts = 0;
+          const maxOrdAttempts = 3;
+          let ordPageSuccess = false;
+
+          while (ordAttempts < maxOrdAttempts && !ordPageSuccess) {
+            try {
+              pageOrders = await darazClient.getOrders(orderOffset, ordersPageSize, incrementalUpdateAfter);
+              ordPageSuccess = true;
+            } catch (ordPageErr: any) {
+              ordAttempts++;
+              if (ordAttempts < maxOrdAttempts) {
+                console.warn(`[SyncEngine] Orders page ${orderPageNum} fetch retry ${ordAttempts}/${maxOrdAttempts} (offset=${orderOffset}): ${ordPageErr.message}`);
+                await new Promise((r) => setTimeout(r, 1000 * ordAttempts));
+              } else {
+                ordersFetchError = `Orders page ${orderPageNum} fetch error (offset=${orderOffset}): ${ordPageErr.message}`;
+                console.error(`[SyncEngine] ${ordersFetchError}`);
+                errors.push(ordersFetchError);
+              }
+            }
+          }
+
+          if (!ordPageSuccess || !pageOrders) {
+            // Non-breaking orders page failure: advance offset and continue
+            orderOffset += ordersPageSize;
+            orderPageNum++;
+            await new Promise((r) => setTimeout(r, 200));
+            continue;
           }
 
           totalOrdersReported = pageOrders.total;
@@ -724,6 +771,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               // ── FIX A: Order Line Items Persistence ───────────────────────
               if (dbOrderId) {
                 try {
+                  await new Promise((r) => setTimeout(r, 100)); // Throttling gap for Daraz QPS limit
                   const items = await darazClient.getOrderItems(ord.order_id);
                   if (items && items.length > 0) {
                     const itemPayloads = await Promise.all(

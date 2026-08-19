@@ -12,6 +12,7 @@ const GATEWAY_MAP: Record<DarazCountryCode, string> = {
 };
 
 export interface DarazClientConfig {
+  storeId?: string;
   appKey?: string;
   appSecret?: string;
   accessToken?: string;
@@ -140,30 +141,73 @@ export class DarazClient {
     return finalized;
   }
 
+  private async requestWithRetry<T>(
+    requestFn: () => Promise<Response>,
+    apiPath: string,
+    maxRetries = 3
+  ): Promise<T> {
+    let attempt = 0;
+    while (true) {
+      try {
+        const res = await requestFn();
+        if (res.status === 429 || res.status >= 500) {
+          if (attempt < maxRetries) {
+            attempt++;
+            const backoffMs = Math.min(5000, 500 * Math.pow(2, attempt));
+            console.warn(`[DarazClient] HTTP ${res.status} on ${apiPath}. Retrying attempt ${attempt}/${maxRetries} in ${backoffMs}ms...`);
+            await new Promise((r) => setTimeout(r, backoffMs));
+            continue;
+          }
+        }
+        return await this.parseResponse<T>(res, apiPath);
+      } catch (err: any) {
+        const errMsg = String(err?.message || err);
+        const isRateLimitOrTransient =
+          errMsg.includes('429') ||
+          errMsg.includes('RateLimitExceeded') ||
+          errMsg.includes('RequestLimitExceeded') ||
+          errMsg.includes('Too Many Requests') ||
+          errMsg.includes('ETIMEDOUT') ||
+          errMsg.includes('ECONNRESET') ||
+          errMsg.includes('fetch failed');
+
+        if (isRateLimitOrTransient && attempt < maxRetries) {
+          attempt++;
+          const backoffMs = Math.min(5000, 500 * Math.pow(2, attempt));
+          console.warn(`[DarazClient] Transient error "${errMsg}" on ${apiPath}. Retrying attempt ${attempt}/${maxRetries} in ${backoffMs}ms...`);
+          await new Promise((r) => setTimeout(r, backoffMs));
+          continue;
+        }
+        throw err;
+      }
+    }
+  }
+
   public async get<T = any>(apiPath: string, params: DarazSignParams = {}): Promise<T> {
     const normPath = normalizeApiPath(apiPath);
     const finalized = await this.prepareParams(normPath, params);
     const query = new URLSearchParams(finalized).toString();
-    const res = await fetch(`${this.baseUrl}${normPath}?${query}`, {
-      method: 'GET',
-      headers: { Accept: 'application/json' },
-    });
-    return this.parseResponse<T>(res, normPath);
+    return this.requestWithRetry<T>(
+      () => fetch(`${this.baseUrl}${normPath}?${query}`, { method: 'GET', headers: { Accept: 'application/json' } }),
+      normPath
+    );
   }
 
   public async post<T = any>(apiPath: string, params: DarazSignParams = {}): Promise<T> {
     const normPath = normalizeApiPath(apiPath);
     const finalized = await this.prepareParams(normPath, params);
     const body = new URLSearchParams(finalized).toString();
-    const res = await fetch(`${this.baseUrl}${normPath}`, {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
-        Accept: 'application/json',
-      },
-      body,
-    });
-    return this.parseResponse<T>(res, normPath);
+    return this.requestWithRetry<T>(
+      () => fetch(`${this.baseUrl}${normPath}`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/x-www-form-urlencoded;charset=utf-8',
+          Accept: 'application/json',
+        },
+        body,
+      }),
+      normPath
+    );
   }
 
   public async getOrderDetails(orderId: string | number): Promise<any> {
