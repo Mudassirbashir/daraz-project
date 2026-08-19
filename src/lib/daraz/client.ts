@@ -12,10 +12,12 @@ const GATEWAY_MAP: Record<DarazCountryCode, string> = {
 };
 
 export interface DarazClientConfig {
-  appKey: string;
-  appSecret: string;
-  countryCode?: DarazCountryCode;
+  appKey?: string;
+  appSecret?: string;
   accessToken?: string;
+  refreshToken?: string;
+  tokenExpiresAt?: string | number | Date;
+  countryCode?: DarazCountryCode;
 }
 
 export interface DarazCatalogSku {
@@ -96,11 +98,15 @@ export class DarazClient {
   private appSecret: string;
   private baseUrl: string;
   private accessToken?: string;
+  private refreshToken?: string;
+  private tokenExpiresAt?: string | number | Date;
 
-  constructor(config: DarazClientConfig) {
-    this.appKey = config.appKey;
-    this.appSecret = config.appSecret;
+  constructor(config: DarazClientConfig = {}) {
+    this.appKey = (config.appKey || process.env.DARAZ_APP_KEY || '').trim();
+    this.appSecret = (config.appSecret || process.env.DARAZ_APP_SECRET || '').trim();
     this.accessToken = config.accessToken;
+    this.refreshToken = config.refreshToken;
+    this.tokenExpiresAt = config.tokenExpiresAt;
     const country = (config.countryCode || 'PK').toUpperCase() as DarazCountryCode;
     this.baseUrl = GATEWAY_MAP[country] || GATEWAY_MAP.PK;
   }
@@ -474,6 +480,8 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
     appSecret: store.api_app_secret || process.env.DARAZ_APP_SECRET || '',
     countryCode: (store.country_code || store.region || 'PK') as DarazCountryCode,
     accessToken: store.access_token || undefined,
+    refreshToken: store.refresh_token || undefined,
+    tokenExpiresAt: store.token_expires_at || undefined,
   });
 }
 
@@ -483,13 +491,8 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
 export class DarazApiClient {
   private client: DarazClient;
 
-  constructor(options: { appKey?: string; appSecret?: string; accessToken?: string; countryCode?: DarazCountryCode } = {}) {
-    this.client = new DarazClient({
-      appKey: options.appKey || process.env.DARAZ_APP_KEY || '',
-      appSecret: options.appSecret || process.env.DARAZ_APP_SECRET || '',
-      countryCode: options.countryCode || 'PK',
-      accessToken: options.accessToken,
-    });
+  constructor(options: DarazClientConfig = {}) {
+    this.client = new DarazClient(options);
   }
 
   async getOrderDetails(orderId: string | number): Promise<any> {
