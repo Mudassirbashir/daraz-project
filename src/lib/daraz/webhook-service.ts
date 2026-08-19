@@ -1,7 +1,7 @@
 import crypto from "crypto";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { DarazOrderStatus } from "@/types/database.types";
-import { DarazApiClient } from "./client";
+import { DarazApiClient, sanitizeLogPayload } from "./client";
 
 export interface WebhookProcessResult {
   success: boolean;
@@ -319,6 +319,20 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
       if (upsertErr) {
         console.error(`[DARAZ WEBHOOK] Order upsert error for Order ${darazOrderId}:`, upsertErr.message);
         actionTaken = "error_upserting_order";
+
+        try {
+          await supabase.from("sync_retry_queue").insert({
+            store_id: targetStoreId,
+            operation_type: "order_sync",
+            entity_type: "order",
+            entity_id: darazOrderId,
+            attempt_count: 1,
+            error_message: upsertErr.message,
+            status: "failed",
+            payload: sanitizeLogPayload(payload),
+            created_at: timestamp,
+          });
+        } catch (_) {}
       } else {
         actionTaken = existingOrder ? "order_status_updated" : "order_created";
         console.log(`[DARAZ WEBHOOK] Successfully updated Order ${darazOrderId} status to '${mappedStatus}'.`);
@@ -366,32 +380,52 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
                       } catch (_) {}
                     }
 
+                    const cleanOrderItemId = String(item.order_item_id || item.item_id || `${darazOrderId}_${Math.random()}`);
+
                     return {
                       order_id: dbOrder.id,
                       daraz_order_id: darazOrderId,
-                      order_item_id: item.order_item_id,
-                      name: item.name,
-                      seller_sku: item.seller_sku,
+                      order_item_id: cleanOrderItemId,
+                      name: item.name || `Item ${cleanOrderItemId}`,
+                      seller_sku: item.seller_sku || "UNKNOWN_SKU",
                       shop_sku: item.shop_sku || null,
-                      item_id: item.order_item_id,
+                      item_id: cleanOrderItemId,
                       product_id: matchedProductId,
                       quantity: item.quantity || 1,
-                      item_price_cents: item.item_price_cents,
-                      paid_price_cents: item.paid_price_cents,
-                      status: item.status,
+                      item_price_cents: item.item_price_cents || 0,
+                      paid_price_cents: item.paid_price_cents || 0,
+                      status: item.status || mappedStatus || "pending",
                       shipment_provider: item.shipment_provider || null,
                       tracking_code: item.tracking_code || null,
                       product_main_image: item.product_main_image || null,
                       raw_item_payload: item.raw || item,
+                      updated_at: timestamp,
                     };
                   })
                 );
 
-                await supabase
+                const { error: itemUpsertErr } = await supabase
                   .from("order_items")
                   .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
 
-                console.log(`[DARAZ WEBHOOK] Successfully synced ${items.length} order items for Order ${darazOrderId}`);
+                if (itemUpsertErr) {
+                  console.error(`[DARAZ WEBHOOK] Order items upsert error for Order ${darazOrderId}: ${itemUpsertErr.message}`);
+                  try {
+                    await supabase.from("sync_retry_queue").insert({
+                      store_id: targetStoreId,
+                      operation_type: "order_sync",
+                      entity_type: "order",
+                      entity_id: darazOrderId,
+                      attempt_count: 1,
+                      error_message: `Order items upsert error: ${itemUpsertErr.message}`,
+                      status: "failed",
+                      payload: sanitizeLogPayload(payload),
+                      created_at: timestamp,
+                    });
+                  } catch (_) {}
+                } else {
+                  console.log(`[DARAZ WEBHOOK] Successfully synced ${items.length} order items for Order ${darazOrderId}`);
+                }
               }
             }
           } catch (itemErr: any) {

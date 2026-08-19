@@ -182,16 +182,27 @@ export function ErrorCenterView() {
                     <td className="p-3 text-red-600 dark:text-red-400 max-w-xs truncate font-mono">
                       {err.error_message}
                     </td>
-                    <td className="p-3 font-bold">{err.attempt_count || 1}x</td>
+                    <td className="p-3 font-bold">
+                      {err.attempt_count || 1}x
+                      {err.status === "needs_manual_review" && (
+                        <span className="ml-2 inline-flex items-center px-2 py-0.5 rounded text-[9px] font-bold bg-amber-100 text-amber-800 dark:bg-amber-900/40 dark:text-amber-300">
+                          Manual Review
+                        </span>
+                      )}
+                    </td>
                     <td className="p-3 text-slate-500">{new Date(err.last_attempt_at || err.created_at).toLocaleString()}</td>
                     <td className="p-3 text-right">
                       <button
                         onClick={() => handleRetryItem(err.id)}
-                        disabled={isRetrying}
-                        className="px-3 py-1.5 rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 font-bold hover:opacity-90 inline-flex items-center space-x-1"
+                        disabled={isRetrying || err.status === "needs_manual_review"}
+                        className={`px-3 py-1.5 rounded-xl text-white font-bold inline-flex items-center space-x-1 ${
+                          err.status === "needs_manual_review"
+                            ? "bg-slate-400 dark:bg-slate-700 cursor-not-allowed"
+                            : "bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 hover:opacity-90"
+                        }`}
                       >
                         <RefreshCw className="h-3 w-3" />
-                        <span>Retry</span>
+                        <span>{err.status === "needs_manual_review" ? "Flagged" : "Retry"}</span>
                       </button>
                     </td>
                   </tr>

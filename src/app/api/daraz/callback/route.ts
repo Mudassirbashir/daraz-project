@@ -288,6 +288,12 @@ export async function GET(req: NextRequest) {
       console.warn("[Daraz OAuth Callback] Store lookup notice:", e.message);
     }
 
+    const isCurrentlySyncing =
+      targetStore &&
+      targetStore.sync_status === "syncing" &&
+      targetStore.updated_at &&
+      Date.now() - new Date(targetStore.updated_at).getTime() < 10 * 60 * 1000;
+
     let storeId: string;
 
     const baseUpdateData: Record<string, any> = {
@@ -298,9 +304,8 @@ export async function GET(req: NextRequest) {
       api_app_key: appKey,
       api_app_secret: appSecret,
       is_active: true,
-      // The sync engine acquires the `syncing` lock itself. Saving a newly
-      // connected store as syncing causes the first catalogue import to skip it.
-      sync_status: "connected",
+      // If store is actively syncing, preserve syncing state to avoid clobbering DB lock
+      sync_status: isCurrentlySyncing ? "syncing" : "connected",
       updated_at: new Date().toISOString(),
     };
 
@@ -432,10 +437,14 @@ export async function GET(req: NextRequest) {
     }
 
     // 7. Non-Blocking Async Background Sync Execution
-    console.log(`[Daraz OAuth Callback] Triggering non-blocking background sync for storeId ${storeId}...`);
-    executeDarazSync(storeId).catch((syncErr: any) => {
-      console.error(`[Daraz OAuth Callback Background Sync Notice for ${storeId}]:`, syncErr.message);
-    });
+    if (isCurrentlySyncing) {
+      console.warn(`[Daraz OAuth Callback] Store ${storeId} is currently locked/syncing by another process. Skipping background sync trigger.`);
+    } else {
+      console.log(`[Daraz OAuth Callback] Triggering non-blocking background sync for storeId ${storeId}...`);
+      executeDarazSync(storeId).catch((syncErr: any) => {
+        console.error(`[Daraz OAuth Callback Background Sync Notice for ${storeId}]:`, syncErr.message);
+      });
+    }
 
     // 8. Log Audit Diagnostic
     try {

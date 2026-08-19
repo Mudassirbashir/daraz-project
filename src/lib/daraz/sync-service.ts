@@ -146,7 +146,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         /* sync_runs migration may not be applied yet */
       }
 
-      // ── 2a. Atomic database row lock ─────────────────────────────────────
+      // ── 2a. FIX B: Database-Backed Sync Lock ──────────────────────────────
       const lockCutoffIso = new Date(Date.now() - SYNC_LOCK_TIMEOUT_MS).toISOString();
       const { data: lockAcquired, error: lockErr } = await supabase
         .from("daraz_stores")
@@ -305,7 +305,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                   .single();
 
                 if (pErr) {
-                  // Only report error if table actually exists in DB
                   if (!pErr.message.includes("does not exist")) {
                     console.warn(`[SyncEngine] Product upsert error item_id=${item.item_id}: ${pErr.message}`);
                   }
@@ -427,6 +426,21 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                   );
                   storeFailedCount++;
                   errors.push(`Listing persistence failed for SKU ${sku.seller_sku}: ${listingErr.message}`);
+
+                  // ── FIX C: Write to sync_retry_queue for listing failure ──
+                  try {
+                    await supabase.from("sync_retry_queue").insert({
+                      store_id: store.id,
+                      operation_type: "product_sync",
+                      entity_type: "listing",
+                      entity_id: sku.seller_sku,
+                      attempt_count: 1,
+                      error_message: listingErr.message,
+                      status: "failed",
+                      payload: sanitizeLogPayload(sku),
+                      created_at: timestamp,
+                    });
+                  } catch (_) {}
                 } else {
                   storeSkusSynced++;
                 }
@@ -436,6 +450,21 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               console.error(
                 `[SyncEngine] Item processing error item_id=${item.item_id} store=${store.store_code}: ${itemErr.message}`
               );
+
+              // ── FIX C: Write to sync_retry_queue for item failure ──────
+              try {
+                await supabase.from("sync_retry_queue").insert({
+                  store_id: store.id,
+                  operation_type: "product_sync",
+                  entity_type: "listing",
+                  entity_id: item.item_id,
+                  attempt_count: 1,
+                  error_message: itemErr.message || "Item processing failed",
+                  status: "failed",
+                  payload: sanitizeLogPayload(item),
+                  created_at: timestamp,
+                });
+              } catch (_) {}
             }
           }
 
@@ -504,7 +533,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           };
         }
 
-        // ── MODULE 4: Reconciliation (Stale marking) ─────────────────────────
+        // ── MODULE 4: Catalog Reconciliation (Stale marking) ─────────────────
         const recStart = Date.now();
         if (catalogPaginationSucceeded && syncedSellerSkus.size > 0) {
           try {
@@ -566,9 +595,11 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
         let ordersPaginationSucceeded = false;
         let ordersFetchError: string | null = null;
 
+        // ── FIX D: First-time sync wide historical range ────────────────────
         const isFirstTimeSync = !store.last_synced_at || store.sync_status === "disconnected";
         let incrementalUpdateAfter = "2020-01-01T00:00:00Z";
-        if (!targetStoreId && store.last_synced_at && store.sync_status !== "disconnected") {
+
+        if (!isFirstTimeSync && store.last_synced_at) {
           const safeOverlapMs = 24 * 60 * 60 * 1000;
           const lastSyncTime = new Date(store.last_synced_at).getTime();
           if (!isNaN(lastSyncTime)) {
@@ -610,16 +641,6 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               const exactCustomerName = `${exactFirstName} ${exactLastName}`.trim();
               const exactCity = ord.customer_city || shipping.city || billing.city || "Karachi";
 
-              const { data: existingOrder } = await supabase
-                .from("orders")
-                .select("id, status, workflow_status")
-                .eq("store_id", store.id)
-                .eq("daraz_order_id", ord.order_id)
-                .maybeSingle();
-
-              const previousStatus = existingOrder?.workflow_status || existingOrder?.status || null;
-
-              // FIX: Remove invalid sync_status and last_synced_at columns from orders payload
               const extendedPayload = {
                 store_id: store.id,
                 daraz_order_id: ord.order_id,
@@ -674,7 +695,23 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                     `[SyncEngine] Order upsert failed order_id=${ord.order_id}: ext_err="${extErr.message}" base_err="${baseErr.message}"`
                   );
                   storeFailedCount++;
-                  errors.push(`Order upsert failed for order ${ord.order_id}: ${baseErr.message}`);
+                  const errMsg = baseErr.message;
+                  errors.push(`Order upsert failed for order ${ord.order_id}: ${errMsg}`);
+
+                  // ── FIX C: Write to sync_retry_queue for order failure ────
+                  try {
+                    await supabase.from("sync_retry_queue").insert({
+                      store_id: store.id,
+                      operation_type: "order_sync",
+                      entity_type: "order",
+                      entity_id: ord.order_id,
+                      attempt_count: 1,
+                      error_message: errMsg,
+                      status: "failed",
+                      payload: sanitizeLogPayload(ord),
+                      created_at: timestamp,
+                    });
+                  } catch (_) {}
                 } else {
                   dbOrderId = baseData?.id || null;
                   storeOrdersSynced++;
@@ -684,7 +721,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 storeOrdersSynced++;
               }
 
-              // Save line items
+              // ── FIX A: Order Line Items Persistence ───────────────────────
               if (dbOrderId) {
                 try {
                   const items = await darazClient.getOrderItems(ord.order_id);
@@ -707,23 +744,26 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                           } catch (_) {}
                         }
 
+                        const cleanOrderItemId = String(item.order_item_id || item.item_id || `${ord.order_id}_${Math.random()}`);
+
                         return {
                           order_id: dbOrderId,
                           daraz_order_id: ord.order_id,
-                          order_item_id: item.order_item_id,
-                          name: item.name,
-                          seller_sku: item.seller_sku,
+                          order_item_id: cleanOrderItemId,
+                          name: item.name || `Item ${cleanOrderItemId}`,
+                          seller_sku: item.seller_sku || "UNKNOWN_SKU",
                           shop_sku: item.shop_sku || null,
-                          item_id: item.order_item_id,
+                          item_id: cleanOrderItemId,
                           product_id: matchedProductId,
                           quantity: item.quantity || 1,
-                          item_price_cents: item.item_price_cents,
-                          paid_price_cents: item.paid_price_cents,
-                          status: item.status,
+                          item_price_cents: item.item_price_cents || 0,
+                          paid_price_cents: item.paid_price_cents || 0,
+                          status: item.status || mappedStatus || "pending",
                           shipment_provider: item.shipment_provider || null,
                           tracking_code: item.tracking_code || null,
                           product_main_image: item.product_main_image || null,
                           raw_item_payload: item.raw || item,
+                          updated_at: timestamp,
                         };
                       })
                     );
@@ -732,14 +772,49 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       .from("order_items")
                       .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
 
-                    if (!itemsErr) {
+                    if (itemsErr) {
+                      console.error(`[SyncEngine] Order items upsert error order_id=${ord.order_id}:`, itemsErr.message);
+                      // ── FIX C: Write to sync_retry_queue for order items failure ──
+                      try {
+                        await supabase.from("sync_retry_queue").insert({
+                          store_id: store.id,
+                          operation_type: "order_sync",
+                          entity_type: "order",
+                          entity_id: ord.order_id,
+                          attempt_count: 1,
+                          error_message: `Order items upsert error: ${itemsErr.message}`,
+                          status: "failed",
+                          payload: sanitizeLogPayload({ order_id: ord.order_id, itemsCount: items.length }),
+                          created_at: timestamp,
+                        });
+                      } catch (_) {}
+                    } else {
                       storeOrderItemsSynced += items.length;
                     }
                   }
-                } catch (_) {}
+                } catch (itemsFetchErr: any) {
+                  console.warn(`[SyncEngine] Notice fetching order items for order ${ord.order_id}: ${itemsFetchErr.message}`);
+                }
               }
             } catch (ordErr: any) {
               storeFailedCount++;
+              const errMsg = ordErr.message || "Order loop processing failed";
+              console.error(`[SyncEngine] Order loop processing error order_id=${ord.order_id}: ${errMsg}`);
+
+              // ── FIX C: Write to sync_retry_queue ──────────────────────────
+              try {
+                await supabase.from("sync_retry_queue").insert({
+                  store_id: store.id,
+                  operation_type: "order_sync",
+                  entity_type: "order",
+                  entity_id: ord.order_id || "UNKNOWN_ORDER",
+                  attempt_count: 1,
+                  error_message: errMsg,
+                  status: "failed",
+                  payload: sanitizeLogPayload(ord),
+                  created_at: timestamp,
+                });
+              } catch (_) {}
             }
           }
 
@@ -770,15 +845,85 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           durationMs: ordersDuration,
         };
 
+        // ── MODULE 7: FIX E: Order Status Reconciliation Sweep ────────────────
+        try {
+          const activeStatuses = ["pending", "unpaid", "ready_to_ship"];
+          const { data: staleOrders } = await supabase
+            .from("orders")
+            .select("id, daraz_order_id, status, workflow_status, updated_at")
+            .eq("store_id", store.id)
+            .in("workflow_status", activeStatuses)
+            .order("updated_at", { ascending: true })
+            .limit(50);
+
+          if (staleOrders && staleOrders.length > 0) {
+            console.log(`[SyncEngine] Reconciling current status for ${staleOrders.length} active orders...`);
+            let statusTransitions = 0;
+
+            for (const staleOrder of staleOrders) {
+              try {
+                const freshOrderRaw = await darazClient.getOrderDetails(staleOrder.daraz_order_id);
+                if (freshOrderRaw) {
+                  let rawStatus = "pending";
+                  if (Array.isArray(freshOrderRaw.statuses) && freshOrderRaw.statuses.length > 0) {
+                    rawStatus = String(freshOrderRaw.statuses[0]);
+                  } else if (typeof freshOrderRaw.statuses === "string" && freshOrderRaw.statuses.trim()) {
+                    rawStatus = freshOrderRaw.statuses.trim();
+                  } else if (typeof freshOrderRaw.status === "string" && freshOrderRaw.status.trim()) {
+                    rawStatus = freshOrderRaw.status.trim();
+                  }
+
+                  const mappedObj = mapDarazOrderStatus(rawStatus);
+                  const freshStatus: DarazOrderStatus = mappedObj.normalizedStatus;
+                  const freshWorkflowStatus: string = mappedObj.workflowStatus;
+
+                  if (freshWorkflowStatus !== staleOrder.workflow_status || freshStatus !== staleOrder.status) {
+                    await supabase
+                      .from("orders")
+                      .update({
+                        status: freshStatus,
+                        workflow_status: freshWorkflowStatus,
+                        updated_at: timestamp,
+                      })
+                      .eq("id", staleOrder.id);
+
+                    await supabase.from("order_activities").insert({
+                      order_id: staleOrder.id,
+                      daraz_order_id: staleOrder.daraz_order_id,
+                      previous_status: staleOrder.workflow_status || staleOrder.status,
+                      new_status: freshWorkflowStatus,
+                      actor: "System",
+                      source: "Reconciliation Sweep",
+                      notes: `Status updated during reconciliation sweep from '${staleOrder.workflow_status || staleOrder.status}' to '${freshWorkflowStatus}'`,
+                      created_at: timestamp,
+                    });
+
+                    statusTransitions++;
+                    console.log(
+                      `[SyncEngine] Order Reconciliation: Order ${staleOrder.daraz_order_id} status updated '${staleOrder.workflow_status}' -> '${freshWorkflowStatus}'`
+                    );
+                  }
+                }
+              } catch (singleRecErr: any) {
+                console.warn(`[SyncEngine] Notice reconciling order ${staleOrder.daraz_order_id}: ${singleRecErr.message}`);
+              }
+            }
+
+            console.log(`[SyncEngine] Order reconciliation complete: ${statusTransitions} transitions detected out of ${staleOrders.length} checked.`);
+          }
+        } catch (recSweepErr: any) {
+          console.warn(`[SyncEngine] Order status reconciliation sweep notice for ${store.store_code}: ${recSweepErr.message}`);
+        }
+
         storesSynced++;
       } catch (storeErr: any) {
         storeErrorMsg = storeErr.message || "Synchronization process failed for this store.";
         errors.push(`Store ${store.store_name} (${store.store_code}): ${storeErrorMsg}`);
       } finally {
-        // Evaluate final status: NEVER set store status to connected if catalog/listings persistence failed
+        // ── FIX F: Clear sync_status & last_sync_error on completion ──────────
         const hasCatalogFailure = storeModules.catalog_products.status === "failed" || storeModules.inventory_stock.status === "failed";
         const finalStatus = storeErrorMsg || hasCatalogFailure ? "error" : "connected";
-        const safeErrorText = storeErrorMsg || (hasCatalogFailure ? "Catalog or stock persistence failed" : null);
+        const safeErrorText = storeErrorMsg || (hasCatalogFailure ? "Catalog or stock persistence failed" : (errors.length > 0 ? errors[errors.length - 1] : null));
 
         try {
           await supabase
@@ -786,7 +931,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             .update({
               last_synced_at: timestamp,
               sync_status: finalStatus,
-              last_sync_error: safeErrorText,
+              last_sync_error: safeErrorText ? humanizeDarazApiError("SYNC_ERROR", safeErrorText) : null,
               updated_at: timestamp,
             })
             .eq("id", store.id);
