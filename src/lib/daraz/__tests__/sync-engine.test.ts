@@ -112,12 +112,12 @@ describe("Daraz Multi-Store Sync Engine Architecture & Edge Cases Test Suite", (
     expect(reconciliationRan).toBe(false);
   });
 
-  test("Case 13: Daraz HMAC-SHA256 signature compliance test vector", () => {
+  test("Case 13: Daraz HMAC-SHA256 signature compliance test vector", async () => {
     const apiPath = "/products/get";
     const params = { app_key: "123456", timestamp: "1600000000000", filter: "all" };
     const secret = "test_secret_key_789";
 
-    const sig = generateDarazSignature(apiPath, params, secret);
+    const sig = await generateDarazSignature(apiPath, params, secret);
 
     expect(typeof sig).toBe("string");
     expect(sig).toBe(sig.toUpperCase());

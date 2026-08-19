@@ -1,186 +1,116 @@
-import { createAdminClient } from "@/lib/supabase/admin";
-import { getDarazClient } from "./client";
+import { DarazClient } from './client';
+import { getValidStoreAccessToken } from './store-utils';
+import { createAdminClient } from '@/lib/supabase/admin';
 
-export interface StockSyncResult {
-  success: boolean;
-  storeId: string;
-  skusUpdated: number;
-  errors: string[];
-  timestamp: string;
+export interface SkuUpdate {
+  itemId: string | number;
+  skuId?: string | number;
+  sellerSku: string;
+  quantity?: number;
+  price?: number;
 }
 
-/**
- * Production-Grade Store-Scoped Stock Synchronization Engine
- *
- * Enforces `store_id` as the tenant boundary.
- * 1. Pulls real-time stock levels from Daraz Open Platform catalog API `/products/get`.
- * 2. Updates `listings` table (store_id + seller_sku).
- * 3. Updates `daraz_product_skus` table (store_id + seller_sku).
- * 4. Updates `inventory` table for local stock ledgers.
- * 5. Pushes stock changes to Daraz Open Platform `/product/price_quantity/update`.
- */
+export function buildPriceQuantityXml(skus: SkuUpdate[]): string {
+  const items = skus.map((s) => {
+    let xml = `<Sku><ItemId>${s.itemId}</ItemId>`;
+    if (s.skuId) xml += `<SkuId>${s.skuId}</SkuId>`;
+    xml += `<SellerSku><![CDATA[${s.sellerSku}]]></SellerSku>`;
+    if (s.quantity !== undefined) xml += `<Quantity>${s.quantity}</Quantity>`;
+    if (s.price !== undefined) xml += `<Price>${s.price.toFixed(2)}</Price>`;
+    xml += `</Sku>`;
+    return xml;
+  }).join('');
+  return `<Request><Product><Skus>${items}</Skus></Product></Request>`;
+}
 
-export async function pullStockForStore(storeId: string): Promise<StockSyncResult> {
+export async function syncStockBatch(client: DarazClient, skus: SkuUpdate[]) {
+  const CHUNK_SIZE = 20;
+  const results = [];
+  for (let i = 0; i < skus.length; i += CHUNK_SIZE) {
+    const chunk = skus.slice(i, i + CHUNK_SIZE);
+    const payload = buildPriceQuantityXml(chunk);
+    const res = await client.post('/product/price_quantity/update', { payload });
+    results.push(res);
+    await new Promise((r) => setTimeout(r, 100)); // 100ms rate-limiting gap
+  }
+  return results;
+}
+
+// -----------------------------------------------------------------------------
+// High-Level Store Stock Push / Pull Functions
+// -----------------------------------------------------------------------------
+
+export async function pullStockForStore(storeId: string) {
   const timestamp = new Date().toISOString();
   const errors: string[] = [];
   let skusUpdated = 0;
 
   try {
+    const { client } = await getValidStoreAccessToken(storeId);
     const supabase = createAdminClient();
 
-    // 1. Verify store existence & active status
-    const { data: store, error: storeErr } = await supabase
-      .from("daraz_stores")
-      .select("id, seller_id, store_name, store_code, access_token, is_active")
-      .eq("id", storeId)
-      .single();
+    const catalogRes: any = await client.get('/products/get', { filter: 'all', offset: '0', limit: '100' });
+    const dataObj = catalogRes.data || catalogRes.result || catalogRes;
+    let products: any[] = [];
+    if (Array.isArray(dataObj)) products = dataObj;
+    else if (Array.isArray(dataObj?.products)) products = dataObj.products;
 
-    if (storeErr || !store || !store.is_active || !store.access_token) {
-      throw new Error(`Store ${storeId} is inactive or missing valid access token.`);
+    for (const p of products) {
+      const skus = p.skus || p.Skus || [];
+      for (const sku of skus) {
+        const sellerSku = sku.seller_sku || sku.SellerSku;
+        if (!sellerSku) continue;
+
+        const qty = Math.max(0, parseInt(String(sku.quantity ?? sku.Quantity ?? 0), 10) || 0);
+        const price = Math.round((parseFloat(String(sku.price ?? sku.Price ?? 0)) || 0) * 100);
+
+        await supabase
+          .from('listings')
+          .update({
+            stock_quantity: qty,
+            price_cents: price,
+            last_synced_at: timestamp,
+            is_synced: true,
+          })
+          .eq('store_id', storeId)
+          .eq('seller_sku', sellerSku);
+
+        skusUpdated++;
+      }
     }
 
-    const darazClient = await getDarazClient(store.id);
-
-    // 2. Fetch full catalog items with SKU-level stock breakdown
-    let offset = 0;
-    const limit = 100;
-    let totalItems = 0;
-
-    do {
-      const catalogRes = await darazClient.getCatalogItems(offset, limit);
-      totalItems = catalogRes.total_items;
-
-      for (const item of catalogRes.items) {
-        for (const sku of item.skus) {
-          if (!sku.seller_sku) continue;
-
-          try {
-            // Update store-scoped listings table
-            const { error: listingErr } = await supabase
-              .from("listings")
-              .update({
-                stock_quantity: sku.quantity,
-                reserved_quantity: sku.reserved_quantity || 0,
-                price_cents: sku.price_cents,
-                special_price_cents: sku.special_price_cents || null,
-                last_synced_at: timestamp,
-                is_synced: true,
-              })
-              .eq("store_id", store.id)
-              .eq("seller_sku", sku.seller_sku);
-
-            if (listingErr) {
-              console.warn(`[StockSync] Notice updating listing store=${store.store_code} sku=${sku.seller_sku}: ${listingErr.message}`);
-              errors.push(`Listing update error SKU ${sku.seller_sku}: ${listingErr.message}`);
-            }
-
-            // Update daraz_product_skus table if present
-            await supabase
-              .from("daraz_product_skus")
-              .update({
-                quantity: sku.quantity,
-                reserved_quantity: sku.reserved_quantity,
-                price_cents: sku.price_cents,
-                special_price_cents: sku.special_price_cents || null,
-                last_synced_at: timestamp,
-              })
-              .eq("store_id", store.id)
-              .eq("seller_sku", sku.seller_sku);
-
-            skusUpdated++;
-          } catch (itemErr: any) {
-            console.error(`[StockSync] SKU update exception store=${store.store_code} sku=${sku.seller_sku}:`, itemErr.message);
-          }
-        }
-      }
-
-      offset += catalogRes.items.length;
-    } while (offset < totalItems && offset > 0);
-
-    return {
-      success: true,
-      storeId,
-      skusUpdated,
-      errors,
-      timestamp,
-    };
+    return { success: true, storeId, skusUpdated, errors, timestamp };
   } catch (err: any) {
-    const errorMsg = err.message || String(err);
-    errors.push(errorMsg);
-    try {
-      const supabase = createAdminClient();
-      await supabase
-        .from("daraz_stores")
-        .update({
-          last_sync_error: errorMsg,
-          updated_at: timestamp,
-        })
-        .eq("id", storeId);
-    } catch (_) {}
-
-    return {
-      success: false,
-      storeId,
-      skusUpdated,
-      errors,
-      timestamp,
-    };
+    errors.push(err.message || String(err));
+    return { success: false, storeId, skusUpdated, errors, timestamp };
   }
 }
 
-/**
- * Pushes stock & price updates for a store to official Daraz Open Platform API.
- */
 export async function pushStockToStore(
   storeId: string,
   updates: Array<{
     sellerSku: string;
+    itemId?: string | number;
+    skuId?: string | number;
     quantity?: number;
     priceCents?: number;
-    specialPriceCents?: number;
   }>
-): Promise<{ success: boolean; pushedCount: number; errors: string[] }> {
-  const errors: string[] = [];
+) {
   if (!updates || updates.length === 0) {
     return { success: true, pushedCount: 0, errors: [] };
   }
 
   try {
-    const supabase = createAdminClient();
+    const { client } = await getValidStoreAccessToken(storeId);
+    const formattedUpdates: SkuUpdate[] = updates.map((u) => ({
+      itemId: u.itemId || '0',
+      skuId: u.skuId,
+      sellerSku: u.sellerSku,
+      quantity: u.quantity,
+      price: typeof u.priceCents === 'number' ? u.priceCents / 100 : undefined,
+    }));
 
-    const { data: store, error: storeErr } = await supabase
-      .from("daraz_stores")
-      .select("id, is_active, access_token")
-      .eq("id", storeId)
-      .single();
-
-    if (storeErr || !store || !store.is_active || !store.access_token) {
-      throw new Error(`Store ${storeId} is inactive or not connected.`);
-    }
-
-    const darazClient = await getDarazClient(store.id);
-
-    // Batch pushing to Daraz API
-    const pushSuccess = await darazClient.updatePriceAndQuantity(updates);
-
-    if (!pushSuccess) {
-      throw new Error("Daraz API rejected price and quantity update payload.");
-    }
-
-    // Update local database on confirmed push
-    const nowIso = new Date().toISOString();
-    for (const update of updates) {
-      const dbPayload: Record<string, any> = { last_synced_at: nowIso };
-      if (typeof update.quantity === "number") dbPayload.stock_quantity = update.quantity;
-      if (typeof update.priceCents === "number") dbPayload.price_cents = update.priceCents;
-      if (typeof update.specialPriceCents === "number") dbPayload.special_price_cents = update.specialPriceCents;
-
-      await supabase
-        .from("listings")
-        .update(dbPayload)
-        .eq("store_id", store.id)
-        .eq("seller_sku", update.sellerSku);
-    }
+    await syncStockBatch(client, formattedUpdates);
 
     return {
       success: true,
@@ -188,11 +118,10 @@ export async function pushStockToStore(
       errors: [],
     };
   } catch (err: any) {
-    errors.push(err.message || String(err));
     return {
       success: false,
       pushedCount: 0,
-      errors,
+      errors: [err.message || String(err)],
     };
   }
 }

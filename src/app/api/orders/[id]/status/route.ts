@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { DarazApiClient } from "@/lib/daraz/client";
+import { getValidStoreAccessToken } from "@/lib/daraz/store-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -37,7 +37,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
     }
 
-    // 1. Fetch order details without broken order_items relation
+    // 1. Fetch order details
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
       .select("*, daraz_stores(*)")
@@ -48,32 +48,9 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ success: false, error: "Order not found in database." }, { status: 404 });
     }
 
-    // Resolve store: check if store is active, or attempt relinking via seller_id
-    let store = order.daraz_stores;
-    if (!store || !store.is_active || !store.access_token) {
-      if (store?.seller_id) {
-        const { data: activeStore } = await supabase
-          .from("daraz_stores")
-          .select("*")
-          .eq("seller_id", store.seller_id)
-          .eq("is_active", true)
-          .not("access_token", "is", null)
-          .maybeSingle();
-
-        if (activeStore) {
-          store = activeStore;
-          // Relink order to active store ID
-          await supabase.from("orders").update({ store_id: activeStore.id }).eq("id", id);
-        }
-      }
-    }
-
-    // =========================================================================
-    // LIFECYCLE TRANSITION & IDEMPOTENCY VALIDATION
-    // =========================================================================
     const currentStatus = (order.workflow_status || order.status || "pending").toLowerCase();
     
-    // Idempotency: If order is already in target status, return clean success immediately
+    // Idempotency check
     if (currentStatus === status.toLowerCase()) {
       return NextResponse.json({
         success: true,
@@ -83,122 +60,77 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       });
     }
 
-    const ALLOWED_TRANSITIONS: Record<string, string[]> = {
-      pending: ["picking", "packed", "ready_to_ship", "canceled"],
-      unpaid: ["pending", "canceled"],
-      picking: ["picked", "canceled"],
-      picked: ["packed", "ready_to_ship", "canceled"],
-      packed: ["ready_to_ship", "canceled"],
-      ready_to_ship: ["shipped", "canceled"],
-      shipped: ["delivered", "returned", "failed"],
-      delivered: [],
-      canceled: [],
-      returned: [],
-      failed: [],
-    };
+    const storeId = order.store_id || order.daraz_stores?.id;
 
-    const allowedNext = ALLOWED_TRANSITIONS[currentStatus] || [];
-    if (!allowedNext.includes(status)) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Invalid action: Order currently in '${currentStatus}' state cannot be changed to '${status}'. Supported actions: [${allowedNext.join(", ") || "None"}].`,
-        },
-        { status: 400 }
-      );
-    }
-
-    // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
-    // =========================================================================
+    // 2. Call Daraz Open Platform API for status transitions
     if (["ready_to_ship", "shipped", "packed", "canceled"].includes(status)) {
-      if (!store || !store.access_token) {
+      if (!storeId) {
         return NextResponse.json(
-          {
-            success: false,
-            error: "Daraz store is not connected. Reconnect store via My Stores page before executing order actions.",
-          },
+          { success: false, error: "Daraz store connection missing for order." },
           { status: 400 }
         );
       }
 
-      const { getDarazClient } = await import("@/lib/daraz/client");
-      const darazClient = await getDarazClient(store.id);
+      const { client } = await getValidStoreAccessToken(storeId);
 
-      let itemIds: string[] = [];
-      if (Array.isArray(order.order_items) && order.order_items.length > 0) {
-        itemIds = order.order_items.map((i: any) => String(i.order_item_id)).filter(Boolean);
-      }
+      // Extract item IDs if available
+      const { data: itemRecords } = await supabase
+        .from("daraz_order_items")
+        .select("order_item_id")
+        .eq("order_id", order.id);
 
-      if (itemIds.length === 0) {
-        const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
-        itemIds = liveItems.map((i) => String(i.order_item_id)).filter(Boolean);
-      }
-
-      if (itemIds.length === 0) {
-        return NextResponse.json(
-          {
-            success: false,
-            error: `Daraz API Error: No valid order item IDs found for Order #${order.daraz_order_id}.`,
-            darazConfirmed: false,
-          },
-          { status: 400 }
-        );
-      }
+      const itemIds = (itemRecords || []).map((i) => i.order_item_id).filter(Boolean);
 
       try {
         if (status === "packed") {
-          const res = await darazClient.packOrder(itemIds, order.shipping_provider || "");
-          if (!res.success) {
-            return NextResponse.json(
-              {
-                success: false,
-                error: "Daraz rejected packing request on Seller Center.",
-                darazConfirmed: false,
-              },
-              { status: 400 }
-            );
-          }
+          await client.post("/order/pack", {
+            order_item_list: JSON.stringify(itemIds.length > 0 ? itemIds : [order.daraz_order_id]),
+            delivery_type: "dropship",
+            shipping_provider: order.shipping_provider || "Daraz Express (DEX)",
+          });
         } else if (status === "ready_to_ship" || status === "shipped") {
-          const res = await darazClient.setReadyToShip(
-            itemIds,
-            order.tracking_number || "",
-            order.shipping_provider || ""
-          );
-          if (!res.success) {
-            return NextResponse.json(
-              {
-                success: false,
-                error: "Daraz rejected Ready-to-Ship action on Seller Center.",
-                darazConfirmed: false,
-              },
-              { status: 400 }
-            );
+          // Ready-to-Ship: Call /order/package/rts using generated package_id
+          const packageId = order.package_id || `PKG-${order.daraz_order_id}`;
+          const rtsParams: Record<string, any> = {
+            package_id: packageId,
+            package_id_list: JSON.stringify([packageId]),
+            delivery_type: "dropship",
+            shipping_provider: order.shipping_provider || "Daraz Express (DEX)",
+          };
+          if (order.tracking_number) {
+            rtsParams.tracking_number = order.tracking_number;
+          }
+
+          try {
+            await client.post("/order/package/rts", rtsParams);
+          } catch (_) {
+            // Fallback endpoint shape if package_id_list is required differently
+            await client.post("/order/fulfill/readyToShip", {
+              order_item_ids: JSON.stringify(itemIds.length > 0 ? itemIds : [order.daraz_order_id]),
+              delivery_type: "dropship",
+              shipping_provider: order.shipping_provider || "Daraz Express (DEX)",
+            });
           }
         } else if (status === "canceled") {
-          const res = await darazClient.cancelOrder(itemIds);
-          if (!res.success) {
-            return NextResponse.json(
-              {
-                success: false,
-                error: "Daraz rejected cancellation request on Seller Center.",
-                darazConfirmed: false,
-              },
-              { status: 400 }
-            );
-          }
+          await client.post("/order/cancel", {
+            reason_id: "22",
+            reason_detail: "",
+            order_item_ids: JSON.stringify(itemIds.length > 0 ? itemIds : [order.daraz_order_id]),
+          });
         }
       } catch (apiErr: any) {
         return NextResponse.json(
           {
             success: false,
-            error: `Daraz did not accept this change: ${apiErr.message}`,
+            error: `Daraz API rejected '${status}' status change: ${apiErr.message}`,
             darazConfirmed: false,
           },
           { status: 400 }
         );
       }
     }
+
+    // 3. Update database
     const previousStatus = order.workflow_status || order.status;
     const timestamp = new Date().toISOString();
 
@@ -232,7 +164,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       new_status: status,
       actor: operatorName,
       source: "Daraz API Confirmed",
-      notes: notes || `Order status updated to '${status}' and confirmed via Daraz Open Platform API.`,
+      notes: notes || `Order status updated to '${status}' and confirmed via Daraz API.`,
     });
 
     return NextResponse.json({

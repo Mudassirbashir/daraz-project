@@ -1,71 +1,148 @@
-/**
- * Store Naming & Display Utilities
- * Dynamic store naming: uses the official connected Daraz seller/store name
- * (e.g., "ISD Traders", "M Saleem Mall", "Haleema Mall").
- */
+import { createAdminClient } from '@/lib/supabase/admin';
+import { DarazClient } from './client';
+
+export async function getValidStoreAccessToken(storeId: string): Promise<{ accessToken: string; client: DarazClient }> {
+  const supabase = createAdminClient();
+  const { data: store, error } = await supabase
+    .from('daraz_stores')
+    .select('*')
+    .eq('id', storeId)
+    .single();
+
+  if (error || !store) throw new Error(`Store not found: ${storeId}`);
+
+  const now = Date.now();
+  const expiresAt = new Date(store.token_expires_at || 0).getTime();
+  const bufferMs = 24 * 60 * 60 * 1000; // 24-hour buffer
+
+  if (expiresAt - now > bufferMs && store.access_token) {
+    const client = new DarazClient({
+      appKey: process.env.DARAZ_APP_KEY!,
+      appSecret: process.env.DARAZ_APP_SECRET!,
+      countryCode: store.country_code || store.region || 'PK',
+      accessToken: store.access_token,
+    });
+    return { accessToken: store.access_token, client };
+  }
+
+  // Acquire DB Mutex Lock for 60s
+  const lockExpiry = new Date(now + 60000).toISOString();
+  const { data: locked } = await supabase
+    .from('daraz_stores')
+    .update({ token_refresh_locked_until: lockExpiry })
+    .eq('id', storeId)
+    .or(`token_refresh_locked_until.is.null,token_refresh_locked_until.lt.${new Date(now).toISOString()}`)
+    .select('id')
+    .single();
+
+  if (!locked) {
+    await new Promise((r) => setTimeout(r, 2500));
+    const { data: refreshed } = await supabase.from('daraz_stores').select('access_token').eq('id', storeId).single();
+    const client = new DarazClient({
+      appKey: process.env.DARAZ_APP_KEY!,
+      appSecret: process.env.DARAZ_APP_SECRET!,
+      countryCode: store.country_code || store.region || 'PK',
+      accessToken: refreshed!.access_token,
+    });
+    return { accessToken: refreshed!.access_token, client };
+  }
+
+  try {
+    const tempClient = new DarazClient({
+      appKey: process.env.DARAZ_APP_KEY!,
+      appSecret: process.env.DARAZ_APP_SECRET!,
+      countryCode: store.country_code || store.region || 'PK',
+    });
+
+    const res: any = await tempClient.post('/auth/token/refresh', {
+      refresh_token: store.refresh_token,
+    });
+
+    const newExpiresAt = new Date(Date.now() + res.expires_in * 1000).toISOString();
+    const newRefreshExpiresAt = new Date(Date.now() + (res.refresh_expires_in || res.expires_in) * 1000).toISOString();
+
+    await supabase
+      .from('daraz_stores')
+      .update({
+        access_token: res.access_token,
+        refresh_token: res.refresh_token,
+        token_expires_at: newExpiresAt,
+        refresh_expires_at: newRefreshExpiresAt,
+        token_refresh_locked_until: null,
+        last_sync_error: null,
+        account_status: 'active',
+      })
+      .eq('id', storeId);
+
+    const client = new DarazClient({
+      appKey: process.env.DARAZ_APP_KEY!,
+      appSecret: process.env.DARAZ_APP_SECRET!,
+      countryCode: store.country_code || store.region || 'PK',
+      accessToken: res.access_token,
+    });
+
+    return { accessToken: res.access_token, client };
+  } catch (err: any) {
+    await supabase.from('daraz_stores').update({ token_refresh_locked_until: null, last_sync_error: err.message }).eq('id', storeId);
+    throw err;
+  }
+}
+
+// -----------------------------------------------------------------------------
+// Display & UI Store Helpers
+// -----------------------------------------------------------------------------
 
 export interface StoreLike {
   id?: string;
   store_name?: string | null;
   seller_id?: string | null;
   slot_number?: number | null;
+  slot_index?: number | null;
   store_code?: string | null;
 }
 
-/**
- * Returns the official display name for a Daraz store.
- * Prefers the real store_name returned by Daraz Open Platform API.
- */
 export function getStoreDisplayName(
   store?: StoreLike | null,
   fallbackIndex?: number
 ): string {
   if (!store) {
-    return typeof fallbackIndex === "number" ? `Store ${fallbackIndex + 1}` : "Daraz Store";
+    return typeof fallbackIndex === 'number' ? `Store ${fallbackIndex + 1}` : 'Daraz Store';
   }
 
-  // 1. Prefer official store_name if present and non-empty
   if (store.store_name && store.store_name.trim()) {
     const name = store.store_name.trim();
-    // If store_name is generic "Store N", check if seller_id or store_code is available
     if (/^Store \d+$/i.test(name)) {
-      if (store.seller_id && store.seller_id !== "N/A" && !store.seller_id.startsWith("SELLER_")) {
+      if (store.seller_id && store.seller_id !== 'N/A' && !store.seller_id.startsWith('SELLER_')) {
         return `Seller ${store.seller_id}`;
       }
     }
     return name;
   }
 
-  // 2. Fallback to seller_id if available
-  if (store.seller_id && store.seller_id !== "N/A" && !store.seller_id.startsWith("SELLER_")) {
+  if (store.seller_id && store.seller_id !== 'N/A' && !store.seller_id.startsWith('SELLER_')) {
     return `Seller ${store.seller_id}`;
   }
 
-  // 3. Fallback to store_code if available
   if (store.store_code && store.store_code.trim()) {
     return store.store_code.trim();
   }
 
-  // 4. Fallback slot number
-  if (typeof store.slot_number === "number" && store.slot_number > 0) {
-    return `Store ${store.slot_number}`;
+  const slot = store.slot_number || store.slot_index;
+  if (typeof slot === 'number' && slot > 0) {
+    return `Store ${slot}`;
   }
 
-  if (typeof fallbackIndex === "number" && fallbackIndex >= 0) {
+  if (typeof fallbackIndex === 'number' && fallbackIndex >= 0) {
     return `Store ${fallbackIndex + 1}`;
   }
 
-  return "Daraz Store";
+  return 'Daraz Store';
 }
 
-/**
- * Returns 2-character badge initials (e.g. "IT" for ISD Traders, "MS" for M Saleem Mall) for a store.
- */
 export function getStoreInitials(displayName: string): string {
-  if (!displayName || !displayName.trim()) return "DS";
+  if (!displayName || !displayName.trim()) return 'DS';
   const clean = displayName.trim();
 
-  // If match "Store N"
   const storeNumMatch = clean.match(/^Store (\d+)$/i);
   if (storeNumMatch) {
     return `S${storeNumMatch[1]}`;
@@ -80,5 +157,5 @@ export function getStoreInitials(displayName: string): string {
     return words[0].toUpperCase();
   }
 
-  return "DS";
+  return 'DS';
 }

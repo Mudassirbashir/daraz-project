@@ -11,7 +11,9 @@
     "deploy:cf": "opennextjs-cloudflare deploy",
     "start": "next start",
     "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "typecheck": "tsc --noEmit",
+    "test": "tsx src/lib/daraz/__tests__/run-tests.ts",
+    "test:daraz": "tsx src/lib/daraz/__tests__/run-tests.ts"
   },
   "dependencies": {
     "@radix-ui/react-avatar": "^1.1.0",

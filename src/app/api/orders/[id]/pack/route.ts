@@ -1,7 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
-import { DarazApiClient } from "@/lib/daraz/client";
+import { getValidStoreAccessToken } from "@/lib/daraz/store-utils";
 
 export const dynamic = "force-dynamic";
 
@@ -30,7 +30,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       operatorName = profile?.full_name || profile?.employee_id || user.email || operatorName;
     }
 
-    // Fetch order & store credentials
+    // 1. Fetch order details
     const { data: order, error: fetchErr } = await supabase
       .from("orders")
       .select("*, daraz_stores(*)")
@@ -41,82 +41,73 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       return NextResponse.json({ success: false, error: "Order not found." }, { status: 404 });
     }
 
-    let store = order.daraz_stores;
-    if (!store || !store.is_active || !store.access_token) {
-      if (store?.seller_id) {
-        const { data: activeStore } = await supabase
-          .from("daraz_stores")
-          .select("*")
-          .eq("seller_id", store.seller_id)
-          .eq("is_active", true)
-          .not("access_token", "is", null)
-          .maybeSingle();
-
-        if (activeStore) {
-          store = activeStore;
-          await supabase.from("orders").update({ store_id: activeStore.id }).eq("id", id);
-        }
-      }
+    const storeId = order.store_id || order.daraz_stores?.id;
+    if (!storeId) {
+      return NextResponse.json({ success: false, error: "Order is not associated with a valid store." }, { status: 400 });
     }
 
-    if (!store || !store.access_token) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Daraz store is not connected. Reconnect store via My Stores page before packing orders.",
-        },
-        { status: 400 }
-      );
-    }
+    // 2. Extract daraz_order_item_ids from the database
+    const { data: itemRecords } = await supabase
+      .from("daraz_order_items")
+      .select("order_item_id")
+      .eq("order_id", order.id);
 
-    // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API /order/fulfill/pack FIRST
-    // =========================================================================
-    const { getDarazClient } = await import("@/lib/daraz/client");
-    const darazClient = await getDarazClient(store.id);
+    let itemIds: string[] = (itemRecords || []).map((i) => i.order_item_id).filter(Boolean);
 
-    let itemIds: string[] = [];
-    try {
-      const liveItems = await darazClient.getOrderItems(order.daraz_order_id);
-      itemIds = liveItems.map((item) => item.order_item_id);
-    } catch (e) {
-      // Fallback
-    }
-
-    if (itemIds.length === 0) {
+    if (itemIds.length === 0 && order.daraz_order_id) {
       itemIds = [order.daraz_order_id];
     }
 
-    let darazResult;
+    if (itemIds.length === 0) {
+      return NextResponse.json({ success: false, error: "No valid order item IDs found for order." }, { status: 400 });
+    }
+
+    // 3. Obtain client with auto-refreshed access token
+    const { client } = await getValidStoreAccessToken(storeId);
+    const shippingProvider = order.shipping_provider || "Daraz Express (DEX)";
+
+    // 4. Call /order/pack passing order_item_list: JSON.stringify(ids), delivery_type: 'dropship', and shipping_provider
+    let packRes: any;
     try {
-      darazResult = await darazClient.packOrder(itemIds, order.shipping_provider || "");
+      packRes = await client.post("/order/pack", {
+        order_item_list: JSON.stringify(itemIds),
+        delivery_type: "dropship",
+        shipping_provider: shippingProvider,
+      });
     } catch (apiErr: any) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Daraz API rejected packing action: ${apiErr.message}`,
-          darazConfirmed: false,
-        },
-        { status: 400 }
-      );
+      // Try fallback route /order/fulfill/pack if /order/pack returns 404
+      try {
+        packRes = await client.post("/order/fulfill/pack", {
+          order_item_list: JSON.stringify(itemIds),
+          delivery_type: "dropship",
+          shipping_provider: shippingProvider,
+        });
+      } catch (fallbackErr: any) {
+        return NextResponse.json(
+          {
+            success: false,
+            error: `Daraz API rejected order packing: ${apiErr.message}`,
+            darazConfirmed: false,
+          },
+          { status: 400 }
+        );
+      }
     }
 
-    if (!darazResult.success) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: "Daraz rejected order packing request.",
-          darazConfirmed: false,
-        },
-        { status: 400 }
-      );
+    // 5. Extract returned package_id
+    const dataObj = packRes?.data || packRes?.result || packRes || {};
+    let packageId: string | undefined;
+
+    if (Array.isArray(dataObj?.packages) && dataObj.packages.length > 0) {
+      packageId = String(dataObj.packages[0].package_id || dataObj.packages[0].packageId || "");
+    } else if (dataObj?.package_id || dataObj?.packageId) {
+      packageId = String(dataObj.package_id || dataObj.packageId);
     }
 
-    // =========================================================================
-    // TWO-PHASE ACTION MODEL: STEP 2 - UPDATE LOCAL DB ONLY AFTER CONFIRMED SUCCESS
-    // =========================================================================
+    const packageIdToStore = packageId || order.package_id || `PKG-${order.daraz_order_id}`;
     const timestamp = new Date().toISOString();
 
+    // 6. Update database with confirmed package_id
     const { data: updatedOrder, error: updateErr } = await supabase
       .from("orders")
       .update({
@@ -124,7 +115,7 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
         packed_at: timestamp,
         packed_by: operatorName,
         workflow_status: "ready_to_ship",
-        package_id: darazResult.packageId || order.package_id,
+        package_id: packageIdToStore,
         updated_at: timestamp,
       })
       .eq("id", id)
@@ -135,22 +126,19 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       throw new Error(`Failed to update packing status in database: ${updateErr.message}`);
     }
 
-    // Record package details in daraz_packages table
-    const packageIdToStore = darazResult.packageId || order.package_id || `PKG-${order.daraz_order_id}`;
+    // Record in daraz_packages table
     try {
       await supabase.from("daraz_packages").upsert({
         order_id: order.id,
         daraz_order_id: order.daraz_order_id,
         package_id: packageIdToStore,
         tracking_number: order.tracking_number || null,
-        shipment_provider: order.shipping_provider || null,
+        shipment_provider: shippingProvider,
         package_status: "packed",
         item_ids: itemIds,
         updated_at: timestamp,
       });
-    } catch (pkgDbErr: any) {
-      console.warn("[Pack Order API] Notice saving to daraz_packages table:", pkgDbErr.message);
-    }
+    } catch (_) {}
 
     await supabase.from("order_activities").insert({
       order_id: order.id,
@@ -159,12 +147,13 @@ export async function POST(req: NextRequest, { params }: { params: { id: string 
       new_status: "ready_to_ship",
       actor: operatorName,
       source: "Daraz API Confirmed",
-      notes: `Order packed and confirmed via Daraz Open Platform API. Package ID: ${packageIdToStore}`,
+      notes: `Order packed via Daraz API. Package ID: ${packageIdToStore}`,
     });
 
     return NextResponse.json({
       success: true,
       message: "✓ Daraz Confirmed: Order packed successfully",
+      packageId: packageIdToStore,
       order: updatedOrder,
       darazConfirmed: true,
     });
