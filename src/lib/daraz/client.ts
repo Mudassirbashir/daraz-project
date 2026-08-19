@@ -202,11 +202,15 @@ export class DarazApiClient {
    * Refreshes access token via Daraz REST API /auth/token/refresh with Supabase atomic mutex lock.
    */
   async refreshAccessToken(): Promise<void> {
-    if (!this.refreshToken) {
+    const currentRefreshToken = this.refreshToken;
+    const currentAppKey = this.appKey;
+    const currentAppSecret = this.appSecret;
+
+    if (!currentRefreshToken) {
       throw new Error("Cannot refresh token: missing refresh_token.");
     }
 
-    if (!this.appKey || !this.appSecret) {
+    if (!currentAppKey || !currentAppSecret) {
       throw new Error("Daraz API Credentials Notice: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET. Reconnect store via My Stores.");
     }
 
@@ -250,13 +254,13 @@ export class DarazApiClient {
       const timestamp = Date.now().toString();
 
       const params: Record<string, string> = {
-        refresh_token: this.refreshToken,
-        app_key: this.appKey,
+        refresh_token: currentRefreshToken,
+        app_key: currentAppKey,
         timestamp,
         sign_method: "sha256",
       };
 
-      const signature = generateDarazSignature(apiPath, params, this.appSecret);
+      const signature = generateDarazSignature(apiPath, params, currentAppSecret);
       params.sign = signature;
 
       const queryString = new URLSearchParams(params).toString();
@@ -312,7 +316,10 @@ export class DarazApiClient {
    * Sends authenticated API requests with timeout, retries, and rate limit handling.
    */
   private async request<T>(apiPath: string, customParams: Record<string, any> = {}, method: "GET" | "POST" = "GET"): Promise<T> {
-    if (!this.appKey || !this.appSecret) {
+    const currentAppKey = this.appKey;
+    const currentAppSecret = this.appSecret;
+
+    if (!currentAppKey || !currentAppSecret) {
       throw new Error("Daraz API Credentials Notice: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET. Please configure store API credentials or environment variables.");
     }
     const validToken = await this.ensureValidAccessToken();
@@ -323,7 +330,7 @@ export class DarazApiClient {
       const timestamp = Date.now().toString();
 
       const requestParams: Record<string, string> = {
-        app_key: this.appKey,
+        app_key: currentAppKey,
         timestamp,
         sign_method: "sha256",
         ...customParams,
@@ -333,7 +340,7 @@ export class DarazApiClient {
         requestParams.access_token = validToken;
       }
 
-      const signature = generateDarazSignature(apiPath, requestParams, this.appSecret);
+      const signature = generateDarazSignature(apiPath, requestParams, currentAppSecret);
       requestParams.sign = signature;
 
       const queryString = new URLSearchParams(requestParams).toString();
