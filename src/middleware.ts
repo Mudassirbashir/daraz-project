@@ -5,6 +5,8 @@ import { AppRole } from "@/types/database.types";
 
 const PUBLIC_API_ROUTES = [
   "/api/auth/login",
+  "/api/auth/signup",
+  "/api/auth/seed-users",
   "/api/auth/daraz/login",
   "/api/auth/daraz/callback",
   "/api/auth/logout",
