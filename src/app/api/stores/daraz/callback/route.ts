@@ -34,36 +34,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 2. Validate CSRF State Token & Read Session Cookie
-  const savedState = req.cookies.get("daraz_oauth_state")?.value;
-  if (savedState && stateParam && savedState !== stateParam) {
-    console.warn("[Daraz OAuth Callback] CSRF state mismatch detected.");
-    return NextResponse.redirect(
-      `${baseUrl}/stores?error=invalid_state&message=${encodeURIComponent(
-        "OAuth security state validation failed. Possible CSRF or expired session."
-      )}`
-    );
-  }
-
-  // Extract session information if present
-  let sessionAppKey: string | null = null;
-  let sessionAppSecret: string | null = null;
-  let intentStoreId: string | null = null;
-
-  const sessionCookie = req.cookies.get("daraz_onboarding_session")?.value;
-  if (sessionCookie) {
-    try {
-      const rawJson = Buffer.from(sessionCookie, "base64").toString("utf8");
-      const parsed = JSON.parse(rawJson);
-      if (parsed.appKey) sessionAppKey = parsed.appKey;
-      if (parsed.encryptedAppSecret) sessionAppSecret = decryptSecret(parsed.encryptedAppSecret) || parsed.encryptedAppSecret;
-      if (parsed.reconnectStoreId) intentStoreId = parsed.reconnectStoreId;
-    } catch (_) {
-      // Graceful fallback
-    }
-  }
-
-  // 3. Validate Authorization Code presence
+  // 2. Validate Authorization Code presence
   if (!code || !code.trim()) {
     return NextResponse.redirect(
       `${baseUrl}/stores?error=missing_code&message=${encodeURIComponent(
@@ -72,11 +43,105 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  if (!intentStoreId && stateParam && stateParam.startsWith("store_")) {
-    const parts = stateParam.split("_");
-    if (parts.length >= 3) {
-      intentStoreId = parts[1];
+  if (!stateParam || !stateParam.trim()) {
+    return NextResponse.redirect(
+      `${baseUrl}/stores?error=missing_state&message=${encodeURIComponent(
+        "Missing OAuth security state parameter in callback query."
+      )}`
+    );
+  }
+
+  // 3. Database State Validation & Consumption
+  let stateRecord: any = null;
+  try {
+    const { data: dbState } = await supabase
+      .from("daraz_oauth_states")
+      .select("*")
+      .eq("state", stateParam.trim())
+      .maybeSingle();
+
+    stateRecord = dbState;
+  } catch (e: any) {
+    console.warn("[OAuth Callback] State lookup notice:", e.message);
+  }
+
+  // Fallback to cookie check if table record was not found
+  const savedStateCookie = req.cookies.get("daraz_oauth_state")?.value;
+  if (!stateRecord && savedStateCookie && savedStateCookie !== stateParam) {
+    console.warn("[Daraz OAuth Callback] CSRF state cookie mismatch detected.");
+    return NextResponse.redirect(
+      `${baseUrl}/stores?error=invalid_state&message=${encodeURIComponent(
+        "OAuth security state validation failed. Possible CSRF or expired session."
+      )}`
+    );
+  }
+
+  if (stateRecord) {
+    const now = Date.now();
+    const expiresAt = new Date(stateRecord.expires_at).getTime();
+
+    if (stateRecord.used_at) {
+      console.warn(`[Daraz OAuth Callback] State token '${stateParam}' has already been consumed.`);
+      return NextResponse.redirect(
+        `${baseUrl}/stores?error=state_reused&message=${encodeURIComponent(
+          "OAuth state token was already used. Please initiate authorization again."
+        )}`
+      );
     }
+
+    if (expiresAt < now) {
+      console.warn(`[Daraz OAuth Callback] State token '${stateParam}' has expired.`);
+      return NextResponse.redirect(
+        `${baseUrl}/stores?error=state_expired&message=${encodeURIComponent(
+          "OAuth authorization session expired. Please start again."
+        )}`
+      );
+    }
+
+    // Mark state as consumed atomically
+    try {
+      await supabase
+        .from("daraz_oauth_states")
+        .update({ used_at: new Date().toISOString() })
+        .eq("id", stateRecord.id);
+    } catch (_) {}
+  }
+
+  // 4. Resolve Daraz Application Credentials
+  let sessionAppKey: string | null = null;
+  let sessionAppSecret: string | null = null;
+  let intentStoreId: string | null = stateRecord?.reconnect_store_id || null;
+  let storeUsername: string | null = stateRecord?.store_username || null;
+  let darazAppId: string | null = stateRecord?.daraz_app_id || null;
+
+  // Query daraz_apps if app ID is present
+  if (darazAppId) {
+    try {
+      const { data: appData } = await supabase
+        .from("daraz_apps")
+        .select("id, app_key, encrypted_app_secret")
+        .eq("id", darazAppId)
+        .maybeSingle();
+
+      if (appData) {
+        sessionAppKey = appData.app_key;
+        sessionAppSecret = decryptSecret(appData.encrypted_app_secret) || appData.encrypted_app_secret;
+      }
+    } catch (_) {}
+  }
+
+  // Fallback to onboarding session cookie if needed
+  const sessionCookie = req.cookies.get("daraz_onboarding_session")?.value;
+  if (sessionCookie && (!sessionAppKey || !sessionAppSecret)) {
+    try {
+      const rawJson = Buffer.from(sessionCookie, "base64").toString("utf8");
+      const parsed = JSON.parse(rawJson);
+      if (!sessionAppKey && parsed.appKey) sessionAppKey = parsed.appKey;
+      if (!sessionAppSecret && parsed.encryptedAppSecret) sessionAppSecret = decryptSecret(parsed.encryptedAppSecret) || parsed.encryptedAppSecret;
+      if (!intentStoreId && parsed.reconnectStoreId) intentStoreId = parsed.reconnectStoreId;
+      if (!storeUsername && parsed.storeUsername) storeUsername = parsed.storeUsername;
+      if (!darazAppId && parsed.darazAppId) darazAppId = parsed.darazAppId;
+    } catch (_) {}
   }
 
   const appKey = (sessionAppKey || process.env.DARAZ_APP_KEY || "").trim();
@@ -92,12 +157,11 @@ export async function GET(req: NextRequest) {
       );
     }
 
-    // Determine authenticated app user ID if logged in
     const serverSupabase = createClient();
     const { data: { user } } = await serverSupabase.auth.getUser();
-    const currentUserId = user?.id || null;
+    const currentUserId = user?.id || stateRecord?.user_id || null;
 
-    // 4. Exchange Code for Access Token via GET /auth/token/create
+    // 5. Code Token Exchange via /auth/token/create
     const apiPath = "/auth/token/create";
     const timestamp = Date.now().toString();
 
@@ -114,7 +178,7 @@ export async function GET(req: NextRequest) {
     const queryString = new URLSearchParams(params).toString();
     const tokenUrl = `${apiBaseUrl}${apiPath}?${queryString}`;
 
-    console.log(`[Daraz OAuth Callback] Initiating token exchange for app_key '${appKey}' code '${code.slice(0, 8)}...'`);
+    console.log(`[Daraz OAuth Callback] Exchanging code for app_key '${appKey}'...`);
 
     const tokenRes = await fetch(tokenUrl, {
       method: "GET",
@@ -127,11 +191,9 @@ export async function GET(req: NextRequest) {
     try {
       tokenData = JSON.parse(tokenResText);
     } catch (parseErr) {
-      console.error(`[Daraz OAuth Callback] Non-JSON response from token endpoint (HTTP ${tokenRes.status}):`, tokenResText);
       throw new Error(`Daraz Token API HTTP ${tokenRes.status}: ${tokenResText.slice(0, 150)}`);
     }
 
-    // Handle Daraz API Errors or Consumed Code
     if (tokenData.code && tokenData.code !== "0") {
       const errCode = String(tokenData.code);
       const errMsg = tokenData.message || tokenData.detail || tokenData.msg || tokenData.sub_message || `Error ${errCode}`;
@@ -142,8 +204,6 @@ export async function GET(req: NextRequest) {
         errMsg.toLowerCase().includes("invalid authorization code") ||
         errMsg.toLowerCase().includes("code expired")
       ) {
-        console.warn(`[Daraz OAuth Callback] Authorization code was already consumed or expired.`);
-
         let checkQuery = supabase
           .from("daraz_stores")
           .select("id, store_name")
@@ -182,14 +242,14 @@ export async function GET(req: NextRequest) {
     } = tokenData;
 
     if (!access_token) {
-      throw new Error("Daraz API responded with HTTP 200 but access_token is missing in payload.");
+      throw new Error("Daraz API responded with HTTP 200 but access_token is missing.");
     }
 
     const expiresInSeconds = typeof expires_in === "number" ? expires_in : parseInt(expires_in || "2592000", 10);
     const tokenExpiresAt = new Date(Date.now() + expiresInSeconds * 1000).toISOString();
     const storeRegion = (country || process.env.NEXT_PUBLIC_DARAZ_REGION || "PK").toUpperCase();
 
-    // 5. Fetch Live Seller Profile First to get verified Seller ID & Official Store Name
+    // 6. Fetch Live Seller Profile to obtain verified Seller ID & Official Store Name
     let verifiedSellerId = String(seller_id || account || "").trim();
     let verifiedStoreName = account || "Daraz Store";
 
@@ -212,12 +272,11 @@ export async function GET(req: NextRequest) {
       console.warn("[Daraz OAuth Callback] Live profile verification notice:", profileErr.message);
     }
 
-    // REQUIREMENT: Never invent fallback seller IDs if profile cannot be verified
     if (!verifiedSellerId) {
       throw new Error("Unable to verify official Daraz seller account identity from Seller Center. Authentication aborted.");
     }
 
-    // If intentStoreId was provided for reconnect, verify that seller ID matches or store was inactive
+    // Check seller mismatch if intentStoreId was set for reconnection
     if (intentStoreId) {
       const { data: intentStore } = await supabase
         .from("daraz_stores")
@@ -229,16 +288,15 @@ export async function GET(req: NextRequest) {
         console.warn(`[Daraz OAuth Callback] Reconnect seller mismatch: Expected '${intentStore.seller_id}', got '${verifiedSellerId}'`);
         return NextResponse.redirect(
           `${baseUrl}/stores?error=seller_mismatch&message=${encodeURIComponent(
-            `Authenticated account (${verifiedStoreName}) does not match existing store account (${intentStore.store_name}). Connection aborted.`
+            `The authenticated Daraz account (${verifiedStoreName}) does not match this store account (${intentStore.store_name}). Connection aborted.`
           )}`
         );
       }
     }
 
-    // Encrypt App Secret for secure DB storage at rest
     const encryptedSecretForDb = encryptSecret(appSecret);
 
-    // 6. Compute Deterministic Slot Assignment (1..3)
+    // 7. Calculate Slot Assignment (1..3)
     let activeStoresList: any[] = [];
     try {
       const { data } = await supabase
@@ -247,9 +305,7 @@ export async function GET(req: NextRequest) {
         .eq("is_active", true);
 
       activeStoresList = data || [];
-    } catch (e) {
-      // Fallback
-    }
+    } catch (_) {}
 
     const activeSlots = activeStoresList
       .map((s: any) => s.slot_number)
@@ -262,11 +318,8 @@ export async function GET(req: NextRequest) {
       else if (slot > nextSlot) break;
     }
 
-    if (nextSlot > 3) {
-      nextSlot = 3;
-    }
+    if (nextSlot > 3) nextSlot = 3;
 
-    // Deterministic Store Code
     const formattedSlot = String(nextSlot).padStart(2, "0");
     let cleanSellerCode = verifiedSellerId;
     if (cleanSellerCode.includes("@")) {
@@ -274,13 +327,11 @@ export async function GET(req: NextRequest) {
     } else {
       cleanSellerCode = cleanSellerCode.replace(/\.(com|pk|net|org)$/i, "").replace(/[^a-zA-Z0-9_-]/g, "");
     }
-    if (!cleanSellerCode) {
-      cleanSellerCode = formattedSlot;
-    }
+    if (!cleanSellerCode) cleanSellerCode = formattedSlot;
 
     const incomingStoreCode = `DARAZ-${storeRegion}-${cleanSellerCode}`;
 
-    // 7. Canonical Store Matching Algorithm: Lookup by intentStoreId or seller_id
+    // 8. Canonical Store Matching: Lookup by intentStoreId or seller_id
     let targetStore: any = null;
 
     if (intentStoreId) {
@@ -303,10 +354,9 @@ export async function GET(req: NextRequest) {
       if (storeBySellerList && storeBySellerList.length > 0) {
         targetStore = storeBySellerList[0];
 
-        // Relink duplicate stores if present
+        // Relink duplicate records if present
         if (storeBySellerList.length > 1) {
           const duplicateIds = storeBySellerList.slice(1).map((s) => s.id);
-          console.log(`[Daraz OAuth Callback] Relinking data from ${duplicateIds.length} duplicate store(s) to canonical store ${targetStore.id}`);
           await supabase.from("listings").update({ store_id: targetStore.id }).in("store_id", duplicateIds);
           await supabase.from("orders").update({ store_id: targetStore.id }).in("store_id", duplicateIds);
           try { await supabase.from("daraz_products").update({ store_id: targetStore.id }).in("store_id", duplicateIds); } catch (_) {}
@@ -333,6 +383,9 @@ export async function GET(req: NextRequest) {
       token_expires_at: tokenExpiresAt,
       api_app_key: appKey,
       api_app_secret: encryptedSecretForDb || appSecret,
+      daraz_app_id: darazAppId || targetStore?.daraz_app_id || null,
+      store_username: storeUsername || targetStore?.store_username || null,
+      authorization_status: "authorized",
       is_active: true,
       sync_status: isCurrentlySyncing ? "syncing" : "connected",
       last_sync_error: null,
@@ -344,7 +397,6 @@ export async function GET(req: NextRequest) {
     }
 
     if (targetStore) {
-      // Reconnect existing seller/store record
       const assignedSlot = (targetStore.is_active && targetStore.slot_number) ? targetStore.slot_number : nextSlot;
       baseUpdateData.slot_number = assignedSlot;
       baseUpdateData.store_name = verifiedStoreName || targetStore.store_name || `Store ${assignedSlot}`;
@@ -379,7 +431,6 @@ export async function GET(req: NextRequest) {
       }
       storeId = updatedStore.id;
     } else {
-      // New store connection -> Enforce 3 Active Store Limit
       let storeQuery = supabase
         .from("daraz_stores")
         .select("id", { count: "exact", head: true })
@@ -459,9 +510,9 @@ export async function GET(req: NextRequest) {
       storeId = insertedStore.id;
     }
 
-    // 8. Trigger Initial Background Sync
+    // 9. Trigger Initial Background Sync
     if (!isCurrentlySyncing) {
-      console.log(`[Daraz OAuth Callback] Triggering initial sync for store ${storeId}...`);
+      console.log(`[Daraz OAuth Callback] Triggering initial background sync for store ${storeId}...`);
       executeDarazSync(storeId).catch((syncErr: any) => {
         console.error(`[Daraz OAuth Callback Background Sync Error]:`, syncErr.message);
       });

@@ -12,8 +12,25 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 
   if (error || !store) throw new Error(`Store not found: ${storeId}`);
 
-  const appKey = (store.api_app_key || process.env.DARAZ_APP_KEY || '').trim();
-  const rawSecret = store.api_app_secret || process.env.DARAZ_APP_SECRET || '';
+  let appKey = (store.api_app_key || '').trim();
+  let rawSecret = store.api_app_secret || '';
+
+  if ((!appKey || !rawSecret) && store.daraz_app_id) {
+    const { data: appData } = await supabase
+      .from('daraz_apps')
+      .select('app_key, encrypted_app_secret')
+      .eq('id', store.daraz_app_id)
+      .maybeSingle();
+
+    if (appData) {
+      if (!appKey) appKey = (appData.app_key || '').trim();
+      if (!rawSecret) rawSecret = appData.encrypted_app_secret || '';
+    }
+  }
+
+  if (!appKey) appKey = (process.env.DARAZ_APP_KEY || '').trim();
+  if (!rawSecret) rawSecret = process.env.DARAZ_APP_SECRET || '';
+
   const appSecret = (decryptSecret(rawSecret) || rawSecret).trim();
 
   const now = Date.now();

@@ -122,6 +122,43 @@ export interface Database {
         };
         Update: Partial<Database['public']['Tables']['product_developments']['Insert']>;
       };
+      daraz_apps: {
+        Row: {
+          id: string;
+          user_id: string | null;
+          app_key: string;
+          encrypted_app_secret: string;
+          redirect_uri: string | null;
+          status: string;
+          last_validated_at: string | null;
+          created_at: string;
+          updated_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_apps']['Row'], 'id' | 'created_at' | 'updated_at'> & {
+          id?: string;
+          created_at?: string;
+          updated_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_apps']['Insert']>;
+      };
+      daraz_oauth_states: {
+        Row: {
+          id: string;
+          state: string;
+          user_id: string | null;
+          daraz_app_id: string | null;
+          store_username: string | null;
+          reconnect_store_id: string | null;
+          expires_at: string;
+          used_at: string | null;
+          created_at: string;
+        };
+        Insert: Omit<Database['public']['Tables']['daraz_oauth_states']['Row'], 'id' | 'created_at'> & {
+          id?: string;
+          created_at?: string;
+        };
+        Update: Partial<Database['public']['Tables']['daraz_oauth_states']['Insert']>;
+      };
       daraz_stores: {
         Row: {
           id: string;
@@ -129,6 +166,9 @@ export interface Database {
           store_name: string;
           region: string;
           seller_id: string;
+          daraz_app_id?: string | null;
+          store_username?: string | null;
+          authorization_status?: string | null;
           api_app_key: string | null;
           api_app_secret: string | null;
           access_token: string | null;

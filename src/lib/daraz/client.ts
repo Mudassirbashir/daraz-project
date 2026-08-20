@@ -513,7 +513,7 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
 
   const { data: store, error } = await supabase
     .from('daraz_stores')
-    .select('id, access_token, refresh_token, token_expires_at, api_app_key, api_app_secret, country_code, region')
+    .select('id, access_token, refresh_token, token_expires_at, api_app_key, api_app_secret, daraz_app_id, country_code, region')
     .eq('id', storeId)
     .single();
 
@@ -521,11 +521,33 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
     throw new Error(`Store ${storeId} not found in database: ${error?.message || 'unknown'}`);
   }
 
-  const rawSecret = store.api_app_secret || process.env.DARAZ_APP_SECRET || '';
+  let resolvedAppKey = (store.api_app_key || '').trim();
+  let rawSecret = store.api_app_secret || '';
+
+  if ((!resolvedAppKey || !rawSecret) && store.daraz_app_id) {
+    const { data: appData } = await supabase
+      .from('daraz_apps')
+      .select('app_key, encrypted_app_secret')
+      .eq('id', store.daraz_app_id)
+      .maybeSingle();
+
+    if (appData) {
+      if (!resolvedAppKey) resolvedAppKey = (appData.app_key || '').trim();
+      if (!rawSecret) rawSecret = appData.encrypted_app_secret || '';
+    }
+  }
+
+  if (!resolvedAppKey) resolvedAppKey = (process.env.DARAZ_APP_KEY || '').trim();
+  if (!rawSecret) rawSecret = process.env.DARAZ_APP_SECRET || '';
+
   const decryptedSecret = decryptSecret(rawSecret) || rawSecret;
 
+  if (!resolvedAppKey || !decryptedSecret) {
+    throw new Error(`Store ${storeId} does not have valid Daraz application credentials configured.`);
+  }
+
   return new DarazClient({
-    appKey: (store.api_app_key || process.env.DARAZ_APP_KEY || '').trim(),
+    appKey: resolvedAppKey,
     appSecret: decryptedSecret.trim(),
     countryCode: (store.country_code || store.region || 'PK') as DarazCountryCode,
     accessToken: store.access_token || undefined,
