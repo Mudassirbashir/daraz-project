@@ -58,3 +58,6 @@ CREATE POLICY "Users can manage their own Daraz apps" ON public.daraz_apps
 DROP POLICY IF EXISTS "Users can access their own OAuth states" ON public.daraz_oauth_states;
 CREATE POLICY "Users can access their own OAuth states" ON public.daraz_oauth_states
   FOR ALL TO authenticated USING (auth.uid() = user_id) WITH CHECK (auth.uid() = user_id);
+
+-- 5. Force PostgREST schema cache reload
+NOTIFY pgrst, 'reload schema';

@@ -122,6 +122,7 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 export interface StoreLike {
   id?: string;
   store_name?: string | null;
+  store_username?: string | null;
   seller_id?: string | null;
   slot_number?: number | null;
   slot_index?: number | null;
@@ -138,12 +139,17 @@ export function getStoreDisplayName(
 
   if (store.store_name && store.store_name.trim()) {
     const name = store.store_name.trim();
-    if (/^Store \d+$/i.test(name)) {
-      if (store.seller_id && store.seller_id !== 'N/A' && !store.seller_id.startsWith('SELLER_')) {
-        return `Seller ${store.seller_id}`;
-      }
+    if (!/^Store \d+$/i.test(name)) {
+      return name;
     }
-    return name;
+  }
+
+  if (store.store_username && store.store_username.trim()) {
+    return store.store_username.trim();
+  }
+
+  if (store.store_name && store.store_name.trim()) {
+    return store.store_name.trim();
   }
 
   if (store.seller_id && store.seller_id !== 'N/A' && !store.seller_id.startsWith('SELLER_')) {

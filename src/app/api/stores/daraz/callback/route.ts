@@ -8,6 +8,83 @@ import { decryptSecret, encryptSecret } from "@/lib/security/encryption";
 
 export const dynamic = "force-dynamic";
 
+async function safePersistStoreRecord(
+  supabase: any,
+  mode: "update" | "insert",
+  payload: Record<string, any>,
+  targetStoreId?: string
+): Promise<any> {
+  let currentPayload = { ...payload };
+
+  for (let attempt = 0; attempt < 5; attempt++) {
+    try {
+      let res;
+      if (mode === "update") {
+        res = await supabase
+          .from("daraz_stores")
+          .update(currentPayload)
+          .eq("id", targetStoreId)
+          .select()
+          .single();
+      } else {
+        res = await supabase
+          .from("daraz_stores")
+          .insert(currentPayload)
+          .select()
+          .single();
+      }
+
+      if (res.error) {
+        const errMsg = res.error.message || "";
+        const match =
+          errMsg.match(/Could not find the '([^']+)' column/i) ||
+          errMsg.match(/column "([^"]+)" of relation "daraz_stores" does not exist/i);
+
+        if (match && match[1] && match[1] in currentPayload) {
+          const missingCol = match[1];
+          console.warn(`[Supabase Store Persist] PostgREST schema cache missing column '${missingCol}'. Omitting and retrying...`);
+          delete currentPayload[missingCol];
+          continue;
+        }
+
+        if (mode === "insert" && (errMsg.includes("duplicate key") || res.error.code === "23505")) {
+          const sellerId = currentPayload.seller_id;
+          const storeCode = currentPayload.store_code;
+          const { data: existingConflict } = await supabase
+            .from("daraz_stores")
+            .select("*")
+            .or(`seller_id.eq.${sellerId},store_code.eq.${storeCode}`)
+            .maybeSingle();
+
+          if (existingConflict) {
+            return safePersistStoreRecord(supabase, "update", currentPayload, existingConflict.id);
+          }
+        }
+
+        throw new Error(`Supabase store ${mode} error: ${errMsg}`);
+      }
+
+      return res.data;
+    } catch (err: any) {
+      const errMsg = err.message || "";
+      const match =
+        errMsg.match(/Could not find the '([^']+)' column/i) ||
+        errMsg.match(/column "([^"]+)" of relation "daraz_stores" does not exist/i);
+
+      if (match && match[1] && match[1] in currentPayload) {
+        const missingCol = match[1];
+        console.warn(`[Supabase Store Persist] Exception missing column '${missingCol}'. Omitting and retrying...`);
+        delete currentPayload[missingCol];
+        continue;
+      }
+
+      throw err;
+    }
+  }
+
+  throw new Error("Unable to persist store record after stripping un-migrated schema columns.");
+}
+
 export async function GET(req: NextRequest) {
   const requestUrl = new URL(req.url);
   const code = requestUrl.searchParams.get("code");
@@ -402,33 +479,7 @@ export async function GET(req: NextRequest) {
       baseUpdateData.store_name = verifiedStoreName || targetStore.store_name || `Store ${assignedSlot}`;
       baseUpdateData.store_code = targetStore.store_code || incomingStoreCode;
 
-      let updatedStore: any = null;
-      try {
-        const { data: updated, error: updateErr } = await supabase
-          .from("daraz_stores")
-          .update(baseUpdateData)
-          .eq("id", targetStore.id)
-          .select()
-          .single();
-
-        if (updateErr) throw updateErr;
-        updatedStore = updated;
-      } catch (updateErr: any) {
-        if (updateErr.message?.includes("slot_number")) {
-          const { slot_number, ...dataWithoutSlot } = baseUpdateData;
-          const { data: updatedFallback, error: fallbackUpdateErr } = await supabase
-            .from("daraz_stores")
-            .update(dataWithoutSlot)
-            .eq("id", targetStore.id)
-            .select()
-            .single();
-
-          if (fallbackUpdateErr) throw new Error(`Supabase store update error: ${fallbackUpdateErr.message}`);
-          updatedStore = updatedFallback;
-        } else {
-          throw new Error(`Supabase store update error: ${updateErr.message}`);
-        }
-      }
+      const updatedStore = await safePersistStoreRecord(supabase, "update", baseUpdateData, targetStore.id);
       storeId = updatedStore.id;
     } else {
       let storeQuery = supabase
@@ -458,55 +509,7 @@ export async function GET(req: NextRequest) {
         region: storeRegion,
       };
 
-      let insertedStore: any = null;
-      try {
-        const { data: inserted, error: insertErr } = await supabase
-          .from("daraz_stores")
-          .insert(insertPayload)
-          .select()
-          .single();
-
-        if (insertErr) {
-          if (insertErr.message?.includes("duplicate key") || insertErr.code === "23505") {
-            const { data: existingConflict } = await supabase
-              .from("daraz_stores")
-              .select("*")
-              .or(`seller_id.eq.${verifiedSellerId},store_code.eq.${incomingStoreCode}`)
-              .maybeSingle();
-
-            if (existingConflict) {
-              const { data: updatedConflict } = await supabase
-                .from("daraz_stores")
-                .update(insertPayload)
-                .eq("id", existingConflict.id)
-                .select()
-                .single();
-
-              insertedStore = updatedConflict || existingConflict;
-            } else {
-              throw insertErr;
-            }
-          } else {
-            throw insertErr;
-          }
-        } else {
-          insertedStore = inserted;
-        }
-      } catch (insertErr: any) {
-        if (insertErr.message?.includes("slot_number")) {
-          const { slot_number, ...payloadWithoutSlot } = insertPayload;
-          const { data: insertedFallback, error: fallbackErr } = await supabase
-            .from("daraz_stores")
-            .insert(payloadWithoutSlot)
-            .select()
-            .single();
-
-          if (fallbackErr) throw new Error(`Supabase store insert error: ${fallbackErr.message}`);
-          insertedStore = insertedFallback;
-        } else {
-          throw new Error(`Supabase store insert error: ${insertErr.message}`);
-        }
-      }
+      const insertedStore = await safePersistStoreRecord(supabase, "insert", insertPayload);
       storeId = insertedStore.id;
     }
 
