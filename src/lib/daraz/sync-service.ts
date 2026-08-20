@@ -443,9 +443,25 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                   last_synced_at: timestamp,
                 };
 
-                const { error: listingErr } = await supabase
+                let listingErr: any = null;
+                const { error: primaryListingErr } = await supabase
                   .from("listings")
                   .upsert(listingPayload, { onConflict: "store_id,seller_sku" });
+
+                if (primaryListingErr) {
+                  if (existingListing) {
+                    const { error: updateErr } = await supabase
+                      .from("listings")
+                      .update(listingPayload)
+                      .eq("id", existingListing.id);
+                    listingErr = updateErr;
+                  } else {
+                    const { error: insertErr } = await supabase
+                      .from("listings")
+                      .insert(listingPayload);
+                    listingErr = insertErr;
+                  }
+                }
 
                 if (listingErr) {
                   console.error(
@@ -738,34 +754,70 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                   .single();
 
                 if (baseErr) {
-                  console.error(
-                    `[SyncEngine] Order upsert failed order_id=${ord.order_id}: ext_err="${extErr.message}" base_err="${baseErr.message}"`
-                  );
-                  storeFailedCount++;
-                  const errMsg = baseErr.message;
-                  errors.push(`Order upsert failed for order ${ord.order_id}: ${errMsg}`);
+                  // Fallback SELECT -> UPDATE or INSERT if ON CONFLICT returns an error
+                  const { data: existingOrd } = await supabase
+                    .from("orders")
+                    .select("id")
+                    .eq("daraz_order_id", ord.order_id)
+                    .maybeSingle();
 
-                  // ── FIX C: Write to sync_retry_queue for order failure ────
-                  try {
-                    await supabase.from("sync_retry_queue").insert({
-                      store_id: store.id,
-                      operation_type: "order_sync",
-                      entity_type: "order",
-                      entity_id: ord.order_id,
-                      attempt_count: 1,
-                      error_message: errMsg,
-                      status: "failed",
-                      payload: sanitizeLogPayload(ord),
-                      created_at: timestamp,
-                    });
-                  } catch (_) {}
+                  if (existingOrd) {
+                    const { data: updatedOrd, error: updateErr } = await supabase
+                      .from("orders")
+                      .update(extendedPayload)
+                      .eq("id", existingOrd.id)
+                      .select("id")
+                      .single();
+
+                    if (!updateErr && updatedOrd) {
+                      dbOrderId = updatedOrd.id;
+                    } else {
+                      const { data: updatedBase } = await supabase
+                        .from("orders")
+                        .update(baselinePayload)
+                        .eq("id", existingOrd.id)
+                        .select("id")
+                        .single();
+                      dbOrderId = updatedBase?.id || existingOrd.id;
+                    }
+                  } else {
+                    const { data: insertedOrd, error: insertErr } = await supabase
+                      .from("orders")
+                      .insert(extendedPayload)
+                      .select("id")
+                      .single();
+
+                    if (!insertErr && insertedOrd) {
+                      dbOrderId = insertedOrd.id;
+                    } else {
+                      const { data: insertedBase, error: insertBaseErr } = await supabase
+                        .from("orders")
+                        .insert(baselinePayload)
+                        .select("id")
+                        .single();
+
+                      if (insertBaseErr) {
+                        console.error(
+                          `[SyncEngine] Order persistence failed order_id=${ord.order_id}: ${insertBaseErr.message}`
+                        );
+                        storeFailedCount++;
+                        errors.push(`Order upsert failed for order ${ord.order_id}: ${insertBaseErr.message}`);
+                      } else {
+                        dbOrderId = insertedBase?.id || null;
+                      }
+                    }
+                  }
                 } else {
                   dbOrderId = baseData?.id || null;
-                  storeOrdersSynced++;
                 }
               } else {
                 dbOrderId = extData?.id || null;
+              }
+
+              if (dbOrderId) {
                 storeOrdersSynced++;
+              } else {
+                storeFailedCount++;
               }
 
               // ── FIX A: Order Line Items Persistence ───────────────────────
