@@ -36,17 +36,34 @@ async function safePersistStoreRecord(
 
       if (res.error) {
         const errMsg = res.error.message || "";
-        const match =
+
+        // 1. Missing Column Error (PostgREST schema cache mismatch)
+        const missingMatch =
           errMsg.match(/Could not find the '([^']+)' column/i) ||
           errMsg.match(/column "([^"]+)" of relation "daraz_stores" does not exist/i);
 
-        if (match && match[1] && match[1] in currentPayload) {
-          const missingCol = match[1];
+        if (missingMatch && missingMatch[1] && missingMatch[1] in currentPayload) {
+          const missingCol = missingMatch[1];
           console.warn(`[Supabase Store Persist] PostgREST schema cache missing column '${missingCol}'. Omitting and retrying...`);
           delete currentPayload[missingCol];
           continue;
         }
 
+        // 2. Value Too Long Error (e.g., VARCHAR(100) constraint on encrypted secret)
+        if (errMsg.toLowerCase().includes("value too long for type character varying")) {
+          if (currentPayload.api_app_secret && typeof currentPayload.api_app_secret === "string" && currentPayload.api_app_secret.length > 100) {
+            console.warn(`[Supabase Store Persist] api_app_secret exceeds VARCHAR(100) column constraint. Omitting from store row and relying on daraz_apps table...`);
+            delete currentPayload.api_app_secret;
+            continue;
+          }
+          if (currentPayload.store_name && typeof currentPayload.store_name === "string" && currentPayload.store_name.length > 100) {
+            console.warn(`[Supabase Store Persist] store_name exceeds VARCHAR(100) column constraint. Truncating for legacy column...`);
+            currentPayload.store_name = currentPayload.store_name.slice(0, 95) + "...";
+            continue;
+          }
+        }
+
+        // 3. Duplicate Key Error on Insert
         if (mode === "insert" && (errMsg.includes("duplicate key") || res.error.code === "23505")) {
           const sellerId = currentPayload.seller_id;
           const storeCode = currentPayload.store_code;
@@ -67,15 +84,23 @@ async function safePersistStoreRecord(
       return res.data;
     } catch (err: any) {
       const errMsg = err.message || "";
-      const match =
+
+      const missingMatch =
         errMsg.match(/Could not find the '([^']+)' column/i) ||
         errMsg.match(/column "([^"]+)" of relation "daraz_stores" does not exist/i);
 
-      if (match && match[1] && match[1] in currentPayload) {
-        const missingCol = match[1];
+      if (missingMatch && missingMatch[1] && missingMatch[1] in currentPayload) {
+        const missingCol = missingMatch[1];
         console.warn(`[Supabase Store Persist] Exception missing column '${missingCol}'. Omitting and retrying...`);
         delete currentPayload[missingCol];
         continue;
+      }
+
+      if (errMsg.toLowerCase().includes("value too long for type character varying")) {
+        if (currentPayload.api_app_secret && typeof currentPayload.api_app_secret === "string" && currentPayload.api_app_secret.length > 100) {
+          delete currentPayload.api_app_secret;
+          continue;
+        }
       }
 
       throw err;
