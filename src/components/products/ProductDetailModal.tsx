@@ -92,6 +92,7 @@ export function ProductDetailModal({ product: initialProduct, onClose, onProduct
       images = [product.primary_image_url];
     }
   }
+  images = images.filter((img) => typeof img === "string" && img.trim() && img !== "null" && img !== "undefined" && img !== "none");
 
   const priceFormatted = (product.price_cents / 100).toLocaleString("en-PK", {
     style: "currency",

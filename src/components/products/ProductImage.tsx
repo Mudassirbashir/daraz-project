@@ -38,11 +38,14 @@ export function ProductImage({
     }
 
     if (typeof raw === "string" && raw.trim()) {
-      normalizedSrc = raw.trim();
-      if (normalizedSrc.startsWith("//")) {
-        normalizedSrc = `https:${normalizedSrc}`;
-      } else if (normalizedSrc.startsWith("http://")) {
-        normalizedSrc = normalizedSrc.replace("http://", "https://");
+      const clean = raw.trim();
+      if (clean !== "null" && clean !== "undefined" && clean !== "none") {
+        normalizedSrc = clean;
+        if (normalizedSrc.startsWith("//")) {
+          normalizedSrc = `https:${normalizedSrc}`;
+        } else if (normalizedSrc.startsWith("http://")) {
+          normalizedSrc = normalizedSrc.replace("http://", "https://");
+        }
       }
     }
   }
