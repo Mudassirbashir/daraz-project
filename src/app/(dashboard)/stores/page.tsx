@@ -1,9 +1,9 @@
 import React from "react";
-import { Store, Package, ShoppingCart, Truck, Plus, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Store, Package, ShoppingCart, Truck, AlertCircle, CheckCircle2 } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
-import { StoreCardActions } from "@/components/stores/StoreCardActions";
+import { StoreOnboardingClient } from "@/components/stores/StoreOnboardingClient";
 import { StoreAutoSyncTrigger } from "@/components/stores/StoreAutoSyncTrigger";
 import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
 
@@ -26,8 +26,6 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   const redirectStoreId = searchParams?.store_id;
   const errorMessage = searchParams?.message;
   const errorCode = searchParams?.error;
-
-  // Note: Legacy seed data purge was removed to prevent accidental deletion of production stores
 
   // Fetch logged in user stores
   let userStoreIds: string[] = [];
@@ -183,25 +181,13 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
         </div>
 
         <div className="flex flex-wrap items-center gap-2 shrink-0">
-          {isMaxStoresReached ? (
-            <button
-              disabled
-              title="Maximum 3 Daraz stores allowed. Remove an existing store before connecting another."
-              className="inline-flex items-center space-x-1.5 rounded-xl bg-slate-300 dark:bg-slate-800 px-4 py-2 text-xs font-bold text-slate-500 cursor-not-allowed opacity-75"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Max 3 Stores Reached</span>
-            </button>
-          ) : (
-            <a
-              href="/api/auth/daraz/login"
-              title="Connect a new official Daraz seller account"
-              className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white shadow-md hover:bg-orange-600 transition-all apple-press"
-            >
-              <Plus className="h-4 w-4" />
-              <span>Connect New Store</span>
-            </a>
-          )}
+          <StoreOnboardingClient
+            isMaxStoresReached={isMaxStoresReached}
+            storeId=""
+            storeName=""
+            isConnected={false}
+            mode="button"
+          />
 
           <SyncNowButton />
         </div>
@@ -356,10 +342,12 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
 
               {/* Action Buttons */}
               <div className="pt-2 border-t border-slate-100 dark:border-slate-800">
-                <StoreCardActions
+                <StoreOnboardingClient
+                  isMaxStoresReached={isMaxStoresReached}
                   storeId={store.id}
-                  storeName={store.store_name}
+                  storeName={storeName}
                   isConnected={store.isConnected}
+                  mode="card_actions"
                 />
               </div>
 

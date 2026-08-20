@@ -83,8 +83,13 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 
     return { accessToken: res.access_token, client };
   } catch (err: any) {
-    await supabase.from('daraz_stores').update({ token_refresh_locked_until: null, last_sync_error: err.message }).eq('id', storeId);
-    throw err;
+    const userFriendlyError = "Daraz store connection has expired. Please reconnect your store via My Stores.";
+    await supabase.from('daraz_stores').update({
+      token_refresh_locked_until: null,
+      sync_status: 'error',
+      last_sync_error: userFriendlyError,
+    }).eq('id', storeId);
+    throw new Error(userFriendlyError);
   }
 }
 

@@ -1,16 +1,22 @@
 "use client";
 
 import React, { useState } from "react";
-import { ExternalLink, RefreshCw, PowerOff, AlertTriangle } from "lucide-react";
+import { ExternalLink, RefreshCw, PowerOff, AlertTriangle, KeyRound } from "lucide-react";
 import { useRouter } from "next/navigation";
 
 interface StoreCardActionsProps {
   storeId: string;
   storeName: string;
   isConnected: boolean;
+  onReconnect?: (storeId: string, storeName: string) => void;
 }
 
-export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardActionsProps) {
+export function StoreCardActions({
+  storeId,
+  storeName,
+  isConnected,
+  onReconnect,
+}: StoreCardActionsProps) {
   const [showConfirmModal, setShowConfirmModal] = useState(false);
   const [disconnecting, setDisconnecting] = useState(false);
   const [syncingStore, setSyncingStore] = useState(false);
@@ -20,10 +26,8 @@ export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardA
   const handleManualSync = async () => {
     setSyncingStore(true);
     try {
-      const res = await fetch("/api/stores", {
+      const res = await fetch(`/api/stores/${storeId}/sync`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ store_id: storeId }),
       });
       const data = await res.json();
       if (data.success) {
@@ -71,13 +75,13 @@ export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardA
 
   if (!isConnected) {
     return (
-      <a
-        href="/api/auth/daraz/login"
+      <button
+        onClick={() => onReconnect ? onReconnect(storeId, storeName) : (window.location.href = `/api/stores/daraz/auth?store_id=${storeId}`)}
         title="Connect this Daraz store account"
-        className="w-full inline-flex items-center justify-center space-x-2 rounded-xl bg-orange-500 px-4 py-2.5 font-bold text-white shadow-md hover:bg-orange-600 transition-all apple-press"
+        className="w-full inline-flex items-center justify-center space-x-2 rounded-xl bg-orange-500 px-4 py-2.5 font-bold text-white shadow-md hover:bg-orange-600 transition-all apple-press text-xs"
       >
         <span>Connect Store</span>
-      </a>
+      </button>
     );
   }
 
@@ -87,28 +91,37 @@ export function StoreCardActions({ storeId, storeName, isConnected }: StoreCardA
         <a
           href={`/listings?store_id=${storeId}`}
           title="Open store products"
-          className="flex-1 inline-flex items-center justify-center space-x-1.5 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-3 py-2 font-bold text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-700 transition-all apple-press shadow-2xs text-xs"
+          className="flex-1 inline-flex items-center justify-center space-x-1 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-800 px-2.5 py-2 font-bold text-slate-800 dark:text-white hover:bg-slate-50 dark:hover:bg-slate-700 transition-all apple-press shadow-2xs text-[11px]"
         >
-          <ExternalLink className="h-3.5 w-3.5 text-slate-500" />
-          <span>Open Store</span>
+          <ExternalLink className="h-3 w-3 text-slate-500" />
+          <span>Open</span>
         </a>
+
+        <button
+          onClick={() => onReconnect ? onReconnect(storeId, storeName) : (window.location.href = `/api/stores/daraz/auth?store_id=${storeId}`)}
+          title="Reconnect this store to update authorization tokens"
+          className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800 text-slate-700 dark:text-slate-300 hover:bg-slate-100 font-bold transition-all text-[11px]"
+        >
+          <KeyRound className="h-3 w-3 text-slate-500" />
+          <span>Reconnect</span>
+        </button>
 
         <button
           onClick={handleManualSync}
           disabled={syncingStore}
           title="Sync products and orders for this store"
-          className="inline-flex items-center justify-center space-x-1 px-3 py-2 rounded-xl border border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-100 font-bold transition-all text-xs disabled:opacity-50"
+          className="inline-flex items-center justify-center space-x-1 px-2.5 py-2 rounded-xl border border-orange-200 dark:border-orange-900/50 bg-orange-50 dark:bg-orange-500/10 text-orange-700 dark:text-orange-300 hover:bg-orange-100 font-bold transition-all text-[11px] disabled:opacity-50"
         >
-          <RefreshCw className={`h-3.5 w-3.5 ${syncingStore ? "animate-spin text-orange-600" : ""}`} />
+          <RefreshCw className={`h-3 w-3 ${syncingStore ? "animate-spin text-orange-600" : ""}`} />
           <span>{syncingStore ? "Syncing..." : "Sync"}</span>
         </button>
 
         <button
           onClick={() => setShowConfirmModal(true)}
           title="Disconnect this store from Daraz Hub"
-          className="inline-flex items-center justify-center p-2 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 transition-all text-xs"
+          className="inline-flex items-center justify-center p-2 rounded-xl border border-red-200 dark:border-red-900/50 bg-red-50 dark:bg-red-500/10 text-red-600 dark:text-red-400 hover:bg-red-100 transition-all text-[11px]"
         >
-          <PowerOff className="h-3.5 w-3.5" />
+          <PowerOff className="h-3 w-3" />
         </button>
       </div>
 
