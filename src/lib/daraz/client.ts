@@ -103,8 +103,17 @@ export class DarazClient {
   private tokenExpiresAt?: string | number | Date;
 
   constructor(config: DarazClientConfig = {}) {
-    this.appKey = (config.appKey || process.env.DARAZ_APP_KEY || '').trim();
-    this.appSecret = (config.appSecret || process.env.DARAZ_APP_SECRET || '').trim();
+    const key = config.appKey || process.env.DARAZ_APP_KEY;
+    const secret = config.appSecret || process.env.DARAZ_APP_SECRET;
+    if (!key || !secret) {
+      throw new Error(
+        "DARAZ_APP_KEY and DARAZ_APP_SECRET must be set in environment " +
+        "variables. This ERP cannot make Daraz API calls without its " +
+        "own registered app credentials."
+      );
+    }
+    this.appKey = key.trim();
+    this.appSecret = secret.trim();
     this.accessToken = config.accessToken;
     this.refreshToken = config.refreshToken;
     this.tokenExpiresAt = config.tokenExpiresAt;

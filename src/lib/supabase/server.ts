@@ -5,8 +5,9 @@ import { Database } from "@/types/database.types";
 function getValidSupabaseUrl(): string {
   const envUrl = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
   if (!envUrl || !envUrl.trim()) {
-    console.warn("[Supabase Server Client Warning]: NEXT_PUBLIC_SUPABASE_URL environment variable is missing. Using fallback URL configuration.");
-    return "https://placeholder-supabase-url.supabase.co";
+    throw new Error(
+      "Missing Environment Variable: 'NEXT_PUBLIC_SUPABASE_URL' is missing. Please configure NEXT_PUBLIC_SUPABASE_URL in your environment variables."
+    );
   }
   return envUrl.trim();
 }
@@ -19,8 +20,9 @@ function getValidAnonKey(): string {
     process.env.NEXT_PUBLIC_SUPABASE_KEY;
 
   if (!envKey || !envKey.trim()) {
-    console.warn("[Supabase Server Client Warning]: NEXT_PUBLIC_SUPABASE_ANON_KEY environment variable is missing. Using fallback key configuration.");
-    return "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImZhbGxiYWNrIiwicm9sZSI6ImFub24ifQ.placeholder_key";
+    throw new Error(
+      "Missing Environment Variable: 'NEXT_PUBLIC_SUPABASE_ANON_KEY' is missing. Please configure Supabase keys in your environment variables."
+    );
   }
   return envKey.trim();
 }

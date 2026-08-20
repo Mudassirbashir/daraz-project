@@ -18,15 +18,18 @@ export async function GET(req: NextRequest) {
   const storeUsername = requestUrl.searchParams.get("store_username")?.trim();
   const reconnectStoreId = requestUrl.searchParams.get("store_id") || requestUrl.searchParams.get("reconnect_store_id");
 
-  const appKey = customAppKey || (process.env.DARAZ_APP_KEY || "").trim();
-  const appSecret = customAppSecret || (process.env.DARAZ_APP_SECRET || "").trim();
+  const appKey = (customAppKey || process.env.DARAZ_APP_KEY || "").trim();
+  const appSecret = (customAppSecret || process.env.DARAZ_APP_SECRET || "").trim();
 
   if (!appKey) {
-    console.error("[Daraz Auth]: Missing DARAZ_APP_KEY in environment variables or request parameters.");
-    const loginErrorUrl = new URL("/stores", baseUrl);
-    loginErrorUrl.searchParams.set("error", "missing_credentials");
-    loginErrorUrl.searchParams.set("message", "Daraz App Key is required to connect your store.");
-    return NextResponse.redirect(loginErrorUrl);
+    console.error("[Daraz Auth Error]: Missing DARAZ_APP_KEY in environment variables.");
+    return NextResponse.json(
+      {
+        success: false,
+        error: "Daraz integration is not configured — set DARAZ_APP_KEY in environment variables.",
+      },
+      { status: 500 }
+    );
   }
 
   // Generate cryptographically secure state token to prevent CSRF

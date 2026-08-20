@@ -36,6 +36,11 @@ export function validateDarazWebhookSignature(
   appSecret: string = process.env.DARAZ_APP_SECRET || "",
   appKey: string = process.env.DARAZ_APP_KEY || ""
 ): boolean {
+  if (!appSecret || !appKey) {
+    console.error("[Daraz Webhook Validation Error]: DARAZ_APP_KEY or DARAZ_APP_SECRET environment variables are missing.");
+    return false;
+  }
+
   const authHeader = headers.get("authorization") || headers.get("Authorization") || "";
   const signHeader = headers.get("x-daraz-signature") || headers.get("x-signature") || searchParams.get("sign") || "";
 
