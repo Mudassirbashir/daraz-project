@@ -319,7 +319,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
 
       const { error: upsertErr } = await supabase
         .from("orders")
-        .upsert(orderPayload, { onConflict: "daraz_order_id" });
+        .upsert(orderPayload, { onConflict: "store_id,daraz_order_id" });
 
       if (upsertErr) {
         console.error(`[DARAZ WEBHOOK] Order upsert error for Order ${darazOrderId}:`, upsertErr.message);
@@ -346,6 +346,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
         const { data: dbOrder } = await supabase
           .from("orders")
           .select("id")
+          .eq("store_id", targetStoreId)
           .eq("daraz_order_id", darazOrderId)
           .maybeSingle();
 
@@ -388,6 +389,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
                     const cleanOrderItemId = String(item.order_item_id || item.item_id || `${darazOrderId}_${Math.random()}`);
 
                     return {
+                      store_id: targetStoreId,
                       order_id: dbOrder.id,
                       daraz_order_id: darazOrderId,
                       order_item_id: cleanOrderItemId,
@@ -411,7 +413,7 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
 
                 const { error: itemUpsertErr } = await supabase
                   .from("order_items")
-                  .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+                  .upsert(itemPayloads, { onConflict: "store_id,order_item_id" });
 
                 if (itemUpsertErr) {
                   console.error(`[DARAZ WEBHOOK] Order items upsert error for Order ${darazOrderId}: ${itemUpsertErr.message}`);

@@ -300,8 +300,14 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
           // Process catalog parent products and nested SKUs
           for (const item of pageItems.items) {
             try {
+              if (!item || !item.item_id || !String(item.item_id).trim()) {
+                storeSkippedItems++;
+                console.warn(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=catalog_sync warning=Skipping product without stable daraz_item_id`);
+                continue;
+              }
+
               syncedItemIds.add(item.item_id);
-              const itemTotalStock = item.skus.reduce((sum, s) => sum + s.quantity, 0);
+              const itemTotalStock = (item.skus || []).reduce((sum, s) => sum + (s.quantity || 0), 0);
 
               // ── Upsert parent product record ──────────────────────────
               let parentDbProductId: string | null = null;
@@ -317,10 +323,10 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       brand: item.brand || "Generic",
                       status: item.status || "active",
                       description: item.description || null,
-                      images: item.images,
-                      attributes: item.attributes,
+                      images: Array.isArray(item.images) ? item.images : [],
+                      attributes: item.attributes || {},
                       product_url: item.product_url || null,
-                      skus_count: item.skus.length,
+                      skus_count: Array.isArray(item.skus) ? item.skus.length : 0,
                       total_stock: itemTotalStock,
                       is_synced: true,
                       last_synced_at: timestamp,
@@ -329,21 +335,28 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                     { onConflict: "store_id,daraz_item_id" }
                   )
                   .select("id")
-                  .single();
+                  .maybeSingle();
 
                 if (pErr) {
-                  if (!pErr.message.includes("does not exist")) {
-                    console.warn(`[SyncEngine] Product upsert error item_id=${item.item_id}: ${pErr.message}`);
-                  }
+                  console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=parent_product_upsert item_id=${item.item_id} error=${pErr.message}`);
+                  errors.push(`Parent product upsert failed for item ${item.item_id}: ${pErr.message}`);
                 } else {
                   parentDbProductId = parentProduct?.id || null;
                 }
-              } catch (_) {}
+              } catch (parentCatchErr: any) {
+                console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=parent_product_upsert item_id=${item.item_id} exception=${parentCatchErr.message}`);
+              }
 
               storeItemsSynced++;
 
               // ── Upsert each SKU variation ─────────────────────────────
-              for (const sku of item.skus) {
+              for (const sku of (item.skus || [])) {
+                if (!sku || !sku.seller_sku || !String(sku.seller_sku).trim()) {
+                  storeSkippedSkus++;
+                  console.warn(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} item_id=${item.item_id} operation=catalog_sync warning=Skipping SKU without stable seller_sku`);
+                  continue;
+                }
+
                 totalFetchedSkus++;
                 syncedSellerSkus.add(sku.seller_sku);
 
@@ -362,7 +375,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
                 // Upsert daraz_product_skus
                 try {
-                  await supabase.from("daraz_product_skus").upsert(
+                  const { error: skuErr } = await supabase.from("daraz_product_skus").upsert(
                     {
                       store_id: store.id,
                       product_id: parentDbProductId,
@@ -375,7 +388,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       quantity: sku.quantity,
                       reserved_quantity: sku.reserved_quantity || 0,
                       status: sku.status || item.status,
-                      images: Array.isArray(sku.images) && sku.images.length > 0 ? sku.images : item.images || [],
+                      images: Array.isArray(sku.images) && sku.images.length > 0 ? sku.images : (Array.isArray(item.images) ? item.images : []),
                       package_content: sku.package_content || null,
                       is_synced: true,
                       last_synced_at: timestamp,
@@ -383,9 +396,15 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                     },
                     { onConflict: "store_id,seller_sku" }
                   );
-                } catch (_) {}
 
-                // ── Inventory upsert (store-scoped primary, base fallback) ──
+                  if (skuErr) {
+                    console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=daraz_sku_upsert seller_sku=${sku.seller_sku} error=${skuErr.message}`);
+                  }
+                } catch (skuCatchErr: any) {
+                  console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=daraz_sku_upsert seller_sku=${sku.seller_sku} exception=${skuCatchErr.message}`);
+                }
+
+                // ── Inventory upsert (store-scoped) ──
                 let invItemId: string | null = null;
                 try {
                   const { data: invItem, error: invErr } = await supabase
@@ -405,28 +424,17 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       { onConflict: "store_id,sku" }
                     )
                     .select("id")
-                    .single();
+                    .maybeSingle();
 
                   if (invErr) {
-                    const { data: baseInv } = await supabase
-                      .from("inventory")
-                      .upsert(
-                        {
-                          sku: sku.seller_sku,
-                          title: item.title,
-                          category: item.category || "General",
-                          quantity_on_hand: sku.quantity,
-                          updated_at: timestamp,
-                        },
-                        { onConflict: "sku" }
-                      )
-                      .select("id")
-                      .single();
-                    invItemId = baseInv?.id || null;
+                    console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=inventory_upsert sku=${sku.seller_sku} error=${invErr.message}`);
+                    errors.push(`Inventory upsert failed for SKU ${sku.seller_sku}: ${invErr.message}`);
                   } else {
                     invItemId = invItem?.id || null;
                   }
-                } catch (_) {}
+                } catch (invCatchErr: any) {
+                  console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=inventory_upsert sku=${sku.seller_sku} exception=${invCatchErr.message}`);
+                }
 
                 // ── Listings upsert (authoritative projection) ─────────────
                 const listingPayload = {
@@ -439,8 +447,10 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                   price_cents: sku.price_cents,
                   special_price_cents: sku.special_price_cents ?? null,
                   stock_quantity: sku.quantity,
+                  reserved_quantity: sku.reserved_quantity || 0,
                   is_synced: true,
                   last_synced_at: timestamp,
+                  updated_at: timestamp,
                 };
 
                 let listingErr: any = null;
@@ -465,12 +475,12 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
                 if (listingErr) {
                   console.error(
-                    `[SyncEngine] Listing upsert error SKU=${sku.seller_sku} store=${store.store_code}: ${listingErr.message}`
+                    `[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=listing_upsert sku=${sku.seller_sku} error=${listingErr.message}`
                   );
                   storeFailedCount++;
                   errors.push(`Listing persistence failed for SKU ${sku.seller_sku}: ${listingErr.message}`);
 
-                  // ── FIX C: Write to sync_retry_queue for listing failure ──
+                  // ── Write to sync_retry_queue for listing failure ──
                   try {
                     await supabase.from("sync_retry_queue").insert({
                       store_id: store.id,
@@ -491,10 +501,10 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
             } catch (itemErr: any) {
               storeFailedCount++;
               console.error(
-                `[SyncEngine] Item processing error item_id=${item.item_id} store=${store.store_code}: ${itemErr.message}`
+                `[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=item_processing item_id=${item.item_id} error=${itemErr.message}`
               );
 
-              // ── FIX C: Write to sync_retry_queue for item failure ──────
+              // ── Write to sync_retry_queue for item failure ──────
               try {
                 await supabase.from("sync_retry_queue").insert({
                   store_id: store.id,
@@ -742,22 +752,23 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
               let dbOrderId: string | null = null;
               const { data: extData, error: extErr } = await supabase
                 .from("orders")
-                .upsert(extendedPayload, { onConflict: "daraz_order_id" })
+                .upsert(extendedPayload, { onConflict: "store_id,daraz_order_id" })
                 .select("id")
-                .single();
+                .maybeSingle();
 
               if (extErr) {
                 const { data: baseData, error: baseErr } = await supabase
                   .from("orders")
-                  .upsert(baselinePayload, { onConflict: "daraz_order_id" })
+                  .upsert(baselinePayload, { onConflict: "store_id,daraz_order_id" })
                   .select("id")
-                  .single();
+                  .maybeSingle();
 
                 if (baseErr) {
                   // Fallback SELECT -> UPDATE or INSERT if ON CONFLICT returns an error
                   const { data: existingOrd } = await supabase
                     .from("orders")
                     .select("id")
+                    .eq("store_id", store.id)
                     .eq("daraz_order_id", ord.order_id)
                     .maybeSingle();
 
@@ -767,7 +778,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       .update(extendedPayload)
                       .eq("id", existingOrd.id)
                       .select("id")
-                      .single();
+                      .maybeSingle();
 
                     if (!updateErr && updatedOrd) {
                       dbOrderId = updatedOrd.id;
@@ -777,7 +788,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                         .update(baselinePayload)
                         .eq("id", existingOrd.id)
                         .select("id")
-                        .single();
+                        .maybeSingle();
                       dbOrderId = updatedBase?.id || existingOrd.id;
                     }
                   } else {
@@ -785,7 +796,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                       .from("orders")
                       .insert(extendedPayload)
                       .select("id")
-                      .single();
+                      .maybeSingle();
 
                     if (!insertErr && insertedOrd) {
                       dbOrderId = insertedOrd.id;
@@ -794,11 +805,11 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                         .from("orders")
                         .insert(baselinePayload)
                         .select("id")
-                        .single();
+                        .maybeSingle();
 
                       if (insertBaseErr) {
                         console.error(
-                          `[SyncEngine] Order persistence failed order_id=${ord.order_id}: ${insertBaseErr.message}`
+                          `[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=order_upsert order_id=${ord.order_id} error=${insertBaseErr.message}`
                         );
                         storeFailedCount++;
                         errors.push(`Order upsert failed for order ${ord.order_id}: ${insertBaseErr.message}`);
@@ -820,7 +831,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                 storeFailedCount++;
               }
 
-              // ── FIX A: Order Line Items Persistence ───────────────────────
+              // ── Order Line Items Persistence ───────────────────────
               if (dbOrderId) {
                 try {
                   await new Promise((r) => setTimeout(r, 100)); // Throttling gap for Daraz QPS limit
@@ -847,6 +858,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                         const cleanOrderItemId = String(item.order_item_id || item.item_id || `${ord.order_id}_${Math.random()}`);
 
                         return {
+                          store_id: store.id,
                           order_id: dbOrderId,
                           daraz_order_id: ord.order_id,
                           order_item_id: cleanOrderItemId,
@@ -870,11 +882,11 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
 
                     const { error: itemsErr } = await supabase
                       .from("order_items")
-                      .upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+                      .upsert(itemPayloads, { onConflict: "store_id,order_item_id" });
 
                     if (itemsErr) {
-                      console.error(`[SyncEngine] Order items upsert error order_id=${ord.order_id}:`, itemsErr.message);
-                      // ── FIX C: Write to sync_retry_queue for order items failure ──
+                      console.error(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=order_items_upsert order_id=${ord.order_id} error=${itemsErr.message}`);
+                      // Write to sync_retry_queue for order items failure
                       try {
                         await supabase.from("sync_retry_queue").insert({
                           store_id: store.id,
@@ -893,7 +905,7 @@ export async function executeDarazSync(targetStoreId?: string): Promise<SyncResu
                     }
                   }
                 } catch (itemsFetchErr: any) {
-                  console.warn(`[SyncEngine] Notice fetching order items for order ${ord.order_id}: ${itemsFetchErr.message}`);
+                  console.warn(`[Daraz Sync] store_id=${store.id} store_code=${store.store_code} operation=fetch_order_items order_id=${ord.order_id} warning=${itemsFetchErr.message}`);
                 }
               }
             } catch (ordErr: any) {

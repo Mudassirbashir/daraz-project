@@ -23,7 +23,15 @@ CREATE UNIQUE INDEX IF NOT EXISTS idx_daraz_product_skus_store_sku_unique
 CREATE UNIQUE INDEX IF NOT EXISTS idx_orders_store_order_id_unique
   ON public.orders (store_id, daraz_order_id);
 
--- 6. Unique index on public.order_items for (store_id, order_item_id)
+-- 6. Ensure store_id column exists on public.order_items before creating index
+ALTER TABLE public.order_items
+  ADD COLUMN IF NOT EXISTS store_id UUID REFERENCES public.daraz_stores(id) ON DELETE CASCADE;
+
+UPDATE public.order_items oi
+SET store_id = o.store_id
+FROM public.orders o
+WHERE oi.order_id = o.id AND oi.store_id IS NULL;
+
 CREATE UNIQUE INDEX IF NOT EXISTS idx_order_items_store_item_id_unique
   ON public.order_items (store_id, order_item_id);
 

@@ -168,9 +168,9 @@ export async function POST(req: NextRequest) {
 
                 const { data: dbOrder, error: ordErr } = await supabase
                   .from("orders")
-                  .upsert(orderPayload, { onConflict: "daraz_order_id" })
+                  .upsert(orderPayload, { onConflict: "store_id,daraz_order_id" })
                   .select("id")
-                  .single();
+                  .maybeSingle();
 
                 if (ordErr) {
                   throw new Error(`Order retry upsert failed: ${ordErr.message}`);
@@ -182,6 +182,7 @@ export async function POST(req: NextRequest) {
                     const itemPayloads = items.map((item) => {
                       const cleanOrderItemId = String(item.order_item_id || item.item_id || `${errRecord.entity_id}_${Math.random()}`);
                       return {
+                        store_id: errRecord.store_id,
                         order_id: dbOrder.id,
                         daraz_order_id: errRecord.entity_id,
                         order_item_id: cleanOrderItemId,
@@ -201,7 +202,7 @@ export async function POST(req: NextRequest) {
                       };
                     });
 
-                    await supabase.from("order_items").upsert(itemPayloads, { onConflict: "order_id,order_item_id" });
+                    await supabase.from("order_items").upsert(itemPayloads, { onConflict: "store_id,order_item_id" });
                   }
                 }
 

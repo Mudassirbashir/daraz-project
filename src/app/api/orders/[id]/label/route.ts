@@ -129,7 +129,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
               raw_response: officialDocResult.raw || {},
               updated_at: timestamp,
             },
-            { onConflict: "daraz_order_id" }
+            { onConflict: "store_id,daraz_order_id" }
           )
           .select("id")
           .maybeSingle();
