@@ -4,6 +4,7 @@ import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { DarazApiClient } from "@/lib/daraz/client";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
+import { decryptSecret, encryptSecret } from "@/lib/security/encryption";
 
 export const dynamic = "force-dynamic";
 
@@ -20,10 +21,7 @@ export async function GET(req: NextRequest) {
   const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
   const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`).replace(/\/+$/, "");
 
-  const appKey = (process.env.DARAZ_APP_KEY || "").trim();
-  const appSecret = (process.env.DARAZ_APP_SECRET || "").trim();
   const apiBaseUrl = process.env.DARAZ_API_BASE_URL || "https://api.daraz.pk/rest";
-
   const supabase = createAdminClient();
 
   // 1. Handle OAuth Error from Daraz Provider
@@ -36,7 +34,7 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // 2. Validate CSRF State Token
+  // 2. Validate CSRF State Token & Read Session Cookie
   const savedState = req.cookies.get("daraz_oauth_state")?.value;
   if (savedState && stateParam && savedState !== stateParam) {
     console.warn("[Daraz OAuth Callback] CSRF state mismatch detected.");
@@ -45,6 +43,24 @@ export async function GET(req: NextRequest) {
         "OAuth security state validation failed. Possible CSRF or expired session."
       )}`
     );
+  }
+
+  // Extract session information if present
+  let sessionAppKey: string | null = null;
+  let sessionAppSecret: string | null = null;
+  let intentStoreId: string | null = null;
+
+  const sessionCookie = req.cookies.get("daraz_onboarding_session")?.value;
+  if (sessionCookie) {
+    try {
+      const rawJson = Buffer.from(sessionCookie, "base64").toString("utf8");
+      const parsed = JSON.parse(rawJson);
+      if (parsed.appKey) sessionAppKey = parsed.appKey;
+      if (parsed.encryptedAppSecret) sessionAppSecret = decryptSecret(parsed.encryptedAppSecret) || parsed.encryptedAppSecret;
+      if (parsed.reconnectStoreId) intentStoreId = parsed.reconnectStoreId;
+    } catch (_) {
+      // Graceful fallback
+    }
   }
 
   // 3. Validate Authorization Code presence
@@ -56,21 +72,22 @@ export async function GET(req: NextRequest) {
     );
   }
 
-  // Extract intent store_id if state encoded a reconnect request (e.g., store_UUID_hex)
-  let intentStoreId: string | null = null;
-  if (stateParam && stateParam.startsWith("store_")) {
+  if (!intentStoreId && stateParam && stateParam.startsWith("store_")) {
     const parts = stateParam.split("_");
     if (parts.length >= 3) {
       intentStoreId = parts[1];
     }
   }
 
+  const appKey = (sessionAppKey || process.env.DARAZ_APP_KEY || "").trim();
+  const appSecret = (sessionAppSecret || process.env.DARAZ_APP_SECRET || "").trim();
+
   try {
     if (!appKey || !appSecret) {
-      console.error("[Daraz OAuth Callback]: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET in environment variables.");
+      console.error("[Daraz OAuth Callback]: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET.");
       return NextResponse.redirect(
         `${baseUrl}/stores?error=missing_credentials&message=${encodeURIComponent(
-          "Daraz APP_KEY or APP_SECRET environment variables are not configured in production."
+          "Daraz App Key or App Secret credentials are missing or invalid."
         )}`
       );
     }
@@ -218,6 +235,9 @@ export async function GET(req: NextRequest) {
       }
     }
 
+    // Encrypt App Secret for secure DB storage at rest
+    const encryptedSecretForDb = encryptSecret(appSecret);
+
     // 6. Compute Deterministic Slot Assignment (1..3)
     let activeStoresList: any[] = [];
     try {
@@ -312,7 +332,7 @@ export async function GET(req: NextRequest) {
       refresh_token,
       token_expires_at: tokenExpiresAt,
       api_app_key: appKey,
-      api_app_secret: appSecret,
+      api_app_secret: encryptedSecretForDb || appSecret,
       is_active: true,
       sync_status: isCurrentlySyncing ? "syncing" : "connected",
       last_sync_error: null,
@@ -458,6 +478,7 @@ export async function GET(req: NextRequest) {
       : NextResponse.redirect(`${baseUrl}/stores?connected=true&store_id=${storeId}`);
 
     response.cookies.delete("daraz_oauth_state");
+    response.cookies.delete("daraz_onboarding_session");
     return response;
   } catch (err: any) {
     console.error("[Daraz OAuth Callback Exception]:", err.message);

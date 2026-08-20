@@ -506,6 +506,8 @@ export function sanitizeLogPayload(payload: any): any {
   }
 }
 
+import { decryptSecret } from '../security/encryption';
+
 export async function getDarazClient(storeId: string): Promise<DarazClient> {
   const supabase = createAdminClient();
 
@@ -519,9 +521,12 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
     throw new Error(`Store ${storeId} not found in database: ${error?.message || 'unknown'}`);
   }
 
+  const rawSecret = store.api_app_secret || process.env.DARAZ_APP_SECRET || '';
+  const decryptedSecret = decryptSecret(rawSecret) || rawSecret;
+
   return new DarazClient({
-    appKey: store.api_app_key || process.env.DARAZ_APP_KEY || '',
-    appSecret: store.api_app_secret || process.env.DARAZ_APP_SECRET || '',
+    appKey: (store.api_app_key || process.env.DARAZ_APP_KEY || '').trim(),
+    appSecret: decryptedSecret.trim(),
     countryCode: (store.country_code || store.region || 'PK') as DarazCountryCode,
     accessToken: store.access_token || undefined,
     refreshToken: store.refresh_token || undefined,

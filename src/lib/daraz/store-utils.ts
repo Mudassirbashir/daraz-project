@@ -1,5 +1,6 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { DarazClient } from './client';
+import { decryptSecret } from '../security/encryption';
 
 export async function getValidStoreAccessToken(storeId: string): Promise<{ accessToken: string; client: DarazClient }> {
   const supabase = createAdminClient();
@@ -11,14 +12,18 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 
   if (error || !store) throw new Error(`Store not found: ${storeId}`);
 
+  const appKey = (store.api_app_key || process.env.DARAZ_APP_KEY || '').trim();
+  const rawSecret = store.api_app_secret || process.env.DARAZ_APP_SECRET || '';
+  const appSecret = (decryptSecret(rawSecret) || rawSecret).trim();
+
   const now = Date.now();
   const expiresAt = new Date(store.token_expires_at || 0).getTime();
   const bufferMs = 24 * 60 * 60 * 1000; // 24-hour buffer
 
   if (expiresAt - now > bufferMs && store.access_token) {
     const client = new DarazClient({
-      appKey: process.env.DARAZ_APP_KEY!,
-      appSecret: process.env.DARAZ_APP_SECRET!,
+      appKey,
+      appSecret,
       countryCode: store.country_code || store.region || 'PK',
       accessToken: store.access_token,
     });
@@ -39,8 +44,8 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
     await new Promise((r) => setTimeout(r, 2500));
     const { data: refreshed } = await supabase.from('daraz_stores').select('access_token').eq('id', storeId).single();
     const client = new DarazClient({
-      appKey: process.env.DARAZ_APP_KEY!,
-      appSecret: process.env.DARAZ_APP_SECRET!,
+      appKey,
+      appSecret,
       countryCode: store.country_code || store.region || 'PK',
       accessToken: refreshed!.access_token,
     });
@@ -49,8 +54,8 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 
   try {
     const tempClient = new DarazClient({
-      appKey: process.env.DARAZ_APP_KEY!,
-      appSecret: process.env.DARAZ_APP_SECRET!,
+      appKey,
+      appSecret,
       countryCode: store.country_code || store.region || 'PK',
     });
 
@@ -75,8 +80,8 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
       .eq('id', storeId);
 
     const client = new DarazClient({
-      appKey: process.env.DARAZ_APP_KEY!,
-      appSecret: process.env.DARAZ_APP_SECRET!,
+      appKey,
+      appSecret,
       countryCode: store.country_code || store.region || 'PK',
       accessToken: res.access_token,
     });
