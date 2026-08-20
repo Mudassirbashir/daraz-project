@@ -241,9 +241,9 @@ export class DarazClient {
     };
   }
 
-  public async getCatalogItems(offset = 0, limit = 50): Promise<DarazCatalogResult> {
+  public async getCatalogItems(offset = 0, limit = 50, filter = 'all'): Promise<DarazCatalogResult> {
     const response: any = await this.get('/products/get', {
-      filter: 'all',
+      filter: filter || 'all',
       offset: String(offset),
       limit: String(limit),
     });
