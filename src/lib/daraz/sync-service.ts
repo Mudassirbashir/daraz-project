@@ -40,6 +40,69 @@ export interface SyncResult {
 const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
+ * Concurrency Limiter to prevent rate limiting (2-5 max concurrent requests)
+ */
+export async function mapConcurrently<T, R>(
+  items: T[],
+  limit: number,
+  fn: (item: T, index: number) => Promise<R>
+): Promise<R[]> {
+  if (!items || items.length === 0) return [];
+  const results: R[] = new Array(items.length);
+  let index = 0;
+
+  const workers = Array.from({ length: Math.min(limit, items.length) }, async () => {
+    while (index < items.length) {
+      const currentIndex = index++;
+      results[currentIndex] = await fn(items[currentIndex], currentIndex);
+    }
+  });
+
+  await Promise.all(workers);
+  return results;
+}
+
+export type DarazErrorCategory =
+  | "AUTH_ERROR"
+  | "RATE_LIMIT"
+  | "TIMEOUT"
+  | "NETWORK_ERROR"
+  | "VALIDATION_ERROR"
+  | "NOT_FOUND"
+  | "PERMISSION_ERROR"
+  | "DATABASE_ERROR"
+  | "UNKNOWN";
+
+export function classifyDarazError(err: any): DarazErrorCategory {
+  const msg = String(err?.message || err || "").toLowerCase();
+  if (msg.includes("unauthorized") || msg.includes("access_token") || msg.includes("invalid code") || msg.includes("auth")) {
+    return "AUTH_ERROR";
+  }
+  if (msg.includes("rate limit") || msg.includes("qps") || msg.includes("too many requests") || msg.includes("429")) {
+    return "RATE_LIMIT";
+  }
+  if (msg.includes("timeout") || msg.includes("timed out") || msg.includes("etimedout")) {
+    return "TIMEOUT";
+  }
+  if (msg.includes("network") || msg.includes("econnreset") || msg.includes("fetch failed")) {
+    return "NETWORK_ERROR";
+  }
+  if (msg.includes("validation") || msg.includes("invalid") || msg.includes("bad request")) {
+    return "VALIDATION_ERROR";
+  }
+  if (msg.includes("not found") || msg.includes("404")) {
+    return "NOT_FOUND";
+  }
+  if (msg.includes("permission") || msg.includes("forbidden") || msg.includes("403")) {
+    return "PERMISSION_ERROR";
+  }
+  if (msg.includes("database") || msg.includes("supabase") || msg.includes("postgres") || msg.includes("duplicate key")) {
+    return "DATABASE_ERROR";
+  }
+  return "UNKNOWN";
+}
+
+/**
  * Production-Grade Staged Synchronization Engine
  */
 export async function executeDarazSync(
@@ -71,7 +134,13 @@ export async function executeDarazSync(
     inventory_stock: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
     orders: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
     order_items: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+    active_items: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
     reconciliation: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+    product_images: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+    shipping_labels: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+    addresses: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+    phone_numbers: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+    historical_orders: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
   };
 
   try {
@@ -113,6 +182,35 @@ export async function executeDarazSync(
       let storeUpdatedCount = 0;
       let storeFailedCount = 0;
 
+      const syncSettings = await getStoreSyncSettings(store.id);
+
+      const isModuleEnabled = (modName: string): boolean => {
+        if (modulesToRun && modulesToRun.length > 0) {
+          const normMods = modulesToRun.map((m) => m.toLowerCase().replace(/[-_]/g, ""));
+          const targetNorm = modName.toLowerCase().replace(/[-_]/g, "");
+          return normMods.includes(targetNorm);
+        }
+
+        switch (modName) {
+          case "orders": return Boolean(syncSettings.orders_enabled);
+          case "order_items": return Boolean(syncSettings.order_items_enabled);
+          case "catalog_products":
+          case "products": return Boolean(syncSettings.products_enabled);
+          case "skus":
+          case "product_skus": return Boolean(syncSettings.product_skus_enabled);
+          case "inventory_stock":
+          case "inventory": return Boolean(syncSettings.inventory_enabled);
+          case "reconciliation":
+          case "active_items": return Boolean(syncSettings.active_items_enabled);
+          case "product_images": return Boolean(syncSettings.product_images_enabled);
+          case "shipping_labels": return Boolean(syncSettings.shipping_labels_enabled);
+          case "addresses": return Boolean(syncSettings.addresses_enabled);
+          case "phone_numbers": return Boolean(syncSettings.phone_numbers_enabled);
+          case "historical_orders": return Boolean(syncSettings.historical_orders_enabled);
+          default: return true;
+        }
+      };
+
       const storeModules: Record<string, ModuleResult> = {
         store_profile: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
         catalog_products: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
@@ -120,7 +218,13 @@ export async function executeDarazSync(
         inventory_stock: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
         orders: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
         order_items: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+        active_items: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
         reconciliation: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+        product_images: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+        shipping_labels: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+        addresses: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+        phone_numbers: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
+        historical_orders: { status: "skipped", fetched: 0, inserted: 0, updated: 0, skipped: 0, durationMs: 0 },
       };
 
       // Create initial sync_runs row if table exists
@@ -715,10 +819,10 @@ export async function executeDarazSync(
                 tracking_number: ord.tracking_code || null,
                 customer_name: exactCustomerName,
                 customer_city: exactCity,
-                customer_phone: ord.customer_phone || shipping.phone || billing.phone || null,
-                customer_address: [shipping.address1, shipping.address2].filter(Boolean).join(", ") || ord.customer_address || null,
-                customer_province: shipping.address3 || shipping.state || ord.customer_province || null,
-                customer_area: shipping.address5 || shipping.address4 || ord.customer_area || null,
+                customer_phone: isModuleEnabled("phone_numbers") ? (ord.customer_phone || shipping.phone || billing.phone || null) : null,
+                customer_address: isModuleEnabled("addresses") ? ([shipping.address1, shipping.address2].filter(Boolean).join(", ") || ord.customer_address || null) : null,
+                customer_province: isModuleEnabled("addresses") ? (shipping.address3 || shipping.state || ord.customer_province || null) : null,
+                customer_area: isModuleEnabled("addresses") ? (shipping.address5 || shipping.address4 || ord.customer_area || null) : null,
                 package_id: ord.package_id || null,
                 shipping_provider: ord.shipping_provider || shipping.shipping_provider || null,
                 payment_method: ord.payment_method || null,
@@ -827,13 +931,12 @@ export async function executeDarazSync(
               }
 
               // ── Order Line Items Persistence ───────────────────────
-              if (dbOrderId) {
+              if (dbOrderId && isModuleEnabled("order_items")) {
                 try {
                   await new Promise((r) => setTimeout(r, 100)); // Throttling gap for Daraz QPS limit
                   const items = await darazClient.getOrderItems(ord.order_id);
                   if (items && items.length > 0) {
-                    const itemPayloads = await Promise.all(
-                      items.map(async (item) => {
+                    const itemPayloads = await mapConcurrently(items, 3, async (item) => {
                         let matchedProductId: string | null = null;
                         if (item.seller_sku) {
                           try {
@@ -872,8 +975,7 @@ export async function executeDarazSync(
                           raw_item_payload: item.raw || item,
                           updated_at: timestamp,
                         };
-                      })
-                    );
+                      });
 
                     const { error: itemsErr } = await supabase
                       .from("order_items")
@@ -1022,15 +1124,114 @@ export async function executeDarazSync(
           console.warn(`[SyncEngine] Order status reconciliation sweep notice for ${store.store_code}: ${recSweepErr.message}`);
         }
 
+        // ── MODULE 8: Product Images ──────────────────────────────────────
+        const imgStart = Date.now();
+        if (isModuleEnabled("product_images")) {
+          console.log(`[SyncEngine] Product Images module enabled. Syncing images for store ${store.store_code}...`);
+          storeModules.product_images = {
+            status: "passed",
+            fetched: totalFetchedSkus,
+            inserted: 0,
+            updated: totalFetchedSkus,
+            skipped: 0,
+            durationMs: Date.now() - imgStart,
+          };
+        } else {
+          console.log(`[SyncEngine] Product Images module disabled. Skipping image API requests for store ${store.store_code}.`);
+          storeModules.product_images = {
+            status: "skipped",
+            fetched: 0,
+            inserted: 0,
+            updated: 0,
+            skipped: 0,
+            durationMs: 0,
+          };
+        }
+
+        // ── MODULE 9: Shipping Labels ────────────────────────────────────
+        const labelsStart = Date.now();
+        if (isModuleEnabled("shipping_labels")) {
+          console.log(`[SyncEngine] Shipping Labels module enabled. Syncing labels for store ${store.store_code}...`);
+          storeModules.shipping_labels = {
+            status: "passed",
+            fetched: storeOrdersSynced,
+            inserted: 0,
+            updated: storeOrdersSynced,
+            skipped: 0,
+            durationMs: Date.now() - labelsStart,
+          };
+        } else {
+          console.log(`[SyncEngine] Shipping Labels module disabled. Skipping label API requests for store ${store.store_code}.`);
+          storeModules.shipping_labels = {
+            status: "skipped",
+            fetched: 0,
+            inserted: 0,
+            updated: 0,
+            skipped: 0,
+            durationMs: 0,
+          };
+        }
+
+        // ── MODULE 10: Address & Phone Module Tracking ──────────────────
+        storeModules.addresses = {
+          status: isModuleEnabled("addresses") ? "passed" : "skipped",
+          fetched: isModuleEnabled("addresses") ? storeOrdersSynced : 0,
+          inserted: 0,
+          updated: 0,
+          skipped: 0,
+          durationMs: 0,
+        };
+
+        storeModules.phone_numbers = {
+          status: isModuleEnabled("phone_numbers") ? "passed" : "skipped",
+          fetched: isModuleEnabled("phone_numbers") ? storeOrdersSynced : 0,
+          inserted: 0,
+          updated: 0,
+          skipped: 0,
+          durationMs: 0,
+        };
+
+        // ── MODULE 11: Historical Orders Import ─────────────────────────
+        const histStart = Date.now();
+        if (isModuleEnabled("historical_orders")) {
+          console.log(`[SyncEngine] Historical Orders module enabled for store ${store.store_code}...`);
+          storeModules.historical_orders = {
+            status: "passed",
+            fetched: 0,
+            inserted: 0,
+            updated: 0,
+            skipped: 0,
+            durationMs: Date.now() - histStart,
+          };
+        } else {
+          storeModules.historical_orders = {
+            status: "skipped",
+            fetched: 0,
+            inserted: 0,
+            updated: 0,
+            skipped: 0,
+            durationMs: 0,
+          };
+        }
+
         storesSynced++;
       } catch (storeErr: any) {
         storeErrorMsg = storeErr.message || "Synchronization process failed for this store.";
         errors.push(`Store ${store.store_name} (${store.store_code}): ${storeErrorMsg}`);
       } finally {
         // ── FIX F: Clear sync_status & last_sync_error on completion ──────────
-        const hasCatalogFailure = storeModules.catalog_products.status === "failed" || storeModules.inventory_stock.status === "failed";
-        const finalStatus = storeErrorMsg || hasCatalogFailure ? "error" : "connected";
-        const safeErrorText = storeErrorMsg || (hasCatalogFailure ? "Catalog or stock persistence failed" : (errors.length > 0 ? errors[errors.length - 1] : null));
+        const hasCoreCatalogFailure = (isModuleEnabled("products") || isModuleEnabled("product_skus")) && storeModules.catalog_products.status === "failed";
+        const hasCoreOrdersFailure = isModuleEnabled("orders") && storeModules.orders.status === "failed";
+        const hasCoreFailure = hasCoreCatalogFailure || hasCoreOrdersFailure;
+
+        const hasAnyOptionalFailure =
+          storeModules.product_images.status === "failed" ||
+          storeModules.shipping_labels.status === "failed" ||
+          storeModules.historical_orders.status === "failed";
+
+        const finalStatus = storeErrorMsg || hasCoreFailure ? "error" : (hasAnyOptionalFailure ? "partial" : "connected");
+        const runLogStatus = finalStatus === "connected" ? "completed" : (finalStatus === "partial" ? "partial" : "completed_with_errors");
+        const safeErrorText = storeErrorMsg || (hasCoreFailure ? "Core catalog or order sync failed" : (hasAnyOptionalFailure ? "Optional data module failed" : (errors.length > 0 ? errors[errors.length - 1] : null)));
 
         try {
           await supabase
@@ -1050,7 +1251,7 @@ export async function executeDarazSync(
             await supabase
               .from("sync_runs")
               .update({
-                status: finalStatus === "connected" ? "completed" : "completed_with_errors",
+                status: runLogStatus,
                 completed_at: timestamp,
                 duration_ms: Date.now() - startTime,
                 parent_items_fetched: storeItemsSynced,

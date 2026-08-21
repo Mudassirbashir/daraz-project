@@ -448,6 +448,40 @@ export class DarazClient {
     };
   }
 
+  public async shipOrder(params: { orderId: string; trackingNumber?: string; courier?: string }): Promise<{ success: boolean; data?: any }> {
+    const res: any = await this.post('/order/ship', {
+      order_id: params.orderId,
+      tracking_number: params.trackingNumber || '',
+      courier: params.courier || 'Daraz Express (DEX)',
+    });
+    return {
+      success: !res.code || res.code === '0' || res.code === 0,
+      data: res.data || res.result || res,
+    };
+  }
+
+  public async updatePriceQuantity(updates: Array<{ sellerSku: string; price?: number; quantity?: number }>): Promise<{ success: boolean; data?: any }> {
+    const productsPayload = JSON.stringify({
+      Request: {
+        Product: {
+          Skus: {
+            Sku: updates.map((u) => ({
+              SellerSku: u.sellerSku,
+              Price: typeof u.price === 'number' ? u.price : undefined,
+              Quantity: typeof u.quantity === 'number' ? u.quantity : undefined,
+            })),
+          },
+        },
+      },
+    });
+
+    const res: any = await this.post('/product/price_quantity/update', { payload: productsPayload });
+    return {
+      success: !res.code || res.code === '0' || res.code === 0,
+      data: res.data || res.result || res,
+    };
+  }
+
   private async parseResponse<T>(res: Response, path: string): Promise<T> {
     if (!res.ok) {
       const errText = await res.text();

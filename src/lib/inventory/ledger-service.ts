@@ -1,6 +1,21 @@
 import { createAdminClient } from '@/lib/supabase/admin';
 import { calculateAvailableStock } from './barcode-mapping';
 
+export function calculateStockLedgerAvailable(stock: {
+  physical_stock: number;
+  reserved_stock?: number;
+  damaged_stock?: number;
+  safety_buffer?: number;
+}): number {
+  const physical = stock.physical_stock || 0;
+  const reserved = stock.reserved_stock || 0;
+  const damaged = stock.damaged_stock || 0;
+  const safetyBuffer = stock.safety_buffer || 0;
+
+  const available = physical - reserved - damaged - safetyBuffer;
+  return Math.max(0, available);
+}
+
 export type LedgerChangeType =
   | 'INBOUND'
   | 'OUTBOUND'

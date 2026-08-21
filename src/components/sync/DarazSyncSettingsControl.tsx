@@ -483,6 +483,38 @@ export function DarazSyncSettingsControl() {
                   </label>
                 </div>
               </div>
+
+              {/* Historical Orders */}
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="h-9 w-9 rounded-xl bg-violet-100 dark:bg-violet-500/20 text-violet-600 flex items-center justify-center shrink-0">
+                    <History className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Historical Orders Import</h4>
+                    <p className="text-[10px] text-slate-500">Fetch older historical order archives separately without blocking current orders</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handleTriggerModuleSync("historical_orders")}
+                    disabled={Boolean(syncingModule)}
+                    title="Import historical orders"
+                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                  >
+                    {syncingModule === "historical_orders" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.historical_orders_enabled}
+                      onChange={() => handleToggleSetting("historical_orders_enabled")}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-orange-500"></div>
+                  </label>
+                </div>
+              </div>
             </div>
           </div>
 

@@ -20,6 +20,8 @@ import {
  */
 
 async function runPipelineTests() {
+  process.env.DARAZ_APP_SECRET = process.env.DARAZ_APP_SECRET || "mock_daraz_master_app_secret_test_key_32_bytes";
+
   console.log("==================================================================");
   console.log("  DARAZ DATA PIPELINE HARDENING & INTEGRITY TEST SUITE");
   console.log("==================================================================\n");
@@ -418,9 +420,98 @@ async function runPipelineTests() {
     assert.strictEqual(defaultSettings.orders_enabled, true, "Orders must be ON by default");
     assert.strictEqual(defaultSettings.order_items_enabled, true, "Order items must be ON by default");
     assert.strictEqual(defaultSettings.products_enabled, true, "Products must be ON by default");
+    assert.strictEqual(defaultSettings.product_skus_enabled, true, "Product SKUs must be ON by default");
     assert.strictEqual(defaultSettings.inventory_enabled, true, "Inventory stock must be ON by default");
+    assert.strictEqual(defaultSettings.active_items_enabled, true, "Active items must be ON by default");
     assert.strictEqual(defaultSettings.product_images_enabled, false, "Product images must be OFF by default");
     assert.strictEqual(defaultSettings.shipping_labels_enabled, false, "Shipping labels must be OFF by default");
+    assert.strictEqual(defaultSettings.addresses_enabled, false, "Customer addresses must be OFF by default");
+    assert.strictEqual(defaultSettings.phone_numbers_enabled, false, "Customer phone numbers must be OFF by default");
+    assert.strictEqual(defaultSettings.historical_orders_enabled, false, "Historical orders must be OFF by default");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 21: Auth Credential Validation
+  // ---------------------------------------------------------------------------
+  await test("Test 21: Missing Daraz App Key or App Secret throws clear configuration error", () => {
+    assert.throws(
+      () => new DarazApiClient({ appKey: "", appSecret: "" }),
+      /DARAZ_APP_KEY and DARAZ_APP_SECRET must be set/
+    );
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 22: Controlled Concurrency Limiter
+  // ---------------------------------------------------------------------------
+  await test("Test 22: mapConcurrently respects concurrency limits and processes all items", async () => {
+    const { mapConcurrently } = await import("../sync-service.js");
+    const items = [1, 2, 3, 4, 5, 6, 7, 8, 9, 10];
+    let active = 0;
+    let maxActive = 0;
+
+    const results = await mapConcurrently(items, 3, async (item) => {
+      active++;
+      if (active > maxActive) maxActive = active;
+      await new Promise((r) => setTimeout(r, 10));
+      active--;
+      return item * 2;
+    });
+
+    assert.strictEqual(results.length, 10);
+    assert.deepStrictEqual(results, [2, 4, 6, 8, 10, 12, 14, 16, 18, 20]);
+    assert.ok(maxActive <= 3, `Max active concurrency should not exceed 3, got ${maxActive}`);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 23: Daraz Open Platform Order Shipping Method
+  // ---------------------------------------------------------------------------
+  await test("Test 23: shipOrder generates correct parameters for Daraz /order/ship endpoint", async () => {
+    const client = new DarazApiClient({ appKey: "test_key", appSecret: "test_secret", accessToken: "test_token" });
+    let capturedPath = "";
+    let capturedBody: any = null;
+
+    (client as any).post = async (path: string, body: any) => {
+      capturedPath = path;
+      capturedBody = body;
+      return { code: "0", data: { success: true } };
+    };
+
+    const res = await client.shipOrder({ orderId: "ORD-998877", trackingNumber: "DEX-12345", courier: "DEX" });
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(capturedPath, "/order/ship");
+    assert.strictEqual(capturedBody.order_id, "ORD-998877");
+    assert.strictEqual(capturedBody.tracking_number, "DEX-12345");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 24: Price & Quantity Batch Update Method
+  // ---------------------------------------------------------------------------
+  await test("Test 24: updatePriceQuantity formats XML/JSON payload correctly for Daraz API", async () => {
+    const client = new DarazApiClient({ appKey: "test_key", appSecret: "test_secret", accessToken: "test_token" });
+    let capturedPath = "";
+    let capturedPayload: any = null;
+
+    (client as any).post = async (path: string, body: any) => {
+      capturedPath = path;
+      capturedPayload = JSON.parse(body.payload);
+      return { code: "0", data: { success: true } };
+    };
+
+    const res = await client.updatePriceQuantity([{ sellerSku: "SKU-BLUE-M", price: 1500, quantity: 45 }]);
+    assert.strictEqual(res.success, true);
+    assert.strictEqual(capturedPath, "/product/price_quantity/update");
+    assert.strictEqual(capturedPayload.Request.Product.Skus.Sku[0].SellerSku, "SKU-BLUE-M");
+    assert.strictEqual(capturedPayload.Request.Product.Skus.Sku[0].Quantity, 45);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 25: Inventory Ledger Stock Formula
+  // ---------------------------------------------------------------------------
+  await test("Test 25: calculateStockLedgerAvailable correctly subtracts reserved, damaged, and safety stock", async () => {
+    const { calculateStockLedgerAvailable } = await import("../../inventory/ledger-service.js");
+    const stock = { physical_stock: 100, reserved_stock: 20, damaged_stock: 5, safety_buffer: 10 };
+    const available = calculateStockLedgerAvailable(stock);
+    assert.strictEqual(available, 65, "Available stock must equal physical (100) - reserved (20) - damaged (5) - safety (10) = 65");
   });
 
   console.log("\n==================================================================");

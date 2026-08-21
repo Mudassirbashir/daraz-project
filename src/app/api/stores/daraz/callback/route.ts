@@ -538,6 +538,14 @@ export async function GET(req: NextRequest) {
       storeId = insertedStore.id;
     }
 
+    // 8b. Ensure default per-store sync settings exist (CORE ON, Heavy OFF)
+    try {
+      const { getStoreSyncSettings } = await import("@/lib/daraz/sync-settings-service");
+      await getStoreSyncSettings(storeId);
+    } catch (settingsErr: any) {
+      console.warn(`[Daraz OAuth Callback] Settings init notice for store ${storeId}:`, settingsErr.message);
+    }
+
     // 9. Trigger Initial Background Sync
     if (!isCurrentlySyncing) {
       console.log(`[Daraz OAuth Callback] Triggering initial background sync for store ${storeId}...`);

@@ -1,10 +1,13 @@
 import crypto from 'crypto';
 
 const ALGORITHM = 'aes-256-gcm';
-const DEFAULT_SECRET = process.env.DARAZ_ENCRYPTION_SECRET || process.env.DARAZ_APP_SECRET || 'default_daraz_master_encryption_key_32_bytes!';
 
 function getEncryptionKey(): Buffer {
-  return crypto.createHash('sha256').update(DEFAULT_SECRET).digest();
+  const secret = process.env.DARAZ_ENCRYPTION_SECRET || process.env.DARAZ_APP_SECRET;
+  if (!secret || !secret.trim()) {
+    throw new Error("[Security Configuration Error] DARAZ_ENCRYPTION_SECRET or DARAZ_APP_SECRET environment variable is missing.");
+  }
+  return crypto.createHash('sha256').update(secret.trim()).digest();
 }
 
 export interface EncryptedData {

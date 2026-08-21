@@ -6,6 +6,7 @@ export interface DarazStoreSyncSettings {
   orders_enabled: boolean;
   order_items_enabled: boolean;
   products_enabled: boolean;
+  product_skus_enabled: boolean;
   inventory_enabled: boolean;
   active_items_enabled: boolean;
   product_images_enabled: boolean;
@@ -20,6 +21,7 @@ export const DEFAULT_SYNC_SETTINGS: Omit<DarazStoreSyncSettings, "store_id"> = {
   orders_enabled: true,
   order_items_enabled: true,
   products_enabled: true,
+  product_skus_enabled: true,
   inventory_enabled: true,
   active_items_enabled: true,
   product_images_enabled: false,
