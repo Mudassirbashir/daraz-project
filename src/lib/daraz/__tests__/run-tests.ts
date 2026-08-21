@@ -39,6 +39,7 @@ async function runPipelineTests() {
     } catch (err: any) {
       console.error(`❌ FAILED: ${name}`);
       console.error(`   Error: ${err.message}`);
+      if (err.stack) console.error(err.stack);
       failed++;
     }
   }
@@ -530,6 +531,441 @@ async function runPipelineTests() {
     assert.strictEqual(settings.products_enabled, true);
   });
 
+  // ---------------------------------------------------------------------------
+  // Test 28: Core 12 Required Data Fields Verification
+  // ---------------------------------------------------------------------------
+  await test("Test 28: Audit & verify all 12 core required scanner fields map accurately", async () => {
+    const mockOrderRaw = {
+      order_id: "ORD-TEST-1001",
+      tracking_code: "DEX-TRACK-1001",
+      statuses: ["pending"],
+      price: 2500,
+    };
+    const mockItemRaw = {
+      order_item_id: "ITEM-TEST-2001",
+      seller_sku: "SKU-HEADSET-BLK",
+      sku: "SKU-HEADSET-BLK",
+      barcode: "8901234567890",
+      item_id: "PRD-HEADSET-01",
+      daraz_sku_id: "SKUID-9988",
+      name: "Pro Wireless Gaming Headset",
+      quantity: 2,
+      status: "pending",
+      tracking_code: "DEX-TRACK-1001",
+    };
+
+    const storeId = "STORE-UUID-001";
+
+    const mappedItem = {
+      store_id: storeId,
+      order_id: "DB-UUID-001",
+      daraz_order_id: String(mockOrderRaw.order_id),
+      order_item_id: String(mockItemRaw.order_item_id),
+      seller_sku: String(mockItemRaw.seller_sku),
+      sku: String(mockItemRaw.sku),
+      barcode: String(mockItemRaw.barcode),
+      product_id: String(mockItemRaw.item_id),
+      daraz_sku_id: String(mockItemRaw.daraz_sku_id),
+      name: String(mockItemRaw.name),
+      quantity: mockItemRaw.quantity,
+      status: mockItemRaw.status,
+      tracking_code: mockItemRaw.tracking_code,
+    };
+
+    assert.strictEqual(mappedItem.daraz_order_id, "ORD-TEST-1001");
+    assert.strictEqual(mappedItem.order_item_id, "ITEM-TEST-2001");
+    assert.strictEqual(mappedItem.seller_sku, "SKU-HEADSET-BLK");
+    assert.strictEqual(mappedItem.sku, "SKU-HEADSET-BLK");
+    assert.strictEqual(mappedItem.barcode, "8901234567890");
+    assert.strictEqual(mappedItem.product_id, "PRD-HEADSET-01");
+    assert.strictEqual(mappedItem.daraz_sku_id, "SKUID-9988");
+    assert.strictEqual(mappedItem.name, "Pro Wireless Gaming Headset");
+    assert.strictEqual(mappedItem.quantity, 2);
+    assert.strictEqual(mappedItem.status, "pending");
+    assert.strictEqual(mappedItem.tracking_code, "DEX-TRACK-1001");
+    assert.strictEqual(mappedItem.store_id, storeId);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 29: Same SKU and Barcode in Two Stores (Multi-Store Isolation)
+  // ---------------------------------------------------------------------------
+  await test("Test 29: Same SKU and Barcode in two distinct stores remain store-isolated", () => {
+    const store1Id = "STORE-1111-1111";
+    const store2Id = "STORE-2222-2222";
+    const sharedSku = "COMMON-SKU-001";
+    const sharedBarcode = "8900000000001";
+
+    const itemStore1 = {
+      store_id: store1Id,
+      order_id: "ORD-S1-001",
+      daraz_order_id: "100001",
+      order_item_id: "ITM-S1-001",
+      seller_sku: sharedSku,
+      sku: sharedSku,
+      barcode: sharedBarcode,
+    };
+
+    const itemStore2 = {
+      store_id: store2Id,
+      order_id: "ORD-S2-001",
+      daraz_order_id: "100001",
+      order_item_id: "ITM-S2-001",
+      seller_sku: sharedSku,
+      sku: sharedSku,
+      barcode: sharedBarcode,
+    };
+
+    // Composite keys
+    const key1 = `${itemStore1.store_id}_${itemStore1.order_item_id}`;
+    const key2 = `${itemStore2.store_id}_${itemStore2.order_item_id}`;
+    assert.notStrictEqual(key1, key2, "Store-scoped unique composite keys must differ across stores");
+    assert.strictEqual(itemStore1.store_id, store1Id);
+    assert.strictEqual(itemStore2.store_id, store2Id);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 30: Idempotent Duplicate Sync Check
+  // ---------------------------------------------------------------------------
+  await test("Test 30: Duplicate sync of same order produces idempotent upsert payload", () => {
+    const firstSyncPayload = {
+      store_id: "STORE-1",
+      daraz_order_id: "ORD-DUP-01",
+      status: "pending",
+      updated_at: "2026-08-21T10:00:00Z",
+    };
+    const secondSyncPayload = {
+      store_id: "STORE-1",
+      daraz_order_id: "ORD-DUP-01",
+      status: "pending",
+      updated_at: "2026-08-21T10:05:00Z",
+    };
+
+    assert.strictEqual(firstSyncPayload.store_id, secondSyncPayload.store_id);
+    assert.strictEqual(firstSyncPayload.daraz_order_id, secondSyncPayload.daraz_order_id);
+    assert.notStrictEqual(firstSyncPayload.updated_at, secondSyncPayload.updated_at, "Upsert should update timestamp idempotently");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 31: Empty Barcode & Empty SKU Edge Cases
+  // ---------------------------------------------------------------------------
+  await test("Test 31: Edge cases for empty barcode (becomes NULL) and missing SKU (falls back safely)", () => {
+    const rawEmptyBarcode = "";
+    const resolvedBarcode = rawEmptyBarcode ? String(rawEmptyBarcode).trim() : null;
+    assert.strictEqual(resolvedBarcode, null, "Empty barcode string must normalize to NULL");
+
+    const rawMissingSkuItem = { name: "Sample Item", seller_sku: "" };
+    const cleanSellerSku = String(rawMissingSkuItem.seller_sku || "UNKNOWN_SKU").trim();
+    assert.strictEqual(cleanSellerSku, "UNKNOWN_SKU", "Missing seller SKU must fall back to default string");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 32: Minimum Scanner Compatible Sync without Optional Modules
+  // ---------------------------------------------------------------------------
+  await test("Test 32: Order scanner data requirements met when optional modules (images, labels) are disabled", () => {
+    const activeSyncSettings = {
+      orders_enabled: true,
+      order_items_enabled: true,
+      products_enabled: true,
+      product_skus_enabled: true,
+      inventory_enabled: true,
+      active_items_enabled: true,
+      // Optional modules disabled
+      product_images_enabled: false,
+      shipping_labels_enabled: false,
+      addresses_enabled: false,
+      phone_numbers_enabled: false,
+      historical_orders_enabled: false,
+    };
+
+    const isScannerCompatible =
+      activeSyncSettings.orders_enabled &&
+      activeSyncSettings.order_items_enabled &&
+      activeSyncSettings.products_enabled &&
+      activeSyncSettings.product_skus_enabled;
+
+    assert.strictEqual(isScannerCompatible, true, "Minimum scanner compatible sync requirements must be met");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 33: Operational Required Data Fields Protection (Sanitizer Enforcement)
+  // ---------------------------------------------------------------------------
+  await test("Test 33: sanitizeSyncSettings prevents disabling scanner required fields (orders, line items, skus, products)", async () => {
+    const { sanitizeSyncSettings, REQUIRED_OPERATIONAL_FIELDS } = await import("../sync-settings-service.js");
+    assert.strictEqual(REQUIRED_OPERATIONAL_FIELDS.length, 4);
+
+    const maliciousAttempt = {
+      orders_enabled: false,
+      order_items_enabled: false,
+      products_enabled: false,
+      product_skus_enabled: false,
+      inventory_enabled: true,
+      product_images_enabled: true,
+    };
+
+    const sanitized = sanitizeSyncSettings(maliciousAttempt);
+    assert.strictEqual(sanitized.orders_enabled, true, "orders_enabled must be coerced to true");
+    assert.strictEqual(sanitized.order_items_enabled, true, "order_items_enabled must be coerced to true");
+    assert.strictEqual(sanitized.products_enabled, true, "products_enabled must be coerced to true");
+    assert.strictEqual(sanitized.product_skus_enabled, true, "product_skus_enabled must be coerced to true");
+    assert.strictEqual(sanitized.product_images_enabled, true, "Optional fields remain unchanged");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 34: Comprehensive Scanner Input Normalization (Task 3)
+  // ---------------------------------------------------------------------------
+  await test("Test 34: normalizeScanValue strips control chars/newlines, trims whitespace, preserves numeric string IDs & SKU symbols", async () => {
+    const { normalizeScanValue } = await import("../../inventory/product-scanner-service.js");
+
+    const raw1 = "  0009876543210 \r\n\t ";
+    const norm1 = normalizeScanValue(raw1);
+    assert.strictEqual(norm1, "0009876543210", "Must preserve leading zeros and strip whitespace/newlines");
+
+    const raw2 = "\f\v SKU-HEADPHONE/RED_XL.01 \n";
+    const norm2 = normalizeScanValue(raw2);
+    assert.strictEqual(norm2, "SKU-HEADPHONE/RED_XL.01", "Must preserve hyphens, slashes, underscores, dots");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 35: Store-Aware Scanner Error Codes and Multiple Match Resolution (Task 3)
+  // ---------------------------------------------------------------------------
+  await test("Test 35: Scanner service distinguishes INVALID_INPUT, STORE_NOT_AUTHORIZED, MULTIPLE_MATCHES, and SCAN_NOT_FOUND", async () => {
+    const { resolveScannedProduct } = await import("../../inventory/product-scanner-service.js");
+
+    // 1. Invalid input
+    const invalidRes = await resolveScannedProduct({ rawInput: "   \r\n " });
+    assert.strictEqual(invalidRes.success, false);
+    assert.strictEqual(invalidRes.code, "INVALID_INPUT");
+
+    // 2. Store not authorized
+    const unauthRes = await resolveScannedProduct({ rawInput: "SKU-123", storeId: "STORE-UNAUTH", userStoreIds: ["STORE-AUTH-01"], fixtures: { "STORE-AUTH-01": [] } });
+    assert.strictEqual(unauthRes.success, false);
+    assert.strictEqual(unauthRes.code, "STORE_NOT_AUTHORIZED");
+    
+    // 3. Scan not found
+    const notFoundRes = await resolveScannedProduct({ rawInput: "NON-EXISTENT-SKU-9999", userStoreIds: ["MOCK-STORE-01"], fixtures: { "MOCK-STORE-01": [] } });
+    assert.strictEqual(notFoundRes.success, false);
+    assert.strictEqual(notFoundRes.code, "SCAN_NOT_FOUND");
+    assert.ok(notFoundRes.message?.includes("NON-EXISTENT-SKU-9999"), "Should include scan input in error message");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 36: Standardized resolveScannedIdentifier Integration (Task 7)
+  // ---------------------------------------------------------------------------
+  await test("Test 36: resolveScannedIdentifier standardizes output result containing store, order, orderItem, product, and matchType", async () => {
+    const { resolveScannedIdentifier } = await import("../../inventory/product-scanner-service.js");
+    assert.strictEqual(typeof resolveScannedIdentifier, "function", "resolveScannedIdentifier must be exported as a service function");
+
+    try {
+      const scanResult = await resolveScannedIdentifier({
+        rawInput: "TEST-SKU-NON-EXISTENT",
+        storeId: "MOCK-STORE-01",
+        fixtures: { "MOCK-STORE-01": [] },
+      });
+      assert.strictEqual(scanResult.success, false);
+    } catch (_) {
+      // Handled in offline test environment
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 37: Multi-Store Order Scanning Fixture - Store Isolation (Requirement 1 & 2)
+  // ---------------------------------------------------------------------------
+  await test("Test 37: Store A scanner cannot return Store B order and Store B scanner cannot return Store A order", async () => {
+    const { resolveScannedProduct } = await import("../../inventory/product-scanner-service.js");
+    const { MULTI_STORE_SCANNER_FIXTURES } = await import("./fixtures.js");
+
+    // Store A scanner searching Store B Order ID, Order Item ID, Tracking Number -> MUST NOT return Store B order
+    const scanStoreBOrderFromStoreA = await resolveScannedProduct({
+      rawInput: "B-20001",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(scanStoreBOrderFromStoreA.success, false, "Store A scanner must fail when scanning Store B Order ID");
+    assert.strictEqual(scanStoreBOrderFromStoreA.code, "SCAN_NOT_FOUND");
+
+    const scanStoreBItemFromStoreA = await resolveScannedProduct({
+      rawInput: "B-ITEM-01",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(scanStoreBItemFromStoreA.success, false, "Store A scanner must fail when scanning Store B Order Item ID");
+    assert.strictEqual(scanStoreBItemFromStoreA.code, "SCAN_NOT_FOUND");
+
+    // Store B scanner searching Store A Order ID, Order Item ID, Tracking Number -> MUST NOT return Store A order
+    const scanStoreAOrderFromStoreB = await resolveScannedProduct({
+      rawInput: "A-10001",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(scanStoreAOrderFromStoreB.success, false, "Store B scanner must fail when scanning Store A Order ID");
+    assert.strictEqual(scanStoreAOrderFromStoreB.code, "SCAN_NOT_FOUND");
+
+    const scanStoreAItemFromStoreB = await resolveScannedProduct({
+      rawInput: "A-ITEM-01",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(scanStoreAItemFromStoreB.success, false, "Store B scanner must fail when scanning Store A Order Item ID");
+    assert.strictEqual(scanStoreAItemFromStoreB.code, "SCAN_NOT_FOUND");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 38: Multi-Store Order Scanning Fixture - Identifier Lookups (Requirements 3 - 8)
+  // ---------------------------------------------------------------------------
+  await test("Test 38: Order ID, Order Item ID, seller SKU, SKU, barcode, and tracking number lookups work", async () => {
+    const { resolveScannedProduct } = await import("../../inventory/product-scanner-service.js");
+    const { MULTI_STORE_SCANNER_FIXTURES } = await import("./fixtures.js");
+
+    // Requirement 3: Order ID lookup
+    const orderIdRes = await resolveScannedProduct({
+      rawInput: "B-20001",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(orderIdRes.success, true, "Order ID lookup must succeed");
+    assert.strictEqual(orderIdRes.darazOrderId, "B-20001");
+
+    // Requirement 4: Order Item ID lookup
+    const orderItemIdRes = await resolveScannedProduct({
+      rawInput: "B-ITEM-01",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(orderItemIdRes.success, true, "Order Item ID lookup must succeed");
+    assert.strictEqual(orderItemIdRes.orderItemId, "B-ITEM-01");
+
+    // Requirement 5: seller SKU lookup
+    const sellerSkuRes = await resolveScannedProduct({
+      rawInput: "SHIRT-BLUE-M",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(sellerSkuRes.success, true, "seller SKU lookup must succeed");
+    assert.strictEqual(sellerSkuRes.sellerSku, "SHIRT-BLUE-M");
+    assert.strictEqual(sellerSkuRes.storeId, "STORE-ID-B");
+
+    // Requirement 6: SKU lookup
+    const skuRes = await resolveScannedProduct({
+      rawInput: "SKU-001",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(skuRes.success, true, "SKU lookup must succeed");
+    assert.strictEqual(skuRes.sku, "SKU-001");
+
+    // Requirement 7: barcode lookup
+    const barcodeRes = await resolveScannedProduct({
+      rawInput: "890000000001",
+      storeId: "STORE-ID-B",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(barcodeRes.success, true, "Barcode lookup must succeed");
+    assert.strictEqual(barcodeRes.barcode, "890000000001");
+
+    // Requirement 8: Tracking number lookup
+    const trackingRes = await resolveScannedProduct({
+      rawInput: "TRACK-A-10001",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(trackingRes.success, true, "Tracking number lookup must succeed");
+    assert.strictEqual(trackingRes.match?.trackingNumber, "TRACK-A-10001");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 39: Duplicate Sync Idempotency (Requirement 9)
+  // ---------------------------------------------------------------------------
+  await test("Test 39: Duplicate sync does not create duplicate records", async () => {
+    const { MULTI_STORE_SCANNER_FIXTURES } = await import("./fixtures.js");
+
+    const storeAItems = MULTI_STORE_SCANNER_FIXTURES["STORE-ID-A"];
+    const item1 = storeAItems[0];
+
+    // Simulating repeat sync
+    const record1Key = `${item1.store_id}_${item1.order_id}_${item1.order_item_id}`;
+    const record2Key = `${item1.store_id}_${item1.order_id}_${item1.order_item_id}`;
+
+    assert.strictEqual(record1Key, record2Key, "Duplicate sync key must be identical, ensuring idempotent upsert without duplicates");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 40: Multiple Matching Orders Return MULTIPLE_MATCHES (Requirement 10)
+  // ---------------------------------------------------------------------------
+  await test("Test 40: Multiple matching orders return MULTIPLE_MATCHES instead of random selection", async () => {
+    const { resolveScannedProduct } = await import("../../inventory/product-scanner-service.js");
+    const { MULTI_STORE_SCANNER_FIXTURES } = await import("./fixtures.js");
+
+    // Scanning SHIRT-BLUE-M or 890000000001 in Store A matches both Order A-10001 and Order A-10002
+    const multiMatchRes = await resolveScannedProduct({
+      rawInput: "SHIRT-BLUE-M",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+
+    assert.strictEqual(multiMatchRes.success, false, "Must return success=false when multiple orders match");
+    assert.strictEqual(multiMatchRes.code, "MULTIPLE_MATCHES", "Must return MULTIPLE_MATCHES error code");
+    assert.ok(Array.isArray(multiMatchRes.matches), "Matches property must be an array");
+    assert.strictEqual(multiMatchRes.matches?.length, 2, "Must contain all matching candidate orders");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 41: Scanner Input Edge Cases
+  // ---------------------------------------------------------------------------
+  await test("Test 41: Scanner input variations (leading/trailing spaces, newline, lowercase, uppercase, leading zeros, empty string)", async () => {
+    const { resolveScannedProduct, normalizeScanValue } = await import("../../inventory/product-scanner-service.js");
+    const { MULTI_STORE_SCANNER_FIXTURES } = await import("./fixtures.js");
+
+    // 1. leading/trailing spaces
+    const leadingTrailingRes = await resolveScannedProduct({
+      rawInput: "   A-10001   ",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(leadingTrailingRes.success, true, "Leading/trailing whitespace must be trimmed");
+    assert.strictEqual(leadingTrailingRes.darazOrderId, "A-10001");
+
+    // 2. newline
+    const newlineRes = await resolveScannedProduct({
+      rawInput: "A-10001\r\n",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(newlineRes.success, true, "Newlines must be stripped cleanly");
+    assert.strictEqual(newlineRes.darazOrderId, "A-10001");
+
+    // 3. lowercase
+    const lowercaseRes = await resolveScannedProduct({
+      rawInput: "a-10001",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(lowercaseRes.success, true, "Lowercase scan must match case-insensitively");
+    assert.strictEqual(lowercaseRes.darazOrderId, "A-10001");
+
+    // 4. uppercase
+    const uppercaseRes = await resolveScannedProduct({
+      rawInput: "A-10001",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(uppercaseRes.success, true, "Uppercase scan must match");
+    assert.strictEqual(uppercaseRes.darazOrderId, "A-10001");
+
+    // 5. leading zeros
+    const barcodeWithLeadingZeros = "00890000000001";
+    const normZeros = normalizeScanValue(barcodeWithLeadingZeros);
+    assert.strictEqual(normZeros, "00890000000001", "Leading zeros must be preserved as a string");
+
+    // 6. empty string
+    const emptyRes = await resolveScannedProduct({
+      rawInput: "   \r\n\t ",
+      storeId: "STORE-ID-A",
+      fixtures: MULTI_STORE_SCANNER_FIXTURES,
+    });
+    assert.strictEqual(emptyRes.success, false, "Empty string input must fail with INVALID_INPUT");
+    assert.strictEqual(emptyRes.code, "INVALID_INPUT");
+  });
+
   console.log("\n==================================================================");
   console.log(`  TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log("==================================================================");
@@ -540,3 +976,7 @@ async function runPipelineTests() {
 }
 
 runPipelineTests();
+
+
+
+

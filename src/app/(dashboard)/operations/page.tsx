@@ -5,8 +5,6 @@ import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { PrintableLabelModal } from "@/components/operations/PrintableLabelModal";
 import { PackingModal } from "@/components/operations/PackingModal";
 import { PickingModal } from "@/components/operations/PickingModal";
-import { ErrorCenterView } from "@/components/operations/ErrorCenterView";
-import { AuditLogsView } from "@/components/operations/AuditLogsView";
 import {
   CheckSquare,
   Search,
@@ -29,7 +27,8 @@ import {
   Eye,
   Check,
   Building2,
-  UserCheck
+  UserCheck,
+  X
 } from "lucide-react";
 
 export default function OperationsPage() {
@@ -64,7 +63,11 @@ export default function OperationsPage() {
   // Active Picking & Packing Modal Orders
   const [packingOrder, setPackingOrder] = useState<any | null>(null);
   const [pickingOrder, setPickingOrder] = useState<any | null>(null);
-  const [mainMode, setMainMode] = useState<"operations" | "errors" | "audit">("operations");
+
+  // Scanner State & Error Handling
+  const [scanError, setScanError] = useState<string | null>(null);
+  const [multipleMatches, setMultipleMatches] = useState<any[] | null>(null);
+  const [scanLoading, setScanLoading] = useState(false);
 
   const fetchOperations = async () => {
     setLoading(true);
@@ -99,12 +102,56 @@ export default function OperationsPage() {
     fetchOperations();
   }, [page, limit, searchQuery, stageTab, barcodeInput]);
 
-  // Handle Barcode Scan Submit
-  const handleBarcodeSubmit = (e: React.FormEvent) => {
+  // Handle Automated Barcode Scan Submit
+  const handleBarcodeSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!barcodeInput.trim()) return;
 
-    fetchOperations();
+    setScanError(null);
+    setMultipleMatches(null);
+    setScanLoading(true);
+
+    try {
+      const res = await fetch("/api/inventory/scan", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ rawInput: barcodeInput }),
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.match) {
+        const matched = data.match;
+        let targetOrder = orders.find(
+          (o) => o.id === matched.order_id || o.daraz_order_id === matched.daraz_order_id
+        );
+
+        if (!targetOrder) {
+          await fetchOperations();
+          targetOrder = orders.find(
+            (o) => o.id === matched.order_id || o.daraz_order_id === matched.daraz_order_id
+          );
+        }
+
+        if (targetOrder) {
+          if (!targetOrder.is_packed && (targetOrder.status === "pending" || targetOrder.status === "unpaid")) {
+            setPickingOrder(targetOrder);
+          } else if (!targetOrder.is_packed) {
+            setPackingOrder(targetOrder);
+          } else {
+            setSelectedPrintOrder(targetOrder);
+          }
+        }
+      } else if (data.code === "MULTIPLE_MATCHES" && Array.isArray(data.matches)) {
+        setMultipleMatches(data.matches);
+      } else {
+        setScanError(data.message || "No matching order or product was found for this store.");
+      }
+    } catch (err: any) {
+      setScanError(err.message || "Failed to resolve scan input.");
+    } finally {
+      setScanLoading(false);
+    }
   };
 
   // Select All Checkbox Handler
@@ -193,6 +240,20 @@ export default function OperationsPage() {
     document.body.removeChild(link);
   };
 
+  const handleOpenMatchedOrder = (orderId: string) => {
+    const targetOrder = orders.find((o) => o.id === orderId || o.daraz_order_id === orderId);
+    setMultipleMatches(null);
+    if (targetOrder) {
+      if (!targetOrder.is_packed && (targetOrder.status === "pending" || targetOrder.status === "unpaid")) {
+        setPickingOrder(targetOrder);
+      } else if (!targetOrder.is_packed) {
+        setPackingOrder(targetOrder);
+      } else {
+        setSelectedPrintOrder(targetOrder);
+      }
+    }
+  };
+
   return (
     <div className="space-y-6">
       {/* Header & Controls */}
@@ -264,11 +325,20 @@ export default function OperationsPage() {
           />
           <button
             type="submit"
-            className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 transition-all apple-press shadow-2xs shrink-0"
+            disabled={scanLoading}
+            className="rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 transition-all apple-press shadow-2xs shrink-0 disabled:opacity-50 flex items-center space-x-1"
           >
-            Scan & Find
+            {scanLoading ? <RefreshCw className="h-3.5 w-3.5 animate-spin" /> : null}
+            <span>Scan & Find</span>
           </button>
         </form>
+
+        {scanError && (
+          <div className="p-3 rounded-xl bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 flex items-center space-x-2 text-xs">
+            <AlertCircle className="h-4 w-4 shrink-0" />
+            <span>{scanError}</span>
+          </div>
+        )}
       </div>
 
       {/* Pipeline Stage Tabs */}
@@ -326,15 +396,11 @@ export default function OperationsPage() {
             setStageTab("shipped");
             setPage(1);
           }}
-          title="Filter handed to delivery"
-          className={`rounded-2xl border p-4 text-left shadow-sm transition-all ${
-            stageTab === "shipped" ? "border-emerald-500 bg-emerald-50" : "border-slate-200 bg-white hover:bg-slate-50"
+          className={`px-3.5 py-1.5 font-bold rounded-xl transition-all apple-press ${
+            stageTab === "shipped" ? "bg-emerald-600 text-white shadow-sm" : "text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800"
           }`}
         >
-          <span className="font-bold text-slate-500 uppercase tracking-wider text-[10px]">4. Handed to Delivery</span>
-          <p className="mt-1 text-2xl font-bold text-emerald-700">
-            {metrics.ordersShipped} orders
-          </p>
+          Handed to Delivery ({metrics.ordersShipped})
         </button>
       </div>
 
@@ -522,6 +588,62 @@ export default function OperationsPage() {
           </div>
         </div>
       </div>
+
+      {/* Multiple Matches Selection Modal */}
+      {multipleMatches && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+          <div className="w-full max-w-xl rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-4 text-xs">
+            <div className="flex items-center justify-between border-b pb-3">
+              <div className="flex items-center space-x-2">
+                <AlertCircle className="h-5 w-5 text-amber-500" />
+                <h3 className="font-extrabold text-slate-900 dark:text-white text-base">
+                  Multiple Matching Orders Found ({multipleMatches.length})
+                </h3>
+              </div>
+              <button onClick={() => setMultipleMatches(null)} className="p-1 rounded-full text-slate-400 hover:bg-slate-100">
+                <X className="h-5 w-5" />
+              </button>
+            </div>
+
+            <p className="text-slate-600 dark:text-slate-300">
+              The barcode/SKU matched multiple items across different orders. Please select the correct order to proceed:
+            </p>
+
+            <div className="max-h-72 overflow-y-auto space-y-2">
+              {multipleMatches.map((m, idx) => (
+                <div
+                  key={idx}
+                  className="flex items-center justify-between p-3 rounded-2xl border border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/40 hover:border-orange-400 transition-all"
+                >
+                  <div>
+                    <p className="font-bold text-slate-900 dark:text-white font-mono">
+                      Order #{m.daraz_order_id || m.order_id} &bull; Item: {m.order_item_id || "N/A"}
+                    </p>
+                    <p className="text-slate-500 font-semibold">{m.product_name || "Product"}</p>
+                    <p className="text-[11px] font-mono text-slate-400">SKU: {m.seller_sku || m.sku}</p>
+                  </div>
+
+                  <button
+                    onClick={() => handleOpenMatchedOrder(m.order_id || m.daraz_order_id)}
+                    className="rounded-xl bg-orange-600 px-3 py-1.5 font-bold text-white hover:bg-orange-700 transition-all"
+                  >
+                    Select Order
+                  </button>
+                </div>
+              ))}
+            </div>
+
+            <div className="flex justify-end pt-2">
+              <button
+                onClick={() => setMultipleMatches(null)}
+                className="px-4 py-2 font-bold text-slate-500 hover:bg-slate-100 rounded-xl"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* Picking Modal */}
       {pickingOrder && (

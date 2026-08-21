@@ -308,12 +308,16 @@ export interface Database {
       order_items: {
         Row: {
           id: string;
+          store_id?: string | null;
           order_id: string;
           daraz_order_id: string;
           order_item_id: string;
           name: string;
           seller_sku: string;
+          sku?: string | null;
           shop_sku: string | null;
+          daraz_sku_id?: string | null;
+          barcode?: string | null;
           item_id: string | null;
           product_id: string | null;
           variation: string | null;

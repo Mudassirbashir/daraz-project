@@ -1,7 +1,9 @@
 "use client";
 
 import React, { useState } from "react";
-import { X, CheckCircle2, AlertCircle, PackageCheck, Scan, RefreshCw } from "lucide-react";
+import { X, CheckCircle2, AlertCircle, PackageCheck, Scan, RefreshCw, Check, Info } from "lucide-react";
+import { normalizeScanValue, resolveScannedIdentifier, ScanMatchItem } from "@/lib/inventory/product-scanner-service";
+import { OrderSelectionModal } from "./OrderSelectionModal";
 
 interface OrderItem {
   id: string;
@@ -30,8 +32,14 @@ export function PickingModal({ order, onClose, onPickingCompleted }: PickingModa
 
   const [items, setItems] = useState<OrderItem[]>(initialItems);
   const [loading, setLoading] = useState(false);
+  const [isScanning, setIsScanning] = useState(false);
   const [errorMessage, setErrorMessage] = useState("");
+  const [scanInfoMessage, setScanInfoMessage] = useState<string | null>(null);
   const [scanSkuInput, setScanSkuInput] = useState("");
+
+  // Multiple Matches Modal State
+  const [multipleMatches, setMultipleMatches] = useState<ScanMatchItem[] | null>(null);
+  const [multipleMatchRawInput, setMultipleMatchRawInput] = useState("");
 
   const handleIncrementPicked = (itemId: string) => {
     setItems((prev) =>
@@ -57,25 +65,89 @@ export function PickingModal({ order, onClose, onPickingCompleted }: PickingModa
     );
   };
 
-  const handleScanSubmit = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!scanSkuInput.trim()) return;
+  const processPickedMatch = (match: ScanMatchItem | any) => {
+    setErrorMessage("");
 
-    const term = scanSkuInput.trim().toLowerCase();
-    const matched = items.find((item) => {
-      const sSku = (item.seller_sku || (item as any).sku || "").toLowerCase();
-      const oId = (item.order_item_id || item.id || "").toLowerCase();
-      const name = (item.name || "").toLowerCase();
-      return sSku === term || oId === term || (sSku.length > 0 && term.includes(sSku)) || name.includes(term);
+    const targetOrdItemId = match.orderItemId || match.order_item_id || "";
+    const targetSellerSku = (match.sellerSku || match.seller_sku || match.sku || "").toLowerCase();
+    const targetBarcode = (match.barcode || "").toLowerCase();
+
+    // Check if match belongs to current order items list
+    const matchedIdx = items.findIndex((it) => {
+      const itOrdItemId = (it.order_item_id || it.id || "").toLowerCase();
+      const itSku = (it.seller_sku || "").toLowerCase();
+      return (
+        (targetOrdItemId && itOrdItemId === targetOrdItemId.toLowerCase()) ||
+        (targetSellerSku && itSku === targetSellerSku) ||
+        (targetBarcode && itSku === targetBarcode)
+      );
     });
 
-    if (matched) {
-      handleIncrementPicked(matched.id || matched.order_item_id);
+    const matchType = match.matchType || "barcode";
+    const prodName = match.productName || match.product_name || match.sellerSku || match.seller_sku || "Item";
+
+    if (matchedIdx !== -1) {
+      const itemToPick = items[matchedIdx];
+      handleIncrementPicked(itemToPick.id || itemToPick.order_item_id);
+      setScanInfoMessage(
+        `✓ Match Verified [${matchType.toUpperCase()}]: ${prodName} (${itemToPick.seller_sku}) picked (+1).`
+      );
       setScanSkuInput("");
     } else {
-      setErrorMessage(`SKU/Barcode '${scanSkuInput.trim()}' not found in this order's items.`);
-      setTimeout(() => setErrorMessage(""), 3500);
+      // Belongs to a different order or general store product
+      const ordId = match.darazOrderId || match.daraz_order_id || match.orderId || "Store Catalog";
+      const storeName = match.store?.name || "Daraz Store";
+      setScanInfoMessage(
+        `ℹ Scanned Product Found [${matchType.toUpperCase()}]: "${prodName}" associated with Order #${ordId} (${storeName}). Not in this current picking batch.`
+      );
+      setScanSkuInput("");
     }
+  };
+
+  const handleScanSubmit = async (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!scanSkuInput) return;
+
+    const term = normalizeScanValue(scanSkuInput);
+    if (!term) return;
+
+    setIsScanning(true);
+    setErrorMessage("");
+    setScanInfoMessage(null);
+
+    try {
+      const result = await resolveScannedIdentifier({
+        rawInput: term,
+        storeId: order.store_id || order.storeId,
+        orderId: order.id,
+      });
+
+      if (result.code === "MULTIPLE_MATCHES" || (result.matches && result.matches.length > 1)) {
+        setMultipleMatches(result.matches || []);
+        setMultipleMatchRawInput(term);
+        return;
+      }
+
+      if (!result.success || (!result.match && !result.orderId && !result.sellerSku)) {
+        setErrorMessage(
+          result.message || result.error || `No matching order, item, or barcode found for input "${term}".`
+        );
+        return;
+      }
+
+      const matchItem = result.match || (result as any);
+      processPickedMatch(matchItem);
+    } catch (err: any) {
+      setErrorMessage(err.message || "An error occurred during scanner resolution.");
+    } finally {
+      setIsScanning(false);
+    }
+  };
+
+  const handleSelectMultipleMatch = (match: ScanMatchItem) => {
+    setMultipleMatches(null);
+    setMultipleMatchRawInput("");
+    processPickedMatch(match);
   };
 
   const handleSubmitPicking = async (markAll: boolean = false) => {
@@ -123,177 +195,209 @@ export function PickingModal({ order, onClose, onPickingCompleted }: PickingModa
   const allItemsPicked = items.length > 0 && items.every((item) => item.picked_quantity >= item.quantity);
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
-      <div className="w-full max-w-2xl rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6">
-        
-        {/* Header */}
-        <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
-          <div className="flex items-center space-x-3">
-            <div className="p-2.5 rounded-2xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400">
-              <PackageCheck className="h-6 w-6" />
+    <>
+      <div className="fixed inset-0 z-50 flex items-center justify-center bg-slate-900/60 backdrop-blur-sm p-4">
+        <div className="w-full max-w-2xl rounded-3xl bg-white dark:bg-slate-900 p-6 shadow-2xl border border-slate-200 dark:border-slate-800 space-y-6">
+          
+          {/* Header */}
+          <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-4">
+            <div className="flex items-center space-x-3">
+              <div className="p-2.5 rounded-2xl bg-blue-50 dark:bg-blue-500/10 text-blue-600 dark:text-blue-400">
+                <PackageCheck className="h-6 w-6" />
+              </div>
+              <div>
+                <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
+                  Warehouse Picking Station
+                </h2>
+                <p className="text-xs text-slate-500 dark:text-slate-400">
+                  Order #{order.daraz_order_id} &bull; Customer: {order.customer_name || "N/A"}
+                </p>
+              </div>
             </div>
-            <div>
-              <h2 className="text-lg font-extrabold text-slate-900 dark:text-white">
-                Warehouse Picking Station
-              </h2>
-              <p className="text-xs text-slate-500 dark:text-slate-400">
-                Order #{order.daraz_order_id} &bull; Customer: {order.customer_name || "N/A"}
-              </p>
-            </div>
+
+            <button
+              onClick={onClose}
+              className="rounded-full p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600"
+            >
+              <X className="h-5 w-5" />
+            </button>
           </div>
 
-          <button
-            onClick={onClose}
-            className="rounded-full p-2 text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 hover:text-slate-600"
-          >
-            <X className="h-5 w-5" />
-          </button>
-        </div>
-
-        {/* Scan Barcode Field */}
-        <form onSubmit={handleScanSubmit} className="flex gap-2">
-          <div className="relative flex-1">
-            <Scan className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
-            <input
-              type="text"
-              placeholder="Scan SKU barcode or type SKU..."
-              value={scanSkuInput}
-              onChange={(e) => setScanSkuInput(e.target.value)}
-              className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 pl-9 pr-4 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
-            />
-          </div>
-          <button
-            type="submit"
-            className="rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-4 py-2.5 font-bold hover:opacity-90"
-          >
-            Verify SKU
-          </button>
-        </form>
-
-        {errorMessage && (
-          <div className="p-3 rounded-xl bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 flex items-center space-x-2">
-            <AlertCircle className="h-4 w-4 shrink-0" />
-            <span>{errorMessage}</span>
-          </div>
-        )}
-
-        {/* Item List */}
-        <div className="space-y-3">
-          <h3 className="font-bold text-slate-700 dark:text-slate-300">Items to Pick</h3>
-          {items.length === 0 ? (
-            <div className="p-6 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/20">
-              <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
-                No items associated with this order.
-              </p>
+          {/* Scan Barcode Field */}
+          <form onSubmit={handleScanSubmit} className="flex gap-2">
+            <div className="relative flex-1">
+              <Scan className="absolute left-3 top-3 h-4 w-4 text-slate-400" />
+              <input
+                type="text"
+                placeholder="Scan SKU barcode or type SKU..."
+                value={scanSkuInput}
+                onChange={(e) => setScanSkuInput(e.target.value)}
+                className="w-full rounded-xl border border-slate-200 dark:border-slate-700 bg-slate-50 dark:bg-slate-800/50 pl-9 pr-4 py-2.5 text-xs font-mono text-slate-900 dark:text-white focus:outline-none focus:ring-2 focus:ring-blue-500"
+              />
             </div>
-          ) : (
-            items.map((item) => {
-              const isDone = item.picked_quantity >= item.quantity;
-              return (
-                <div
-                  key={item.id || item.order_item_id}
-                  className={`p-4 rounded-2xl border transition-all ${
-                    isDone
-                      ? "bg-emerald-50/60 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30"
-                      : "bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700"
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-4">
-                    <div className="flex items-center space-x-3">
-                      {item.product_main_image ? (
-                        <img
-                          src={item.product_main_image}
-                          alt={item.name}
-                          className="h-12 w-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700"
-                        />
-                      ) : (
-                        <div className="h-12 w-12 rounded-xl bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-500">
-                          SKU
+            <button
+              type="submit"
+              disabled={isScanning}
+              className="rounded-xl bg-slate-900 dark:bg-slate-100 text-white dark:text-slate-900 px-4 py-2.5 font-bold hover:opacity-90 disabled:opacity-50 inline-flex items-center space-x-1"
+            >
+              {isScanning ? (
+                <>
+                  <RefreshCw className="h-3.5 w-3.5 animate-spin" />
+                  <span>Scanning...</span>
+                </>
+              ) : (
+                <span>Verify Scan</span>
+              )}
+            </button>
+          </form>
+
+          {/* Success Banner */}
+          {scanInfoMessage && (
+            <div className="p-3 rounded-xl bg-emerald-50 text-emerald-800 dark:bg-emerald-900/30 dark:text-emerald-300 border border-emerald-200 flex items-center space-x-2 text-xs">
+              <Check className="h-4 w-4 shrink-0 text-emerald-600" />
+              <span>{scanInfoMessage}</span>
+            </div>
+          )}
+
+          {/* Error Banner */}
+          {errorMessage && (
+            <div className="p-3 rounded-xl bg-red-50 text-red-700 dark:bg-red-900/30 dark:text-red-300 flex items-center space-x-2 text-xs">
+              <AlertCircle className="h-4 w-4 shrink-0" />
+              <span>{errorMessage}</span>
+            </div>
+          )}
+
+          {/* Item List */}
+          <div className="space-y-3">
+            <h3 className="font-bold text-slate-700 dark:text-slate-300 text-sm">Items to Pick</h3>
+            {items.length === 0 ? (
+              <div className="p-6 text-center rounded-2xl border border-dashed border-slate-200 dark:border-slate-800 bg-slate-50 dark:bg-slate-800/20">
+                <p className="text-sm font-semibold text-slate-500 dark:text-slate-400">
+                  No items associated with this order.
+                </p>
+              </div>
+            ) : (
+              items.map((item) => {
+                const isDone = item.picked_quantity >= item.quantity;
+                return (
+                  <div
+                    key={item.id || item.order_item_id}
+                    className={`p-4 rounded-2xl border transition-all ${
+                      isDone
+                        ? "bg-emerald-50/60 dark:bg-emerald-500/10 border-emerald-300 dark:border-emerald-500/30"
+                        : "bg-slate-50 dark:bg-slate-800/40 border-slate-200 dark:border-slate-700"
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-4">
+                      <div className="flex items-center space-x-3">
+                        {item.product_main_image ? (
+                          <img
+                            src={item.product_main_image}
+                            alt={item.name}
+                            className="h-12 w-12 rounded-xl object-cover border border-slate-200 dark:border-slate-700"
+                          />
+                        ) : (
+                          <div className="h-12 w-12 rounded-xl bg-slate-200 dark:bg-slate-700 flex items-center justify-center font-bold text-slate-500">
+                            SKU
+                          </div>
+                        )}
+                        <div>
+                          <p className="font-bold text-slate-900 dark:text-white">{item.name}</p>
+                          <p className="font-mono text-slate-500 text-[11px]">SKU: {item.seller_sku}</p>
                         </div>
-                      )}
-                      <div>
-                        <p className="font-bold text-slate-900 dark:text-white">{item.name}</p>
-                        <p className="font-mono text-slate-500 text-[11px]">SKU: {item.seller_sku}</p>
-                      </div>
-                    </div>
-
-                    {/* Quantity Controls */}
-                    <div className="flex items-center space-x-3">
-                      <div className="flex items-center border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
-                        <button
-                          type="button"
-                          onClick={() => handleDecrementPicked(item.id)}
-                          className="px-3 py-1.5 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                        >
-                          -
-                        </button>
-                        <span className="px-3 py-1.5 font-bold text-slate-900 dark:text-white font-mono">
-                          {item.picked_quantity} of {item.quantity}
-                        </span>
-                        <button
-                          type="button"
-                          onClick={() => handleIncrementPicked(item.id)}
-                          className="px-3 py-1.5 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
-                        >
-                          +
-                        </button>
                       </div>
 
-                      {isDone ? (
-                        <CheckCircle2 className="h-6 w-6 text-emerald-500 shrink-0" />
-                      ) : (
-                        <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 shrink-0">
-                          Pending
-                        </span>
-                      )}
+                      {/* Quantity Controls */}
+                      <div className="flex items-center space-x-3">
+                        <div className="flex items-center border border-slate-300 dark:border-slate-700 rounded-xl overflow-hidden bg-white dark:bg-slate-900">
+                          <button
+                            type="button"
+                            onClick={() => handleDecrementPicked(item.id)}
+                            className="px-3 py-1.5 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                          >
+                            -
+                          </button>
+                          <span className="px-3 py-1.5 font-bold text-slate-900 dark:text-white font-mono">
+                            {item.picked_quantity} of {item.quantity}
+                          </span>
+                          <button
+                            type="button"
+                            onClick={() => handleIncrementPicked(item.id)}
+                            className="px-3 py-1.5 font-bold hover:bg-slate-100 dark:hover:bg-slate-800 text-slate-700 dark:text-slate-300"
+                          >
+                            +
+                          </button>
+                        </div>
+
+                        {isDone ? (
+                          <CheckCircle2 className="h-6 w-6 text-emerald-500 shrink-0" />
+                        ) : (
+                          <span className="text-[11px] font-bold text-amber-600 dark:text-amber-400 shrink-0">
+                            Pending
+                          </span>
+                        )}
+                      </div>
                     </div>
                   </div>
-                </div>
-              );
-            })
-          )}
-        </div>
+                );
+              })
+            )}
+          </div>
 
-        {/* Footer Actions */}
-        <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
-          <button
-            type="button"
-            onClick={() => handleSubmitPicking(true)}
-            disabled={loading || items.length === 0}
-            className="px-4 py-2 font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
-          >
-            Mark All as Picked
-          </button>
-
-          <div className="flex items-center space-x-3">
+          {/* Footer Actions */}
+          <div className="flex items-center justify-between border-t border-slate-100 dark:border-slate-800 pt-4">
             <button
               type="button"
-              onClick={onClose}
-              className="px-4 py-2 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              onClick={() => handleSubmitPicking(true)}
+              disabled={loading || items.length === 0}
+              className="px-4 py-2 font-bold text-slate-600 dark:text-slate-400 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl transition-all disabled:opacity-50 disabled:cursor-not-allowed"
             >
-              Cancel
+              Mark All as Picked
             </button>
 
-            <button
-              type="button"
-              onClick={() => handleSubmitPicking(false)}
-              disabled={loading || !allItemsPicked || items.length === 0}
-              className={`inline-flex items-center space-x-2 rounded-xl px-5 py-2.5 font-bold text-white shadow-md transition-all ${
-                allItemsPicked && items.length > 0
-                  ? "bg-emerald-600 hover:bg-emerald-700"
-                  : "bg-slate-400 cursor-not-allowed"
-              }`}
-            >
-              {loading ? (
-                <RefreshCw className="h-4 w-4 animate-spin" />
-              ) : (
-                <PackageCheck className="h-4 w-4" />
-              )}
-              <span>{allItemsPicked && items.length > 0 ? "Complete Picking" : `${items.filter(i=>i.picked_quantity>=i.quantity).length}/${items.length} Picked`}</span>
-            </button>
+            <div className="flex items-center space-x-3">
+              <button
+                type="button"
+                onClick={onClose}
+                className="px-4 py-2 font-bold text-slate-500 hover:bg-slate-100 dark:hover:bg-slate-800 rounded-xl"
+              >
+                Cancel
+              </button>
+
+              <button
+                type="button"
+                onClick={() => handleSubmitPicking(false)}
+                disabled={loading || !allItemsPicked || items.length === 0}
+                className={`inline-flex items-center space-x-2 rounded-xl px-5 py-2.5 font-bold text-white shadow-md transition-all ${
+                  allItemsPicked && items.length > 0
+                    ? "bg-emerald-600 hover:bg-emerald-700"
+                    : "bg-slate-400 cursor-not-allowed"
+                }`}
+              >
+                {loading ? (
+                  <RefreshCw className="h-4 w-4 animate-spin" />
+                ) : (
+                  <PackageCheck className="h-4 w-4" />
+                )}
+                <span>{allItemsPicked && items.length > 0 ? "Complete Picking" : `${items.filter(i=>i.picked_quantity>=i.quantity).length}/${items.length} Picked`}</span>
+              </button>
+            </div>
           </div>
         </div>
       </div>
-    </div>
+
+      {/* Multiple Orders Match Dialog */}
+      <OrderSelectionModal
+        isOpen={Boolean(multipleMatches && multipleMatches.length > 0)}
+        rawInput={multipleMatchRawInput}
+        matches={multipleMatches || []}
+        onClose={() => {
+          setMultipleMatches(null);
+          setMultipleMatchRawInput("");
+        }}
+        onSelectMatch={handleSelectMultipleMatch}
+      />
+    </>
   );
 }
+

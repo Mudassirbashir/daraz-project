@@ -20,9 +20,10 @@ import {
   Check,
   Shield,
   Zap,
-  Play
+  Play,
+  Lock,
 } from "lucide-react";
-import { DarazStoreSyncSettings } from "@/lib/daraz/sync-settings-service";
+import { DarazStoreSyncSettings, REQUIRED_OPERATIONAL_FIELDS } from "@/lib/daraz/sync-settings-service";
 
 interface StoreItem {
   id: string;
@@ -111,6 +112,13 @@ export function DarazSyncSettingsControl() {
 
   const handleToggleSetting = async (key: keyof Omit<DarazStoreSyncSettings, "id" | "store_id" | "updated_at">) => {
     if (!settings || !selectedStoreId) return;
+
+    // Do not allow toggling operational required scanner fields off
+    if (REQUIRED_OPERATIONAL_FIELDS.includes(key)) {
+      setErrorMessage("This module is required for warehouse Picking, Packing, and Barcode/Order Scanning functionality and cannot be disabled.");
+      setTimeout(() => setErrorMessage(null), 4000);
+      return;
+    }
 
     const newValue = !settings[key];
     const updatedSettings = {
@@ -258,7 +266,7 @@ export function DarazSyncSettingsControl() {
           </div>
           <div>
             <h2 className="font-bold text-slate-900 dark:text-white text-sm">Daraz Sync Settings</h2>
-            <p className="text-[11px] text-slate-500">Configure staged & incremental data synchronization modules per store account.</p>
+            <p className="text-[11px] text-slate-500">Configure core operational data and optional heavy sync modules per store account.</p>
           </div>
         </div>
 
@@ -294,137 +302,179 @@ export function DarazSyncSettingsControl() {
             </div>
           )}
 
-          {/* Section 1: Core Data Modules (ON by Default) */}
+          {/* Section 1: Core Operational Data (ON by Default) */}
           <div className="rounded-3xl border border-slate-200/80 dark:border-slate-800 bg-white dark:bg-slate-900 p-6 shadow-sm space-y-4">
             <div className="flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3">
               <div>
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center space-x-2">
                   <Zap className="h-4 w-4 text-emerald-500" />
-                  <span>Core Operational Data Modules</span>
+                  <span>CORE OPERATIONAL DATA</span>
                 </h3>
-                <p className="text-[10px] text-slate-500">Essential fast ERP sync data enabled by default for accurate operational metrics.</p>
+                <p className="text-[11px] text-slate-500">Essential fast sync modules enabled by default. Barcode, SKU, Seller SKU, Order ID, and Order Item ID are required for warehouse scanner functionality.</p>
               </div>
               <span className="rounded-xl bg-emerald-50 text-emerald-700 dark:bg-emerald-500/20 dark:text-emerald-300 border border-emerald-200 text-[10px] font-bold px-2.5 py-1">
-                High Priority
+                Enabled by Default
               </span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Orders */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-blue-100 dark:bg-blue-500/20 text-blue-600 flex items-center justify-center shrink-0">
-                    <ShoppingCart className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Orders</h4>
-                    <p className="text-[10px] text-slate-500">Sync Daraz sales orders and customer purchase status</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-blue-100 dark:bg-blue-500/20 text-blue-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <ShoppingCart className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h4 className="font-bold text-slate-900 dark:text-white">Orders & Tracking Numbers</h4>
+                        <span className="rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-300/40 text-[9px] font-bold px-2 py-0.5 flex items-center space-x-1 shrink-0">
+                          <Lock className="h-2.5 w-2.5" />
+                          <span>Required for Operations</span>
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Syncs Daraz sales orders, order IDs, statuses, and courier tracking numbers.</p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-1">
+                        Order ID & Tracking Number are required for Picking, Packing, and Order Scanning.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("orders")}
                     disabled={Boolean(syncingModule)}
                     title="Sync orders only"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "orders" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "orders" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Orders</span>
                   </button>
-                  <label className="relative inline-flex items-center cursor-pointer">
+                  <label className="relative inline-flex items-center cursor-not-allowed opacity-80" title="Required for operations and warehouse scanner functionality. Cannot be disabled.">
                     <input
                       type="checkbox"
-                      checked={settings.orders_enabled}
-                      onChange={() => handleToggleSetting("orders_enabled")}
+                      checked={true}
+                      disabled={true}
                       className="sr-only peer"
                     />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-orange-500"></div>
+                    <div className="w-9 h-5 bg-orange-500 peer-focus:outline-none rounded-full peer dark:bg-orange-500 after:content-[''] after:absolute after:top-[2px] after:left-[18px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                   </label>
                 </div>
               </div>
 
-              {/* Order Items */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 flex items-center justify-center shrink-0">
-                    <Layers className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Order Line Items</h4>
-                    <p className="text-[10px] text-slate-500">Required for Picking, Packing, and Barcode Product Scanning</p>
+              {/* Order Line Items */}
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-indigo-100 dark:bg-indigo-500/20 text-indigo-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Layers className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h4 className="font-bold text-slate-900 dark:text-white">Order Line Items</h4>
+                        <span className="rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-300/40 text-[9px] font-bold px-2 py-0.5 flex items-center space-x-1 shrink-0">
+                          <Lock className="h-2.5 w-2.5" />
+                          <span>Required for Operations</span>
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Syncs individual order items, quantities, prices, and item fulfillment status.</p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-1">
+                        Order Item ID is required for Picking and Packing scanner validation.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("order_items")}
                     disabled={Boolean(syncingModule)}
                     title="Sync order items only"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "order_items" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "order_items" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Line Items</span>
                   </button>
-                  <label className="relative inline-flex items-center cursor-pointer">
+                  <label className="relative inline-flex items-center cursor-not-allowed opacity-80" title="Required for operations and warehouse scanner functionality. Cannot be disabled.">
                     <input
                       type="checkbox"
-                      checked={settings.order_items_enabled}
-                      onChange={() => handleToggleSetting("order_items_enabled")}
+                      checked={true}
+                      disabled={true}
                       className="sr-only peer"
                     />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-orange-500"></div>
+                    <div className="w-9 h-5 bg-orange-500 peer-focus:outline-none rounded-full peer dark:bg-orange-500 after:content-[''] after:absolute after:top-[2px] after:left-[18px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                   </label>
                 </div>
               </div>
 
-              {/* Products */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 flex items-center justify-center shrink-0">
-                    <Package className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Product Catalog & SKUs</h4>
-                    <p className="text-[10px] text-slate-500">Sync Daraz items, titles, Seller SKUs, and pricing</p>
+              {/* Products, SKUs & Barcodes */}
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Package className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <div className="flex items-center space-x-2">
+                        <h4 className="font-bold text-slate-900 dark:text-white">Products, SKUs & Barcodes</h4>
+                        <span className="rounded-xl bg-amber-500/10 text-amber-700 dark:text-amber-300 border border-amber-300/40 text-[9px] font-bold px-2 py-0.5 flex items-center space-x-1 shrink-0">
+                          <Lock className="h-2.5 w-2.5" />
+                          <span>Required for Operations</span>
+                        </span>
+                      </div>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Syncs catalog items, titles, SKUs, Seller SKUs, and Barcode identifiers.</p>
+                      <p className="text-[10px] text-amber-600 dark:text-amber-400 font-medium mt-1">
+                        Barcode, SKU, and Seller SKU are required for warehouse scanner product lookup.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("products")}
                     disabled={Boolean(syncingModule)}
                     title="Sync products only"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "products" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "products" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Products & SKUs</span>
                   </button>
-                  <label className="relative inline-flex items-center cursor-pointer">
+                  <label className="relative inline-flex items-center cursor-not-allowed opacity-80" title="Required for operations and warehouse scanner functionality. Cannot be disabled.">
                     <input
                       type="checkbox"
-                      checked={settings.products_enabled}
-                      onChange={() => handleToggleSetting("products_enabled")}
+                      checked={true}
+                      disabled={true}
                       className="sr-only peer"
                     />
-                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-orange-500"></div>
+                    <div className="w-9 h-5 bg-orange-500 peer-focus:outline-none rounded-full peer dark:bg-orange-500 after:content-[''] after:absolute after:top-[2px] after:left-[18px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all"></div>
                   </label>
                 </div>
               </div>
 
               {/* Inventory Stock */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-amber-100 dark:bg-amber-500/20 text-amber-600 flex items-center justify-center shrink-0">
-                    <RefreshCw className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Inventory / Stock</h4>
-                    <p className="text-[10px] text-slate-500">Sync live physical stock quantities and reserved units</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-amber-100 dark:bg-amber-500/20 text-amber-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <RefreshCw className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Inventory / Stock</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Syncs physical stock quantities, reserved units, and warehouse location inventory.</p>
+                      <p className="text-[10px] text-slate-400 font-medium mt-1">
+                        Tracks live stock levels across warehouse inventory locations.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("inventory")}
                     disabled={Boolean(syncingModule)}
                     title="Sync inventory stock only"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "inventory" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "inventory" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Stock</span>
                   </button>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
@@ -439,24 +489,30 @@ export function DarazSyncSettingsControl() {
               </div>
 
               {/* Active Seller Center Items */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 flex items-center justify-center shrink-0">
-                    <CheckCircle2 className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Active Seller Center Items</h4>
-                    <p className="text-[10px] text-slate-500">Export & reconcile live active listings published on Daraz</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <CheckCircle2 className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Active Seller Center Items</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Exports and reconciles live active listings published on Daraz Seller Center.</p>
+                      <p className="text-[10px] text-slate-400 font-medium mt-1">
+                        Reconciles active listings state against Daraz seller platform.
+                      </p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("active_items")}
                     disabled={Boolean(syncingModule)}
                     title="Export active items only"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "active_items" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "active_items" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Active Items</span>
                   </button>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
@@ -478,35 +534,38 @@ export function DarazSyncSettingsControl() {
               <div>
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm flex items-center space-x-2">
                   <Shield className="h-4 w-4 text-purple-500" />
-                  <span>Optional Heavy / Advanced Data Modules</span>
+                  <span>OPTIONAL HEAVY DATA</span>
                 </h3>
-                <p className="text-[10px] text-slate-500">Optional modules. Enable only when required to reduce Daraz API rate limits & bandwidth.</p>
+                <p className="text-[11px] text-slate-500">High-bandwidth optional data modules. Disabled by default to minimize Daraz API rate limit usage and maximize sync performance.</p>
               </div>
               <span className="rounded-xl bg-slate-100 text-slate-600 dark:bg-slate-800 dark:text-slate-400 border border-slate-200 text-[10px] font-bold px-2.5 py-1">
-                Optional
+                Disabled by Default
               </span>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
               {/* Product Images */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-rose-100 dark:bg-rose-500/20 text-rose-600 flex items-center justify-center shrink-0">
-                    <ImageIcon className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Product Images</h4>
-                    <p className="text-[10px] text-slate-500">Fetch product image URLs and thumbnail media references</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-rose-100 dark:bg-rose-500/20 text-rose-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <ImageIcon className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Product Images</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Fetches product images and thumbnail image media references from Daraz CDN.</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("product_images")}
                     disabled={Boolean(syncingModule)}
                     title="Sync product images"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "product_images" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "product_images" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Images</span>
                   </button>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
@@ -521,24 +580,27 @@ export function DarazSyncSettingsControl() {
               </div>
 
               {/* Shipping Labels */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 flex items-center justify-center shrink-0">
-                    <Truck className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Shipping Labels & PDFs</h4>
-                    <p className="text-[10px] text-slate-500">Fetch package tracking & printable airway bill documents</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-cyan-100 dark:bg-cyan-500/20 text-cyan-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Truck className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Shipping Labels & PDFs</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Fetches printable shipping label PDF documents and package airway bills.</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("shipping_labels")}
                     disabled={Boolean(syncingModule)}
                     title="Sync shipping labels"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "shipping_labels" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "shipping_labels" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Sync Airway Bills</span>
                   </button>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
@@ -553,17 +615,19 @@ export function DarazSyncSettingsControl() {
               </div>
 
               {/* Customer Address */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-teal-100 dark:bg-teal-500/20 text-teal-600 flex items-center justify-center shrink-0">
-                    <MapPin className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Customer Shipping Address</h4>
-                    <p className="text-[10px] text-slate-500">Sync full customer street address & delivery location</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-teal-100 dark:bg-teal-500/20 text-teal-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <MapPin className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Customer Shipping Address</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Syncs full customer street address, city, and delivery location details.</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
@@ -577,17 +641,19 @@ export function DarazSyncSettingsControl() {
               </div>
 
               {/* Customer Phone */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-orange-100 dark:bg-orange-500/20 text-orange-600 flex items-center justify-center shrink-0">
-                    <Phone className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Customer Phone Number</h4>
-                    <p className="text-[10px] text-slate-500">Sync recipient phone contacts where provided by Daraz API</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-orange-100 dark:bg-orange-500/20 text-orange-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <Phone className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Customer Phone Number</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Syncs recipient contact phone numbers when authorized by Daraz API.</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
                       type="checkbox"
@@ -601,24 +667,27 @@ export function DarazSyncSettingsControl() {
               </div>
 
               {/* Historical Orders */}
-              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
-                <div className="flex items-center space-x-3">
-                  <div className="h-9 w-9 rounded-xl bg-violet-100 dark:bg-violet-500/20 text-violet-600 flex items-center justify-center shrink-0">
-                    <History className="h-4 w-4" />
-                  </div>
-                  <div>
-                    <h4 className="font-bold text-slate-900 dark:text-white">Historical Orders Import</h4>
-                    <p className="text-[10px] text-slate-500">Fetch older historical order archives separately without blocking current orders</p>
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex flex-col justify-between space-y-3">
+                <div className="flex items-start justify-between">
+                  <div className="flex items-start space-x-3">
+                    <div className="h-9 w-9 rounded-xl bg-violet-100 dark:bg-violet-500/20 text-violet-600 flex items-center justify-center shrink-0 mt-0.5">
+                      <History className="h-4 w-4" />
+                    </div>
+                    <div>
+                      <h4 className="font-bold text-slate-900 dark:text-white">Historical Orders Import</h4>
+                      <p className="text-[10px] text-slate-500 mt-0.5">Imports older historical order archives separately without delaying active orders.</p>
+                    </div>
                   </div>
                 </div>
-                <div className="flex items-center space-x-2">
+                <div className="flex items-center justify-end space-x-2 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                   <button
                     onClick={() => handleTriggerModuleSync("historical_orders")}
                     disabled={Boolean(syncingModule)}
                     title="Import historical orders"
-                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                    className="px-2.5 py-1 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50 flex items-center space-x-1 text-[10px]"
                   >
-                    {syncingModule === "historical_orders" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                    {syncingModule === "historical_orders" ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                    <span>Import History</span>
                   </button>
                   <label className="relative inline-flex items-center cursor-pointer">
                     <input
@@ -663,11 +732,9 @@ export function DarazSyncSettingsControl() {
             </button>
           </div>
         </div>
-      ) : (
-        <div className="p-8 text-center text-slate-500 font-semibold bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800">
-          <span>Configure sync settings above.</span>
-        </div>
-      )}
+      ) : null}
     </div>
   );
 }
+
+

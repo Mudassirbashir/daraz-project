@@ -1,5 +1,6 @@
 import { signDarazRequest, DarazSignParams, normalizeApiPath } from './signature';
 import { createAdminClient } from '../supabase/admin';
+import { globalDarazRateLimiter } from './rate-limiter';
 
 export type DarazCountryCode = 'PK' | 'BD' | 'LK' | 'NP' | 'MM';
 
@@ -10,6 +11,48 @@ const GATEWAY_MAP: Record<DarazCountryCode, string> = {
   NP: 'https://api.daraz.com.np/rest',
   MM: 'https://api.shop.com.mm/rest',
 };
+
+export interface SyncApiLogParams {
+  storeId: string;
+  module: string;
+  endpoint: string;
+  page?: number;
+  startedAt: string;
+  completedAt?: string;
+  records?: number;
+  retryCount?: number;
+  errorCode?: string | null;
+  errorMessage?: string | null;
+}
+
+/**
+ * Persists detailed diagnostic logs into daraz_sync_logs table.
+ * Strictly redacts all access tokens, refresh tokens, and App Secrets.
+ */
+export async function logSyncApiRequest(params: SyncApiLogParams): Promise<void> {
+  if (!params.storeId) return;
+  const supabase = createAdminClient();
+  try {
+    const cleanErrorMsg = params.errorMessage
+      ? String(params.errorMessage).replace(/(access_token|refresh_token|app_secret|secret|password|sign)=[^&,\s]+/gi, '$1=[REDACTED]')
+      : null;
+
+    await supabase.from('daraz_sync_logs').insert({
+      store_id: params.storeId,
+      module: params.module,
+      endpoint: params.endpoint,
+      page: params.page || 1,
+      started_at: params.startedAt,
+      completed_at: params.completedAt || new Date().toISOString(),
+      records: params.records || 0,
+      retry_count: params.retryCount || 0,
+      error_code: params.errorCode || null,
+      error_message: cleanErrorMsg,
+    });
+  } catch (err: any) {
+    console.warn(`[DarazClient Log] Warning writing to daraz_sync_logs: ${err?.message}`);
+  }
+}
 
 export interface DarazClientConfig {
   storeId?: string;
@@ -95,6 +138,7 @@ export interface DarazOrder {
 }
 
 export class DarazClient {
+  public storeId?: string;
   private appKey: string;
   private appSecret: string;
   private baseUrl: string;
@@ -112,6 +156,7 @@ export class DarazClient {
         "own registered app credentials."
       );
     }
+    this.storeId = config.storeId;
     this.appKey = key.trim();
     this.appSecret = secret.trim();
     this.accessToken = config.accessToken;
@@ -157,12 +202,28 @@ export class DarazClient {
   ): Promise<T> {
     let attempt = 0;
     while (true) {
+      // Rate Throttling: respect maximum QPS limit before sending request
+      await globalDarazRateLimiter.acquire();
+
       try {
         const res = await requestFn();
+
+        let retryAfterMs = 0;
+        if (res && res.headers && typeof res.headers.get === 'function') {
+          const retryAfterHeader = res.headers.get('Retry-After') || res.headers.get('retry-after');
+          if (retryAfterHeader) {
+            const parsedSec = parseInt(retryAfterHeader, 10);
+            if (!isNaN(parsedSec) && parsedSec > 0) {
+              retryAfterMs = parsedSec * 1000;
+            }
+          }
+        }
+
         if (res.status === 429 || res.status >= 500) {
           if (attempt < maxRetries) {
             attempt++;
-            const backoffMs = Math.min(5000, 500 * Math.pow(2, attempt));
+            const jitter = Math.floor(Math.random() * 200);
+            const backoffMs = retryAfterMs > 0 ? retryAfterMs : Math.min(10000, 500 * Math.pow(2, attempt) + jitter);
             console.warn(`[DarazClient] HTTP ${res.status} on ${apiPath}. Retrying attempt ${attempt}/${maxRetries} in ${backoffMs}ms...`);
             await new Promise((r) => setTimeout(r, backoffMs));
             continue;
@@ -171,6 +232,31 @@ export class DarazClient {
         return await this.parseResponse<T>(res, apiPath);
       } catch (err: any) {
         const errMsg = String(err?.message || err);
+
+        // Check for authentication failure errors requiring token refresh
+        const isAuthError =
+          errMsg.includes('401') ||
+          errMsg.includes('InAuthorized') ||
+          errMsg.includes('IllegalAccessToken') ||
+          errMsg.includes('15') ||
+          errMsg.toLowerCase().includes('access token');
+
+        if (isAuthError && this.storeId && attempt === 0) {
+          try {
+            console.warn(`[DarazClient] Auth error "${errMsg}" on ${apiPath}. Attempting token refresh for store ${this.storeId}...`);
+            const { getValidStoreAccessToken } = await import('./store-utils');
+            const { accessToken } = await getValidStoreAccessToken(this.storeId);
+            if (accessToken) {
+              this.accessToken = accessToken;
+              attempt++;
+              console.log(`[DarazClient] Token refreshed successfully. Retrying request on ${apiPath}...`);
+              continue;
+            }
+          } catch (refErr: any) {
+            console.error(`[DarazClient] Automatic token refresh failed: ${refErr.message}`);
+          }
+        }
+
         const isRateLimitOrTransient =
           errMsg.includes('429') ||
           errMsg.includes('RateLimitExceeded') ||
@@ -182,7 +268,8 @@ export class DarazClient {
 
         if (isRateLimitOrTransient && attempt < maxRetries) {
           attempt++;
-          const backoffMs = Math.min(5000, 500 * Math.pow(2, attempt));
+          const jitter = Math.floor(Math.random() * 200);
+          const backoffMs = Math.min(10000, 500 * Math.pow(2, attempt) + jitter);
           console.warn(`[DarazClient] Transient error "${errMsg}" on ${apiPath}. Retrying attempt ${attempt}/${maxRetries} in ${backoffMs}ms...`);
           await new Promise((r) => setTimeout(r, backoffMs));
           continue;
@@ -241,12 +328,17 @@ export class DarazClient {
     };
   }
 
-  public async getCatalogItems(offset = 0, limit = 50, filter = 'all'): Promise<DarazCatalogResult> {
-    const response: any = await this.get('/products/get', {
+  public async getCatalogItems(offset = 0, limit = 50, filter = 'all', updateAfter?: string): Promise<DarazCatalogResult> {
+    const params: Record<string, string> = {
       filter: filter || 'all',
       offset: String(offset),
       limit: String(limit),
-    });
+    };
+    if (updateAfter) {
+      params.update_after = updateAfter;
+    }
+
+    const response: any = await this.get('/products/get', params);
 
     const dataObj = response.data || response.result || response;
     let rawProducts: any[] = [];
@@ -301,10 +393,13 @@ export class DarazClient {
           ? Math.round(parseFloat(String(specialPrice)) * 100) || undefined
           : undefined;
 
+        const rawBarcode = sku.barcode || sku.Barcode || sku.ean || sku.Ean || sku.gtin || rawAttributes.barcode || rawAttributes.Barcode || null;
+
         parsedSkus.push({
           seller_sku: sellerSku,
           daraz_sku_id: String(sku.SkuId || sku.skuId || sku.sku_id || sku.ShopSku || ''),
           shop_sku: String(sku.ShopSku || sku.shop_sku || sku.SkuId || ''),
+          barcode: rawBarcode ? String(rawBarcode).trim() : null,
           item_id: itemId,
           price_cents: priceCents,
           special_price_cents: specialPriceCents,

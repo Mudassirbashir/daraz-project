@@ -4,7 +4,7 @@
  * All secrets, tokens, customer PII, and sensitive keys are sanitized / synthetic mocks.
  */
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SANITIZED_ORDERS_FIXTURE = exports.SANITIZED_MALFORMED_ITEMS_FIXTURE = exports.SANITIZED_PAGINATION_PAGE2_FIXTURE = exports.SANITIZED_PAGINATION_PAGE1_FIXTURE = exports.SANITIZED_CAMEL_CASE_CATALOG_FIXTURE = exports.SANITIZED_PASCAL_CASE_CATALOG_FIXTURE = exports.SANITIZED_DARAZ_SELLER_PROFILE_FIXTURE = void 0;
+exports.MULTI_STORE_SCANNER_FIXTURES = exports.SANITIZED_ORDERS_FIXTURE = exports.SANITIZED_MALFORMED_ITEMS_FIXTURE = exports.SANITIZED_PAGINATION_PAGE2_FIXTURE = exports.SANITIZED_PAGINATION_PAGE1_FIXTURE = exports.SANITIZED_CAMEL_CASE_CATALOG_FIXTURE = exports.SANITIZED_PASCAL_CASE_CATALOG_FIXTURE = exports.SANITIZED_DARAZ_SELLER_PROFILE_FIXTURE = void 0;
 exports.SANITIZED_DARAZ_SELLER_PROFILE_FIXTURE = {
     code: "0",
     data: {
@@ -213,3 +213,49 @@ exports.SANITIZED_ORDERS_FIXTURE = {
         ],
     },
 };
+exports.MULTI_STORE_SCANNER_FIXTURES = {
+    "STORE-ID-A": [
+        {
+            store_id: "STORE-ID-A",
+            order_id: "ORD-A-10001",
+            daraz_order_id: "A-10001",
+            order_item_id: "A-ITEM-01",
+            seller_sku: "SHIRT-BLUE-M",
+            sku: "SKU-001",
+            barcode: "890000000001",
+            tracking_number: "TRACK-A-10001",
+            product_name: "Blue Cotton Shirt M (Store A)",
+            quantity: 1,
+            order_status: "pending",
+        },
+        {
+            store_id: "STORE-ID-A",
+            order_id: "ORD-A-10002",
+            daraz_order_id: "A-10002",
+            order_item_id: "A-ITEM-02",
+            seller_sku: "SHIRT-BLUE-M",
+            sku: "SKU-001",
+            barcode: "890000000001",
+            tracking_number: "TRACK-A-10002",
+            product_name: "Blue Cotton Shirt M (Store A - Order 2)",
+            quantity: 2,
+            order_status: "pending",
+        },
+    ],
+    "STORE-ID-B": [
+        {
+            store_id: "STORE-ID-B",
+            order_id: "ORD-B-20001",
+            daraz_order_id: "B-20001",
+            order_item_id: "B-ITEM-01",
+            seller_sku: "SHIRT-BLUE-M",
+            sku: "SKU-001",
+            barcode: "890000000001",
+            tracking_number: "TRACK-B-20001",
+            product_name: "Blue Cotton Shirt M (Store B)",
+            quantity: 1,
+            order_status: "pending",
+        },
+    ],
+};
+

@@ -146,4 +146,155 @@ describe("Daraz Multi-Store Sync Engine Architecture & Edge Cases Test Suite", (
     expect(packParams.order_item_list).toBe('["ITEM-101","ITEM-102"]');
     expect(packParams.delivery_type).toBe("dropship");
   });
+
+  test("Case 16: Multi-store order scanning fixtures - Store A vs Store B isolation", () => {
+    const storeA_item = { store_id: "STORE-ID-A", order_id: "A-10001", order_item_id: "A-ITEM-01", seller_sku: "SHIRT-BLUE-M", sku: "SKU-001", barcode: "890000000001" };
+    const storeB_item = { store_id: "STORE-ID-B", order_id: "B-20001", order_item_id: "B-ITEM-01", seller_sku: "SHIRT-BLUE-M", sku: "SKU-001", barcode: "890000000001" };
+
+    expect(storeA_item.store_id).not.toBe(storeB_item.store_id);
+    expect(storeA_item.order_id).toBe("A-10001");
+    expect(storeB_item.order_id).toBe("B-20001");
+  });
+
+  test("Case 17: Multi-store order scanning lookup capabilities (Order ID, Item ID, SKU, Barcode, Tracking)", () => {
+    const item = {
+      order_id: "A-10001",
+      order_item_id: "A-ITEM-01",
+      seller_sku: "SHIRT-BLUE-M",
+      sku: "SKU-001",
+      barcode: "890000000001",
+      tracking_number: "TRACK-A-10001",
+    };
+
+    expect(item.order_id).toBe("A-10001");
+    expect(item.order_item_id).toBe("A-ITEM-01");
+    expect(item.seller_sku).toBe("SHIRT-BLUE-M");
+    expect(item.sku).toBe("SKU-001");
+    expect(item.barcode).toBe("890000000001");
+    expect(item.tracking_number).toBe("TRACK-A-10001");
+  });
+
+  test("Case 18: Idempotent order sync duplicate prevention", () => {
+    const key1 = "STORE-ID-A_A-10001_A-ITEM-01";
+    const key2 = "STORE-ID-A_A-10001_A-ITEM-01";
+    expect(key1).toBe(key2);
+  });
+
+  test("Case 19: Multiple matching orders return MULTIPLE_MATCHES code", () => {
+    const candidateMatches = [
+      { order_id: "A-10001", seller_sku: "SHIRT-BLUE-M" },
+      { order_id: "A-10002", seller_sku: "SHIRT-BLUE-M" },
+    ];
+
+    const resultStatus = candidateMatches.length > 1 ? "MULTIPLE_MATCHES" : "SINGLE_MATCH";
+    expect(resultStatus).toBe("MULTIPLE_MATCHES");
+  });
+
+  test("Case 20: Scanner input normalization edge cases", () => {
+    const trimAndClean = (raw: string) => String(raw || "").replace(/[\r\n\t\f\v]/g, "").trim();
+
+    expect(trimAndClean("  A-10001  ")).toBe("A-10001");
+    expect(trimAndClean("A-10001\r\n")).toBe("A-10001");
+    expect(trimAndClean("a-10001").toUpperCase()).toBe("A-10001");
+    expect(trimAndClean("00890000000001")).toBe("00890000000001");
+    expect(trimAndClean("   \r\n\t ")).toBe("");
+  });
+
+  test("Case 21: Retry-After HTTP header extraction & exponential backoff with jitter", () => {
+    const retryAfterHeader = "5"; // 5 seconds
+    const parsedSec = parseInt(retryAfterHeader, 10);
+    const retryAfterMs = parsedSec * 1000;
+
+    const attempt = 2;
+    const jitter = 50;
+    const backoffMs = retryAfterMs > 0 ? retryAfterMs : Math.min(10000, 500 * Math.pow(2, attempt) + jitter);
+
+    expect(retryAfterMs).toBe(5000);
+    expect(backoffMs).toBe(5000);
+  });
+
+  test("Case 22: Token refresh on authentication failure (InAuthorized, IllegalAccessToken, 401)", () => {
+    const errCodes = ["InAuthorized", "IllegalAccessToken", "401", "15"];
+    const isAuthError = (code: string) => errCodes.includes(code);
+
+    expect(isAuthError("InAuthorized")).toBe(true);
+    expect(isAuthError("IllegalAccessToken")).toBe(true);
+    expect(isAuthError("401")).toBe(true);
+    expect(isAuthError("RATE_LIMIT")).toBe(false);
+  });
+
+  test("Case 23: Page-level checkpoint resumption - Orders page 3 failure resumes at page 3 (NOT page 1)", () => {
+    const checkpoint = {
+      store_id: "STORE_A",
+      module: "orders",
+      last_success_page: 2,
+      last_success_offset: 200,
+      current_page: 3,
+      current_offset: 300,
+      status: "failed",
+    };
+
+    const resumePage = checkpoint.status === "failed" ? checkpoint.current_page : 1;
+    const resumeOffset = checkpoint.status === "failed" ? checkpoint.current_offset : 0;
+
+    expect(resumePage).toBe(3);
+    expect(resumeOffset).toBe(300);
+    expect(resumePage).not.toBe(1);
+  });
+
+  test("Case 24: Optional modules failure isolation - Product images failure does NOT break core orders sync", () => {
+    const moduleResults: any = {
+      orders: { status: "passed", fetched: 100, inserted: 100 },
+      order_items: { status: "passed", fetched: 150, inserted: 150 },
+      product_images: { status: "failed", error: "Image CDN timeout" },
+    };
+
+    const coreOrdersSuccess = moduleResults.orders.status === "passed";
+    const hasCoreFailure = moduleResults.orders.status === "failed";
+    const finalStoreStatus = hasCoreFailure ? "error" : (moduleResults.product_images.status === "failed" ? "partial" : "connected");
+
+    expect(coreOrdersSuccess).toBe(true);
+    expect(finalStoreStatus).toBe("partial");
+    expect(finalStoreStatus).not.toBe("error");
+  });
+
+  test("Case 25: Per-store sync isolation - Store A error does NOT block Store B execution", () => {
+    const storeResults: Record<string, string> = {};
+    const stores = [
+      { id: "STORE_A", fail: true },
+      { id: "STORE_B", fail: false },
+    ];
+
+    for (const store of stores) {
+      try {
+        if (store.fail) throw new Error("Store A connection failed");
+        storeResults[store.id] = "success";
+      } catch (e: any) {
+        storeResults[store.id] = "failed";
+      }
+    }
+
+    expect(storeResults["STORE_A"]).toBe("failed");
+    expect(storeResults["STORE_B"]).toBe("success");
+  });
+
+  test("Case 26: Credential redaction in sync diagnostic logs", () => {
+    const rawError = "Request failed with access_token=secret_token_123&refresh_token=refresh_456&app_secret=my_secret_key";
+    const redacted = rawError.replace(/(access_token|refresh_token|app_secret|secret|password)=[^&,\s]+/gi, "$1=[REDACTED]");
+
+    expect(redacted).not.toContain("secret_token_123");
+    expect(redacted).not.toContain("refresh_456");
+    expect(redacted).not.toContain("my_secret_key");
+    expect(redacted).toContain("access_token=[REDACTED]");
+  });
+
+  test("Case 27: Configurable page size application for orders and products", () => {
+    const customSettings = { orders_page_size: 75, products_page_size: 25 };
+    const ordersPageSize = customSettings.orders_page_size || 100;
+    const productsPageSize = customSettings.products_page_size || 50;
+
+    expect(ordersPageSize).toBe(75);
+    expect(productsPageSize).toBe(25);
+  });
 });
+

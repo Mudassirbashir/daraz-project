@@ -1,9 +1,10 @@
 import { createAdminClient } from "../supabase/admin";
-import { DarazApiClient, sanitizeLogPayload, humanizeDarazApiError } from "./client";
+import { DarazApiClient, sanitizeLogPayload, humanizeDarazApiError, logSyncApiRequest } from "./client";
 import { DarazOrderStatus } from "../../types/database.types";
 import { mapDarazOrderStatus } from "./order-status";
 import { getValidStoreAccessToken } from "./store-utils";
 import { getStoreSyncSettings } from "./sync-settings-service";
+import { getSyncCheckpoint, saveSyncCheckpoint, clearSyncCheckpoint } from "./checkpoint-service";
 
 export interface ModuleResult {
   status: "passed" | "failed" | "skipped";
@@ -345,11 +346,33 @@ export async function executeDarazSync(
 
         // ── MODULE 2 & 3: Catalog Products & SKUs Pagination ──────────────────
         const catalogStart = Date.now();
+
+        const isFirstTimeSync = !store.last_synced_at || store.sync_status === "disconnected";
+        let incrementalUpdateAfter = "2020-01-01T00:00:00Z";
+
+        if (!isFirstTimeSync && store.last_synced_at) {
+          const safeOverlapMs = 24 * 60 * 60 * 1000;
+          const lastSyncTime = new Date(store.last_synced_at).getTime();
+          if (!isNaN(lastSyncTime)) {
+            incrementalUpdateAfter = new Date(lastSyncTime - safeOverlapMs).toISOString();
+          }
+        }
+
+        const catalogPageSize = syncSettings.products_page_size || 50;
+
+        // Load existing checkpoint for catalog pagination resume
+        const catalogCheckpoint = await getSyncCheckpoint(store.id, "catalog_products");
         let productOffset = 0;
-        const catalogPageSize = 50;
+        let catalogPageNum = 1;
+
+        if (catalogCheckpoint && catalogCheckpoint.status !== "completed") {
+          productOffset = catalogCheckpoint.current_offset || 0;
+          catalogPageNum = catalogCheckpoint.current_page || 1;
+          console.log(`[SyncEngine] Resuming catalog_products sync for store ${store.store_code} from checkpoint: page ${catalogPageNum} (offset=${productOffset})`);
+        }
+
         let reportedTotal = 0;
         let rawItemsReturnedThisPage = 0;
-        let catalogPageNum = 1;
 
         const syncedItemIds = new Set<string>();
         const syncedSellerSkus = new Set<string>();
@@ -364,10 +387,13 @@ export async function executeDarazSync(
           let pageAttempts = 0;
           const maxPageAttempts = 3;
           let pageFetchSuccess = false;
+          const pageStartTimeIso = new Date().toISOString();
+
+          const catalogIncrementalAfter = (!isFirstTimeSync && store.last_synced_at) ? incrementalUpdateAfter : undefined;
 
           while (pageAttempts < maxPageAttempts && !pageFetchSuccess) {
             try {
-              pageItems = await darazClient.getCatalogItems(productOffset, catalogPageSize);
+              pageItems = await darazClient.getCatalogItems(productOffset, catalogPageSize, "all", catalogIncrementalAfter);
               pageFetchSuccess = true;
             } catch (pageErr: any) {
               pageAttempts++;
@@ -383,7 +409,33 @@ export async function executeDarazSync(
           }
 
           if (!pageFetchSuccess || !pageItems) {
-            // Non-breaking page failure: advance offset and continue to attempt remaining pages
+            // Save checkpoint with status 'failed' to allow resuming from this failed page
+            await saveSyncCheckpoint({
+              store_id: store.id,
+              module: "catalog_products",
+              current_offset: productOffset,
+              current_page: catalogPageNum,
+              page_size: catalogPageSize,
+              total_records: reportedTotal,
+              last_success_offset: Math.max(0, productOffset - catalogPageSize),
+              last_success_page: Math.max(0, catalogPageNum - 1),
+              status: "failed",
+              update_after: catalogIncrementalAfter,
+            });
+
+            await logSyncApiRequest({
+              storeId: store.id,
+              module: "catalog_products",
+              endpoint: "/products/get",
+              page: catalogPageNum,
+              startedAt: pageStartTimeIso,
+              completedAt: new Date().toISOString(),
+              records: 0,
+              retryCount: pageAttempts,
+              errorCode: "PAGE_FETCH_ERROR",
+              errorMessage: catalogFetchError,
+            });
+
             productOffset += catalogPageSize;
             catalogPageNum++;
             await new Promise((r) => setTimeout(r, 200));
@@ -395,6 +447,33 @@ export async function executeDarazSync(
           storeSkippedItems += pageItems.skipped_items;
           storeSkippedSkus += pageItems.skipped_skus;
           totalFetchedProducts += pageItems.items.length;
+
+          // Save checkpoint progress after fetching page
+          await saveSyncCheckpoint({
+            store_id: store.id,
+            module: "catalog_products",
+            current_offset: productOffset + rawItemsReturnedThisPage,
+            current_page: catalogPageNum + 1,
+            page_size: catalogPageSize,
+            total_records: reportedTotal,
+            last_success_offset: productOffset,
+            last_success_page: catalogPageNum,
+            status: "in_progress",
+            update_after: catalogIncrementalAfter,
+          });
+
+          await logSyncApiRequest({
+            storeId: store.id,
+            module: "catalog_products",
+            endpoint: "/products/get",
+            page: catalogPageNum,
+            startedAt: pageStartTimeIso,
+            completedAt: new Date().toISOString(),
+            records: pageItems.items.length,
+            retryCount: pageAttempts - 1,
+            errorCode: null,
+            errorMessage: null,
+          });
 
           // Process catalog parent products and nested SKUs
           for (const item of pageItems.items) {
@@ -459,6 +538,21 @@ export async function executeDarazSync(
                 totalFetchedSkus++;
                 syncedSellerSkus.add(sku.seller_sku);
 
+                let resolvedBarcode: string | null = sku.barcode ? String(sku.barcode).trim() : null;
+                if (!resolvedBarcode) {
+                  try {
+                    const { data: bMap } = await supabase
+                      .from("barcode_mappings")
+                      .select("barcode")
+                      .eq("store_id", store.id)
+                      .eq("seller_sku", sku.seller_sku)
+                      .maybeSingle();
+                    if (bMap?.barcode) {
+                      resolvedBarcode = String(bMap.barcode).trim();
+                    }
+                  } catch (_) {}
+                }
+
                 const { data: existingListing } = await supabase
                   .from("listings")
                   .select("id")
@@ -482,6 +576,7 @@ export async function executeDarazSync(
                       daraz_sku_id: sku.daraz_sku_id || null,
                       seller_sku: sku.seller_sku,
                       shop_sku: sku.shop_sku || null,
+                      barcode: resolvedBarcode,
                       price_cents: sku.price_cents,
                       special_price_cents: sku.special_price_cents ?? null,
                       quantity: sku.quantity,
@@ -512,6 +607,7 @@ export async function executeDarazSync(
                       {
                         store_id: store.id,
                         sku: sku.seller_sku,
+                        barcode: resolvedBarcode,
                         title: item.title,
                         category: item.category || "General",
                         quantity_on_hand: sku.quantity,
@@ -542,6 +638,7 @@ export async function executeDarazSync(
                   seller_sku: sku.seller_sku,
                   daraz_item_id: item.item_id,
                   daraz_sku_id: sku.daraz_sku_id || null,
+                  barcode: resolvedBarcode,
                   title: item.title,
                   price_cents: sku.price_cents,
                   special_price_cents: sku.special_price_cents ?? null,
@@ -626,6 +723,7 @@ export async function executeDarazSync(
 
         if (rawItemsReturnedThisPage === 0 || productOffset >= reportedTotal) {
           catalogPaginationSucceeded = true;
+          await clearSyncCheckpoint(store.id, "catalog_products");
         }
 
         const catalogDuration = Date.now() - catalogStart;
@@ -747,31 +845,30 @@ export async function executeDarazSync(
 
         // ── MODULE 5 & 6: Orders & Order Items Pagination ─────────────────────
         const ordersStart = Date.now();
+        const ordersPageSize = syncSettings.orders_page_size || 100;
+
+        // Load existing checkpoint for orders pagination resume
+        const ordersCheckpoint = await getSyncCheckpoint(store.id, "orders");
         let orderOffset = 0;
-        const ordersPageSize = 100;
+        let orderPageNum = 1;
+
+        if (ordersCheckpoint && ordersCheckpoint.status !== "completed") {
+          orderOffset = ordersCheckpoint.current_offset || 0;
+          orderPageNum = ordersCheckpoint.current_page || 1;
+          console.log(`[SyncEngine] Resuming orders sync for store ${store.store_code} from checkpoint: page ${orderPageNum} (offset=${orderOffset})`);
+        }
+
         let totalOrdersReported = 0;
         let fetchedOrdersThisPage = 0;
-        let orderPageNum = 1;
         let ordersPaginationSucceeded = false;
         let ordersFetchError: string | null = null;
-
-        // ── FIX D: First-time sync wide historical range ────────────────────
-        const isFirstTimeSync = !store.last_synced_at || store.sync_status === "disconnected";
-        let incrementalUpdateAfter = "2020-01-01T00:00:00Z";
-
-        if (!isFirstTimeSync && store.last_synced_at) {
-          const safeOverlapMs = 24 * 60 * 60 * 1000;
-          const lastSyncTime = new Date(store.last_synced_at).getTime();
-          if (!isNaN(lastSyncTime)) {
-            incrementalUpdateAfter = new Date(lastSyncTime - safeOverlapMs).toISOString();
-          }
-        }
 
         do {
           let pageOrders;
           let ordAttempts = 0;
           const maxOrdAttempts = 3;
           let ordPageSuccess = false;
+          const pageStartTimeIso = new Date().toISOString();
 
           while (ordAttempts < maxOrdAttempts && !ordPageSuccess) {
             try {
@@ -791,7 +888,33 @@ export async function executeDarazSync(
           }
 
           if (!ordPageSuccess || !pageOrders) {
-            // Non-breaking orders page failure: advance offset and continue
+            // Save checkpoint with status 'failed' to allow resuming from this failed page
+            await saveSyncCheckpoint({
+              store_id: store.id,
+              module: "orders",
+              current_offset: orderOffset,
+              current_page: orderPageNum,
+              page_size: ordersPageSize,
+              total_records: totalOrdersReported,
+              last_success_offset: Math.max(0, orderOffset - ordersPageSize),
+              last_success_page: Math.max(0, orderPageNum - 1),
+              status: "failed",
+              update_after: incrementalUpdateAfter,
+            });
+
+            await logSyncApiRequest({
+              storeId: store.id,
+              module: "orders",
+              endpoint: "/orders/get",
+              page: orderPageNum,
+              startedAt: pageStartTimeIso,
+              completedAt: new Date().toISOString(),
+              records: 0,
+              retryCount: ordAttempts,
+              errorCode: "PAGE_FETCH_ERROR",
+              errorMessage: ordersFetchError,
+            });
+
             orderOffset += ordersPageSize;
             orderPageNum++;
             await new Promise((r) => setTimeout(r, 200));
@@ -800,6 +923,33 @@ export async function executeDarazSync(
 
           totalOrdersReported = pageOrders.total;
           fetchedOrdersThisPage = pageOrders.orders.length;
+
+          // Save checkpoint progress after fetching page
+          await saveSyncCheckpoint({
+            store_id: store.id,
+            module: "orders",
+            current_offset: orderOffset + fetchedOrdersThisPage,
+            current_page: orderPageNum + 1,
+            page_size: ordersPageSize,
+            total_records: totalOrdersReported,
+            last_success_offset: orderOffset,
+            last_success_page: orderPageNum,
+            status: "in_progress",
+            update_after: incrementalUpdateAfter,
+          });
+
+          await logSyncApiRequest({
+            storeId: store.id,
+            module: "orders",
+            endpoint: "/orders/get",
+            page: orderPageNum,
+            startedAt: pageStartTimeIso,
+            completedAt: new Date().toISOString(),
+            records: pageOrders.orders.length,
+            retryCount: ordAttempts - 1,
+            errorCode: null,
+            errorMessage: null,
+          });
 
           for (const ord of pageOrders.orders) {
             try {
@@ -945,23 +1095,45 @@ export async function executeDarazSync(
                   const items = await darazClient.getOrderItems(ord.order_id);
                   if (items && items.length > 0) {
                     const itemPayloads = await mapConcurrently(items, 3, async (item) => {
-                        let matchedProductId: string | null = null;
-                        if (item.seller_sku) {
+                        let matchedProductId: string | null = item.product_id ? String(item.product_id).trim() : (item.item_id ? String(item.item_id).trim() : null);
+                        let matchedBarcode: string | null = item.barcode ? String(item.barcode).trim() : null;
+                        let matchedDarazSkuId: string | null = item.daraz_sku_id ? String(item.daraz_sku_id).trim() : (item.sku_id ? String(item.sku_id).trim() : (item.SkuId ? String(item.SkuId).trim() : null));
+
+                        const cleanSellerSku = String(item.seller_sku || item.sku || "UNKNOWN_SKU").trim();
+
+                        if (cleanSellerSku && cleanSellerSku !== "UNKNOWN_SKU") {
                           try {
                             const { data: listingMatch } = await supabase
                               .from("listings")
-                              .select("daraz_item_id")
+                              .select("daraz_item_id, daraz_sku_id, barcode")
                               .eq("store_id", store.id)
-                              .eq("seller_sku", item.seller_sku)
+                              .eq("seller_sku", cleanSellerSku)
                               .maybeSingle();
 
-                            if (listingMatch?.daraz_item_id) {
-                              matchedProductId = listingMatch.daraz_item_id;
+                            if (listingMatch) {
+                              if (!matchedProductId && listingMatch.daraz_item_id) matchedProductId = listingMatch.daraz_item_id;
+                              if (!matchedDarazSkuId && listingMatch.daraz_sku_id) matchedDarazSkuId = listingMatch.daraz_sku_id;
+                              if (!matchedBarcode && listingMatch.barcode) matchedBarcode = listingMatch.barcode;
                             }
                           } catch (_) {}
+
+                          if (!matchedBarcode) {
+                            try {
+                              const { data: bMap } = await supabase
+                                .from("barcode_mappings")
+                                .select("barcode")
+                                .eq("store_id", store.id)
+                                .eq("seller_sku", cleanSellerSku)
+                                .maybeSingle();
+
+                              if (bMap?.barcode) {
+                                matchedBarcode = String(bMap.barcode).trim();
+                              }
+                            } catch (_) {}
+                          }
                         }
 
-                        const cleanOrderItemId = String(item.order_item_id || item.item_id || `${ord.order_id}_${Math.random()}`);
+                        const cleanOrderItemId = String(item.order_item_id || item.item_id || `${ord.order_id}_${Math.random()}`).trim();
 
                         return {
                           store_id: store.id,
@@ -969,16 +1141,19 @@ export async function executeDarazSync(
                           daraz_order_id: ord.order_id,
                           order_item_id: cleanOrderItemId,
                           name: item.name || `Item ${cleanOrderItemId}`,
-                          seller_sku: item.seller_sku || "UNKNOWN_SKU",
+                          seller_sku: cleanSellerSku,
+                          sku: cleanSellerSku,
                           shop_sku: item.shop_sku || null,
-                          item_id: cleanOrderItemId,
-                          product_id: matchedProductId,
+                          daraz_sku_id: matchedDarazSkuId || null,
+                          barcode: matchedBarcode || null,
+                          item_id: item.item_id ? String(item.item_id).trim() : (matchedProductId || cleanOrderItemId),
+                          product_id: matchedProductId || (item.item_id ? String(item.item_id).trim() : null),
                           quantity: item.quantity || 1,
                           item_price_cents: item.item_price_cents || 0,
                           paid_price_cents: item.paid_price_cents || 0,
                           status: item.status || mappedStatus || "pending",
                           shipment_provider: item.shipment_provider || null,
-                          tracking_code: item.tracking_code || null,
+                          tracking_code: item.tracking_code || ord.tracking_code || null,
                           product_main_image: item.product_main_image || null,
                           raw_item_payload: item.raw || item,
                           updated_at: timestamp,
@@ -1041,6 +1216,7 @@ export async function executeDarazSync(
 
         if (fetchedOrdersThisPage === 0 || orderOffset >= totalOrdersReported) {
           ordersPaginationSucceeded = true;
+          await clearSyncCheckpoint(store.id, "orders");
         }
 
         const ordersDuration = Date.now() - ordersStart;

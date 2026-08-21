@@ -3,12 +3,19 @@ import { createAdminClient } from "@/lib/supabase/admin";
 export interface DarazStoreSyncSettings {
   id?: string;
   store_id: string;
-  orders_enabled: boolean;
-  order_items_enabled: boolean;
-  products_enabled: boolean;
-  product_skus_enabled: boolean;
-  inventory_enabled: boolean;
-  active_items_enabled: boolean;
+  // Core Operational Data (Enabled by default)
+  orders_enabled: boolean;        // Order ID, tracking number
+  order_items_enabled: boolean;   // Order item ID, line items
+  products_enabled: boolean;      // Products catalog
+  product_skus_enabled: boolean;  // SKU, seller SKU, barcode
+  inventory_enabled: boolean;     // Inventory/stock levels
+  active_items_enabled: boolean;  // Active seller center items
+
+  // Configurable Page Sizes
+  orders_page_size?: number;      // Default: 100
+  products_page_size?: number;    // Default: 50
+
+  // Optional Heavy Data (Disabled by default)
   product_images_enabled: boolean;
   shipping_labels_enabled: boolean;
   addresses_enabled: boolean;
@@ -24,6 +31,8 @@ export const DEFAULT_SYNC_SETTINGS: Omit<DarazStoreSyncSettings, "store_id"> = {
   product_skus_enabled: true,
   inventory_enabled: true,
   active_items_enabled: true,
+  orders_page_size: 100,
+  products_page_size: 50,
   product_images_enabled: false,
   shipping_labels_enabled: false,
   addresses_enabled: false,
@@ -32,6 +41,33 @@ export const DEFAULT_SYNC_SETTINGS: Omit<DarazStoreSyncSettings, "store_id"> = {
 };
 
 export const GLOBAL_DEFAULT_STORE_ID = "global_default";
+
+/**
+ * Required operational fields for scanner functionality (Picking, Packing, Order Scanning).
+ * These fields cannot be disabled by users because warehouse operations depend on them.
+ */
+export const REQUIRED_OPERATIONAL_FIELDS: (keyof Omit<DarazStoreSyncSettings, "id" | "store_id" | "updated_at">)[] = [
+  "orders_enabled",
+  "order_items_enabled",
+  "products_enabled",
+  "product_skus_enabled",
+];
+
+/**
+ * Ensures scanner-required operational fields (Order ID, Order Item ID, SKU, Seller SKU, Barcode, Tracking Number)
+ * cannot be set to false, protecting warehouse picking/packing scanner functionality.
+ */
+export function sanitizeSyncSettings<T extends Partial<Omit<DarazStoreSyncSettings, "store_id" | "id">>>(
+  settings: T
+): T {
+  return {
+    ...settings,
+    orders_enabled: true,
+    order_items_enabled: true,
+    products_enabled: true,
+    product_skus_enabled: true,
+  };
+}
 
 /**
  * Retrieves global default sync settings for newly connected stores.
@@ -47,7 +83,10 @@ export async function getGlobalSyncSettings(): Promise<DarazStoreSyncSettings> {
       .maybeSingle();
 
     if (data) {
-      return data as DarazStoreSyncSettings;
+      return sanitizeSyncSettings({
+        ...DEFAULT_SYNC_SETTINGS,
+        ...data,
+      }) as DarazStoreSyncSettings;
     }
   } catch (err: any) {
     console.warn(`[Sync Settings Service] Global query notice: ${err?.message}`);
@@ -86,7 +125,11 @@ export async function getStoreSyncSettings(storeId: string): Promise<DarazStoreS
       .maybeSingle();
 
     if (data) {
-      return data as DarazStoreSyncSettings;
+      return sanitizeSyncSettings({
+        ...DEFAULT_SYNC_SETTINGS,
+        ...data,
+        store_id: storeId,
+      }) as DarazStoreSyncSettings;
     }
   } catch (err: any) {
     console.warn(`[Sync Settings Service] Query notice for store_id=${storeId}: ${err?.message}`);
@@ -95,10 +138,10 @@ export async function getStoreSyncSettings(storeId: string): Promise<DarazStoreS
   // Fallback to global defaults if configured
   const globalDefaults = await getGlobalSyncSettings();
 
-  return {
+  return sanitizeSyncSettings({
     ...globalDefaults,
     store_id: storeId,
-  };
+  }) as DarazStoreSyncSettings;
 }
 
 /**
@@ -111,12 +154,12 @@ export async function updateStoreSyncSettings(
   const supabase = createAdminClient();
   const current = await getStoreSyncSettings(storeId);
 
-  const updatedPayload = {
+  const updatedPayload = sanitizeSyncSettings({
     ...current,
     ...settings,
     store_id: storeId,
     updated_at: new Date().toISOString(),
-  };
+  });
 
   try {
     const { data, error } = await supabase
@@ -127,12 +170,13 @@ export async function updateStoreSyncSettings(
 
     if (error) {
       console.error(`[Sync Settings Service] Upsert error: ${error.message}`);
-      return updatedPayload;
+      return updatedPayload as DarazStoreSyncSettings;
     }
 
-    return data as DarazStoreSyncSettings;
+    return sanitizeSyncSettings(data) as DarazStoreSyncSettings;
   } catch (err: any) {
     console.error(`[Sync Settings Service] Exception: ${err?.message}`);
-    return updatedPayload;
+    return updatedPayload as DarazStoreSyncSettings;
   }
 }
+
