@@ -59,8 +59,24 @@ export function DarazSyncSettingsControl() {
 
   // Fetch sync settings for selected store or global default
   const fetchSettings = async (storeId: string) => {
-    setLoading(true);
+    const cacheKey = `daraz_sync_settings_${storeId}`;
+    let hasCache = false;
+
+    if (typeof window !== "undefined") {
+      const cachedStr = localStorage.getItem(cacheKey);
+      if (cachedStr) {
+        try {
+          const cachedSettings = JSON.parse(cachedStr);
+          setSettings(cachedSettings);
+          setLoading(false);
+          hasCache = true;
+        } catch (_) {}
+      }
+    }
+
+    if (!hasCache) setLoading(true);
     setErrorMessage(null);
+
     try {
       const endpoint = storeId === "global_default"
         ? "/api/daraz/sync-settings/global"
@@ -70,6 +86,9 @@ export function DarazSyncSettingsControl() {
       const data = await res.json();
       if (data.success && data.settings) {
         setSettings(data.settings);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(cacheKey, JSON.stringify(data.settings));
+        }
       } else {
         setErrorMessage(data.error || "Failed to load sync settings.");
       }
@@ -90,12 +109,78 @@ export function DarazSyncSettingsControl() {
     }
   }, [selectedStoreId]);
 
-  const handleToggleSetting = (key: keyof Omit<DarazStoreSyncSettings, "id" | "store_id" | "updated_at">) => {
-    if (!settings) return;
-    setSettings({
+  const handleToggleSetting = async (key: keyof Omit<DarazStoreSyncSettings, "id" | "store_id" | "updated_at">) => {
+    if (!settings || !selectedStoreId) return;
+
+    const newValue = !settings[key];
+    const updatedSettings = {
       ...settings,
-      [key]: !settings[key],
-    });
+      [key]: newValue,
+    };
+
+    // 1. Instant UI update
+    setSettings(updatedSettings);
+
+    // 2. Instant localStorage cache update
+    const cacheKey = `daraz_sync_settings_${selectedStoreId}`;
+    if (typeof window !== "undefined") {
+      localStorage.setItem(cacheKey, JSON.stringify(updatedSettings));
+    }
+
+    // 3. Instant Database Auto-Save
+    setSaving(true);
+    setSaveSuccess(false);
+    setErrorMessage(null);
+
+    try {
+      const endpoint = selectedStoreId === "global_default"
+        ? "/api/daraz/sync-settings/global"
+        : `/api/daraz/stores/${selectedStoreId}/sync-settings`;
+
+      const res = await fetch(endpoint, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(updatedSettings),
+      });
+
+      const data = await res.json();
+
+      if (data.success && data.settings) {
+        setSettings(data.settings);
+        if (typeof window !== "undefined") {
+          localStorage.setItem(cacheKey, JSON.stringify(data.settings));
+        }
+        setSaveSuccess(true);
+        setTimeout(() => setSaveSuccess(false), 2500);
+      } else {
+        throw new Error(data.error || "Failed to auto-save sync settings.");
+      }
+    } catch (err: any) {
+      console.error("[Auto-Save Sync Settings Error]:", err.message);
+      setErrorMessage(`Auto-save notice: ${err.message}`);
+    } finally {
+      setSaving(false);
+    }
+
+    // 4. Trigger instant background sync when turning a module ON for a connected store
+    if (newValue && selectedStoreId !== "global_default") {
+      const moduleNameMap: Record<string, string> = {
+        orders_enabled: "orders",
+        order_items_enabled: "order_items",
+        products_enabled: "products",
+        product_skus_enabled: "skus",
+        inventory_enabled: "inventory",
+        active_items_enabled: "active_items",
+        product_images_enabled: "product_images",
+        shipping_labels_enabled: "shipping_labels",
+        historical_orders_enabled: "historical_orders",
+      };
+
+      const targetModule = moduleNameMap[String(key)];
+      if (targetModule) {
+        handleTriggerModuleSync(targetModule);
+      }
+    }
   };
 
   const handleSaveSettings = async () => {
@@ -119,6 +204,10 @@ export function DarazSyncSettingsControl() {
 
       if (data.success && data.settings) {
         setSettings(data.settings);
+        const cacheKey = `daraz_sync_settings_${selectedStoreId}`;
+        if (typeof window !== "undefined") {
+          localStorage.setItem(cacheKey, JSON.stringify(data.settings));
+        }
         setSaveSuccess(true);
         setTimeout(() => setSaveSuccess(false), 3000);
       } else {
