@@ -273,10 +273,12 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
               {/* Sync Error Alert Banner */}
               {hasSyncError && (
                 <div className="flex items-start space-x-2 p-2.5 rounded-xl bg-amber-50 dark:bg-amber-500/10 border border-amber-200 dark:border-amber-500/20 text-amber-800 dark:text-amber-300 text-[11px]">
-                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600" />
-                  <div>
-                    <span className="font-bold block">Store connected, but sync reported notice:</span>
-                    <span className="text-[10px] font-mono">{store.last_sync_error || "Check API connection"}</span>
+                  <AlertCircle className="h-4 w-4 shrink-0 mt-0.5 text-amber-600 dark:text-amber-400" />
+                  <div className="space-y-0.5">
+                    <span className="font-bold block text-xs">
+                      {store.sync_status === "error" ? "Store Sync Failure" : "Store Sync Notice"}
+                    </span>
+                    <span className="text-[10px] font-mono block leading-relaxed">{store.last_sync_error || "Please verify Daraz API connection credentials."}</span>
                   </div>
                 </div>
               )}

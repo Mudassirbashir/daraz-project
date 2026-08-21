@@ -69,9 +69,13 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       success: result.success,
+      status: result.status,
       message: result.success
         ? `Successfully synced ${result.productsSynced} products and ${result.ordersSynced} orders across ${result.storesSynced} store(s).`
-        : "Sync completed with warnings or errors.",
+        : (result.errorMessage || "Sync completed with warnings or errors."),
+      failedModule: result.failedModule || null,
+      errorCode: result.errorCode || null,
+      errorMessage: result.errorMessage || null,
       storesSynced: result.storesSynced,
       productsSynced: result.productsSynced,
       skusSynced: result.skusSynced,
@@ -80,8 +84,11 @@ export async function POST(req: NextRequest) {
       orderItemsSynced: result.orderItemsSynced || 0,
       durationMs: result.durationMs,
       durationFormatted: `${(result.durationMs / 1000).toFixed(2)}s`,
+      moduleResults: result.moduleResults || {},
+      modules: result.moduleResults || {},
       errors: result.errors,
       timestamp: result.timestamp,
+      result,
     });
   } catch (err: any) {
     return NextResponse.json(

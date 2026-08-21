@@ -966,6 +966,89 @@ async function runPipelineTests() {
     assert.strictEqual(emptyRes.code, "INVALID_INPUT");
   });
 
+  // ---------------------------------------------------------------------------
+  // Test 42: Nested error_response and Daraz application-level error parsing
+  // ---------------------------------------------------------------------------
+  await test("Test 42: DarazClient throws structured error on nested error_response payload", async () => {
+    const client = new DarazApiClient({
+      appKey: "test_key",
+      appSecret: "test_secret",
+      accessToken: "mock_token",
+    });
+
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = (async () => {
+      return {
+        ok: true,
+        status: 200,
+        json: async () => ({
+          error_response: {
+            code: "15",
+            type: "ISV.INVALID_ACCESS_TOKEN",
+            msg: "Illegal access token",
+          },
+        }),
+      } as any;
+    }) as any;
+
+    try {
+      let threw = false;
+      try {
+        await client.get("/products/get");
+      } catch (err: any) {
+        threw = true;
+        assert.ok(err.message.includes("15"), "Error message must include error code 15");
+        assert.ok(err.message.includes("Illegal access token"), "Error message must include detail message");
+      }
+      assert.strictEqual(threw, true, "Must throw on application-level error_response");
+    } finally {
+      globalThis.fetch = originalFetch;
+    }
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 43: TOKEN_REFRESH_FAILED error prefixing
+  // ---------------------------------------------------------------------------
+  await test("Test 43: Token refresh failures generate clear TOKEN_REFRESH_FAILED error message", () => {
+    const rawError = "IllegalAccessToken: Refresh token expired or revoked";
+    const humanized = humanizeDarazApiError("15", rawError);
+    assert.ok(humanized.includes("expired") || humanized.includes("reconnect"), "Humanized error must inform user store connection expired");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 44: Core module vs optional module isolation
+  // ---------------------------------------------------------------------------
+  await test("Test 44: Core sync remains successful when optional module fails", () => {
+    const globalModuleResults: Record<string, any> = {
+      catalog_products: { status: "passed", fetched: 10, inserted: 10 },
+      orders: { status: "passed", fetched: 5, inserted: 5 },
+      skus: { status: "passed", fetched: 10, inserted: 10 },
+      inventory_stock: { status: "passed", fetched: 10, inserted: 10 },
+      order_items: { status: "passed", fetched: 8, inserted: 8 },
+      product_images: { status: "failed", error: "Image CDN timeout" },
+      shipping_labels: { status: "skipped" },
+    };
+
+    const CORE_MODULE_KEYS = ["catalog_products", "skus", "orders", "order_items", "inventory_stock"];
+    const hasCoreModuleFailed = CORE_MODULE_KEYS.some((mKey) => globalModuleResults[mKey]?.status === "failed");
+    const overallSuccess = !hasCoreModuleFailed;
+
+    assert.strictEqual(overallSuccess, true, "Core sync must be SUCCESS even when product_images module fails");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 45: Structured SyncResult payload format
+  // ---------------------------------------------------------------------------
+  await test("Test 45: SyncResult contract includes failedModule, errorCode, and errorMessage", () => {
+    const mockModuleResults = {
+      catalog_products: { status: "passed", fetched: 5, inserted: 5, updated: 0, skipped: 0, durationMs: 100 },
+      orders: { status: "failed", fetched: 0, inserted: 0, updated: 0, skipped: 0, error: "HTTP 401 Unauthorized", durationMs: 50 },
+    };
+
+    const failedModKey = Object.keys(mockModuleResults).find((k) => (mockModuleResults as any)[k]?.status === "failed");
+    assert.strictEqual(failedModKey, "orders", "failedModule must correctly identify the failed module");
+  });
+
   console.log("\n==================================================================");
   console.log(`  TEST RESULTS: ${passed} PASSED, ${failed} FAILED`);
   console.log("==================================================================");

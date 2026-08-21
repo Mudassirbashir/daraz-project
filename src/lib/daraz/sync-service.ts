@@ -31,9 +31,13 @@ export interface SyncResult {
   updatedCount: number;
   failedCount: number;
   durationMs: number;
+  failedModule?: string | null;
+  errorCode?: string | null;
+  errorMessage?: string | null;
   errors: string[];
   timestamp: string;
   moduleResults?: Record<string, ModuleResult>;
+  modules?: Record<string, ModuleResult>;
 }
 
 // Database-backed sync lock threshold: if a sync row is locked for more than this duration, it is
@@ -298,15 +302,25 @@ export async function executeDarazSync(
         try {
           const valid = await getValidStoreAccessToken(store.id);
           darazClient = valid.client;
-        } catch (_) {
-          darazClient = new DarazApiClient({
-            storeId: store.id,
-            accessToken: store.access_token || undefined,
-            refreshToken: store.refresh_token || undefined,
-            tokenExpiresAt: store.token_expires_at || undefined,
-            appKey: store.api_app_key || undefined,
-            appSecret: store.api_app_secret || undefined,
-          });
+        } catch (tokenErr: any) {
+          const tokenErrMsg = tokenErr?.message || "TOKEN_REFRESH_FAILED: Store authentication failed";
+          storeErrorMsg = tokenErrMsg;
+          errors.push(`Store ${store.store_name || store.store_code}: ${tokenErrMsg}`);
+
+          try {
+            await supabase
+              .from("daraz_stores")
+              .update({
+                last_synced_at: timestamp,
+                sync_status: "error",
+                last_sync_error: humanizeDarazApiError("TOKEN_REFRESH_FAILED", tokenErrMsg),
+                updated_at: timestamp,
+              })
+              .eq("id", store.id);
+          } catch (_) {}
+
+          // Skip module execution for this store if token refresh/verification failed
+          continue;
         }
 
         // ── MODULE 1: Store Profile ──────────────────────────────────────────
@@ -1471,11 +1485,21 @@ export async function executeDarazSync(
     }
 
     const durationMs = Date.now() - startTime;
+    
+    // Core Modules determine primary sync success
+    const CORE_MODULE_KEYS = ["catalog_products", "skus", "orders", "order_items", "inventory_stock"];
+    const hasCoreModuleFailed = CORE_MODULE_KEYS.some((mKey) => globalModuleResults[mKey]?.status === "failed");
     const hasAnyModuleFailed = Object.values(globalModuleResults).some((m) => m.status === "failed");
-    const overallStatus = errors.length > 0 || hasAnyModuleFailed ? "completed_with_errors" : "completed";
+
+    const overallSuccess = !hasCoreModuleFailed && storesSynced > 0;
+    const overallStatus = hasCoreModuleFailed
+      ? "completed_with_errors"
+      : (hasAnyModuleFailed ? "completed_with_errors" : "completed");
+
+    const failedModKey = Object.keys(globalModuleResults).find((k) => globalModuleResults[k]?.status === "failed");
 
     return buildResult(
-      overallStatus === "completed",
+      overallSuccess,
       overallStatus,
       storesSynced,
       totalItemsSynced,
@@ -1490,7 +1514,10 @@ export async function executeDarazSync(
       durationMs,
       errors,
       timestamp,
-      globalModuleResults
+      globalModuleResults,
+      failedModKey,
+      failedModKey ? "MODULE_SYNC_FAILED" : undefined,
+      failedModKey ? globalModuleResults[failedModKey]?.error : undefined
     );
   } catch (globalErr: any) {
     console.error("[SyncEngine] Fatal exception:", globalErr.message);
@@ -1512,7 +1539,10 @@ export async function executeDarazSync(
       Date.now() - startTime,
       errors,
       timestamp,
-      globalModuleResults
+      globalModuleResults,
+      "global_sync",
+      "FATAL_SYNC_ERROR",
+      globalErr.message
     );
   }
 }
@@ -1533,7 +1563,10 @@ function buildResult(
   durationMs: number,
   errors: string[],
   timestamp: string,
-  moduleResults?: Record<string, ModuleResult>
+  moduleResults?: Record<string, ModuleResult>,
+  failedModule?: string,
+  errorCode?: string,
+  errorMessage?: string
 ): SyncResult {
   return {
     success,
@@ -1550,8 +1583,12 @@ function buildResult(
     updatedCount,
     failedCount,
     durationMs,
+    failedModule: failedModule || null,
+    errorCode: errorCode || null,
+    errorMessage: errorMessage || (errors.length > 0 ? errors[errors.length - 1] : null),
     errors,
     timestamp,
     moduleResults,
+    modules: moduleResults,
   };
 }

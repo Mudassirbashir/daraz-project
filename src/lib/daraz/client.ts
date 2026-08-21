@@ -239,6 +239,7 @@ export class DarazClient {
           errMsg.includes('InAuthorized') ||
           errMsg.includes('IllegalAccessToken') ||
           errMsg.includes('15') ||
+          errMsg.includes('INVALID_ACCESS_TOKEN') ||
           errMsg.toLowerCase().includes('access token');
 
         if (isAuthError && this.storeId && attempt === 0) {
@@ -254,6 +255,7 @@ export class DarazClient {
             }
           } catch (refErr: any) {
             console.error(`[DarazClient] Automatic token refresh failed: ${refErr.message}`);
+            throw new Error(`TOKEN_REFRESH_FAILED: ${refErr.message}`);
           }
         }
 
@@ -346,6 +348,9 @@ export class DarazClient {
     if (Array.isArray(dataObj)) rawProducts = dataObj;
     else if (Array.isArray(dataObj?.products)) rawProducts = dataObj.products;
     else if (Array.isArray(dataObj?.products?.product)) rawProducts = dataObj.products.product;
+    else if (Array.isArray(dataObj?.products_list)) rawProducts = dataObj.products_list;
+    else if (Array.isArray(dataObj?.items)) rawProducts = dataObj.items;
+    else if (Array.isArray(dataObj?.Items)) rawProducts = dataObj.Items;
     else if (Array.isArray(dataObj?.Products)) rawProducts = dataObj.Products;
     else if (Array.isArray(dataObj?.Products?.Product)) rawProducts = dataObj.Products.Product;
     else if (Array.isArray(dataObj?.product)) rawProducts = dataObj.product;
@@ -467,6 +472,7 @@ export class DarazClient {
         customer_city: addressShipping.city || addressBilling.city || 'Karachi',
         price_cents: Math.round((parseFloat(String(o.price || 0)) || 0) * 100),
         statuses: rawStatus.toLowerCase().replace(/[-\s]+/g, '_'),
+        tracking_code: o.tracking_code || o.tracking_number || o.TrackingCode || addressShipping.tracking_code || null,
         created_at: String(o.created_at || ''),
         items: [],
         raw: o,
@@ -583,8 +589,14 @@ export class DarazClient {
       throw new Error(`[Daraz HTTP ${res.status}] Path: ${path} - Error: ${errText}`);
     }
     const json = await res.json();
-    if (json.code && json.code !== '0' && json.code !== 0) {
-      throw new Error(`[Daraz Error] Code: ${json.code} | Message: ${json.message || json.type || 'Unknown Error'}`);
+
+    // Check for nested error_response or top-level code errors
+    const errObj = json.error_response || json.errorResponse || (json.code && json.code !== '0' && json.code !== 0 ? json : null);
+
+    if (errObj) {
+      const code = String(errObj.code || json.code || 'UNKNOWN_ERROR');
+      const msg = errObj.msg || errObj.message || errObj.type || json.message || json.msg || json.type || 'Unknown Daraz API Error';
+      throw new Error(`[Daraz Error] Code: ${code} | Message: ${msg}`);
     }
     return json;
   }

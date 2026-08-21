@@ -193,19 +193,29 @@ export async function POST(req: NextRequest) {
     const { store_id } = await req.json().catch(() => ({ store_id: null }));
 
     if (!store_id) {
-      return NextResponse.json({ success: false, error: "Missing required 'store_id' parameter." }, { status: 400 });
+      return NextResponse.json({ success: false, errorCode: "MISSING_PARAM", error: "Missing required 'store_id' parameter." }, { status: 400 });
     }
 
     const { executeDarazSync } = await import("@/lib/daraz/sync-service");
     const result = await executeDarazSync(store_id);
 
-    return NextResponse.json({
-      success: result.success,
-      message: result.success ? `Successfully synced store products & orders.` : "Sync completed with warnings.",
-      result,
-    });
+    const httpStatus = result.success ? 200 : (result.errorCode === "TOKEN_REFRESH_FAILED" ? 401 : 200);
+
+    return NextResponse.json(
+      {
+        success: result.success,
+        message: result.success
+          ? `Successfully synced ${result.productsSynced} products and ${result.ordersSynced} orders.`
+          : (result.errorMessage || "Sync completed with warnings."),
+        failedModule: result.failedModule || null,
+        errorCode: result.errorCode || null,
+        errorMessage: result.errorMessage || null,
+        result,
+      },
+      { status: httpStatus }
+    );
   } catch (err: any) {
     console.error("[POST /api/stores Exception]:", err.message);
-    return NextResponse.json({ success: false, error: err.message || "Failed to sync store." }, { status: 500 });
+    return NextResponse.json({ success: false, errorCode: "SYNC_EXCEPTION", error: err.message || "Failed to sync store." }, { status: 500 });
   }
 }
