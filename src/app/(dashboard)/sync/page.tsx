@@ -1,5 +1,6 @@
 import React from "react";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
+import { DarazSyncSettingsControl } from "@/components/sync/DarazSyncSettingsControl";
 import { RefreshCw, Store, Tag, ShoppingCart, KeyRound, ShieldCheck, Clock, CheckCircle2, AlertCircle } from "lucide-react";
 import { createClient } from "@/lib/supabase/server";
 
@@ -33,28 +34,15 @@ export default async function SyncPage() {
     <div className="space-y-6">
       <div className="flex flex-col md:flex-row md:items-center md:justify-between">
         <div>
-          <h1 className="text-2xl font-bold text-slate-900">Update Data</h1>
-          <p className="text-sm text-slate-500">
-            Fetch the latest products and orders from your connected online stores.
+          <h1 className="text-2xl font-bold text-slate-900 dark:text-white">Daraz Data Update & Sync Settings</h1>
+          <p className="text-xs text-slate-500">
+            Configure staged synchronization modules and fetch live products, stock, and orders.
           </p>
         </div>
       </div>
 
-      {/* Sync Control Header Card */}
-      <div className="rounded-xl border border-orange-200 bg-orange-50/50 p-6 shadow-sm">
-        <div className="flex flex-col md:flex-row md:items-center justify-between gap-4">
-          <div className="space-y-1">
-            <div className="flex items-center space-x-2 text-orange-600 font-semibold text-sm">
-              <RefreshCw className="h-4 w-4" />
-              <span>Update Data from Daraz</span>
-            </div>
-            <p className="text-xs text-slate-600">
-              Click <strong>Update Data</strong> to download your latest products, prices, and orders into your app.
-            </p>
-          </div>
-          <SyncNowButton />
-        </div>
-      </div>
+      {/* Sync Settings Control Panel Component */}
+      <DarazSyncSettingsControl />
 
       {/* Operational Sync Metrics */}
       <div className="grid grid-cols-1 gap-5 sm:grid-cols-2 lg:grid-cols-4">

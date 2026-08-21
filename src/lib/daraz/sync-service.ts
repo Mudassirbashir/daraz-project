@@ -3,6 +3,7 @@ import { DarazApiClient, sanitizeLogPayload, humanizeDarazApiError } from "./cli
 import { DarazOrderStatus } from "../../types/database.types";
 import { mapDarazOrderStatus } from "./order-status";
 import { getValidStoreAccessToken } from "./store-utils";
+import { getStoreSyncSettings } from "./sync-settings-service";
 
 export interface ModuleResult {
   status: "passed" | "failed" | "skipped";
@@ -39,18 +40,12 @@ export interface SyncResult {
 const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
 
 /**
- * Production-Grade Synchronization Engine
- *
- * Key guarantees:
- * 1. Per-store atomic database row lock acquired before any sync work begins.
- * 2. Lock always released in a finally block regardless of success or failure.
- * 3. Split sync execution into explicit sub-modules (store_profile, catalog_products, skus, inventory_stock, orders, order_items, reconciliation).
- * 4. A full sync returns `completed_with_errors` when any required module fails.
- * 5. Inventory updates use store-scoped `(store_id, sku)` unique constraint. No global SKU fallback.
- * 6. Listing persistence is authoritative projection (includes reserved_quantity, removes invalid sync_status).
- * 7. Writes full diagnostic metrics and module results to `sync_runs` table.
+ * Production-Grade Staged Synchronization Engine
  */
-export async function executeDarazSync(targetStoreId?: string): Promise<SyncResult> {
+export async function executeDarazSync(
+  targetStoreId?: string,
+  modulesToRun?: string[]
+): Promise<SyncResult> {
   const startTime = Date.now();
   const startedTimeIso = new Date(startTime).toISOString();
   const errors: string[] = [];

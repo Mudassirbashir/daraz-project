@@ -3,6 +3,7 @@ import { DarazApiClient, humanizeDarazApiError, sanitizeLogPayload } from "../cl
 import { encryptSecret, decryptSecret, maskSecret } from "../../security/encryption.js";
 import { calculateAvailableStock } from "../../inventory/barcode-mapping.js";
 import { normalizeScanInput } from "../../inventory/product-scanner-service.js";
+import { DEFAULT_SYNC_SETTINGS } from "../sync-settings-service.js";
 import {
   SANITIZED_PASCAL_CASE_CATALOG_FIXTURE,
   SANITIZED_CAMEL_CASE_CATALOG_FIXTURE,
@@ -407,6 +408,19 @@ async function runPipelineTests() {
     const rawScanWithNewlines = "  SKU-WIRELESS-HEADPHONES\r\n ";
     const normalized = normalizeScanInput(rawScanWithNewlines);
     assert.strictEqual(normalized, "SKU-WIRELESS-HEADPHONES", "Scanner normalization must strip newlines, carriage returns, and surrounding whitespace");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 20: Daraz Staged Sync Settings Default Configuration
+  // ---------------------------------------------------------------------------
+  await test("Test 20: Staged sync settings default enables core operational data and disables heavy optional data", () => {
+    const defaultSettings = DEFAULT_SYNC_SETTINGS;
+    assert.strictEqual(defaultSettings.orders_enabled, true, "Orders must be ON by default");
+    assert.strictEqual(defaultSettings.order_items_enabled, true, "Order items must be ON by default");
+    assert.strictEqual(defaultSettings.products_enabled, true, "Products must be ON by default");
+    assert.strictEqual(defaultSettings.inventory_enabled, true, "Inventory stock must be ON by default");
+    assert.strictEqual(defaultSettings.product_images_enabled, false, "Product images must be OFF by default");
+    assert.strictEqual(defaultSettings.shipping_labels_enabled, false, "Shipping labels must be OFF by default");
   });
 
   console.log("\n==================================================================");
