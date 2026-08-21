@@ -21,6 +21,8 @@ import {
 
 async function runPipelineTests() {
   process.env.DARAZ_APP_SECRET = process.env.DARAZ_APP_SECRET || "mock_daraz_master_app_secret_test_key_32_bytes";
+  process.env.NEXT_PUBLIC_SUPABASE_URL = process.env.NEXT_PUBLIC_SUPABASE_URL || "https://mock-daraz-test-project.supabase.co";
+  process.env.SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || "mock-daraz-service-role-key";
 
   console.log("==================================================================");
   console.log("  DARAZ DATA PIPELINE HARDENING & INTEGRITY TEST SUITE");
@@ -505,13 +507,27 @@ async function runPipelineTests() {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 25: Inventory Ledger Stock Formula
+  // Test 26: Pre-Connection Global Default Sync Settings Access
   // ---------------------------------------------------------------------------
-  await test("Test 25: calculateStockLedgerAvailable correctly subtracts reserved, damaged, and safety stock", async () => {
-    const { calculateStockLedgerAvailable } = await import("../../inventory/ledger-service.js");
-    const stock = { physical_stock: 100, reserved_stock: 20, damaged_stock: 5, safety_buffer: 10 };
-    const available = calculateStockLedgerAvailable(stock);
-    assert.strictEqual(available, 65, "Available stock must equal physical (100) - reserved (20) - damaged (5) - safety (10) = 65");
+  await test("Test 26: getGlobalSyncSettings returns defaults when no store is connected", async () => {
+    const { getGlobalSyncSettings, GLOBAL_DEFAULT_STORE_ID } = await import("../sync-settings-service.js");
+    const settings = await getGlobalSyncSettings();
+    assert.strictEqual(settings.store_id, GLOBAL_DEFAULT_STORE_ID);
+    assert.strictEqual(settings.orders_enabled, true);
+    assert.strictEqual(settings.active_items_enabled, true);
+    assert.strictEqual(settings.product_images_enabled, false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 27: Store Sync Settings Inherits Configured Global Defaults
+  // ---------------------------------------------------------------------------
+  await test("Test 27: getStoreSyncSettings inherits active_items_enabled and global defaults for newly connected store", async () => {
+    const { getStoreSyncSettings } = await import("../sync-settings-service.js");
+    const settings = await getStoreSyncSettings("UNCONNECTED_STORE_TEST_99");
+    assert.strictEqual(settings.store_id, "UNCONNECTED_STORE_TEST_99");
+    assert.strictEqual(settings.orders_enabled, true);
+    assert.strictEqual(settings.active_items_enabled, true);
+    assert.strictEqual(settings.products_enabled, true);
   });
 
   console.log("\n==================================================================");

@@ -35,7 +35,7 @@ interface StoreItem {
 
 export function DarazSyncSettingsControl() {
   const [stores, setStores] = useState<StoreItem[]>([]);
-  const [selectedStoreId, setSelectedStoreId] = useState<string>("");
+  const [selectedStoreId, setSelectedStoreId] = useState<string>("global_default");
   const [settings, setSettings] = useState<DarazStoreSyncSettings | null>(null);
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
@@ -51,27 +51,27 @@ export function DarazSyncSettingsControl() {
       if (data.success && data.stores) {
         const activeStores = data.stores.filter((s: any) => s.is_active && s.access_token);
         setStores(activeStores);
-        if (activeStores.length > 0 && !selectedStoreId) {
-          setSelectedStoreId(activeStores[0].id);
-        }
       }
     } catch (err: any) {
       console.error("[Fetch Stores Error]:", err);
     }
   };
 
-  // Fetch sync settings for selected store
+  // Fetch sync settings for selected store or global default
   const fetchSettings = async (storeId: string) => {
-    if (!storeId) return;
     setLoading(true);
     setErrorMessage(null);
     try {
-      const res = await fetch(`/api/daraz/stores/${storeId}/sync-settings`);
+      const endpoint = storeId === "global_default"
+        ? "/api/daraz/sync-settings/global"
+        : `/api/daraz/stores/${storeId}/sync-settings`;
+
+      const res = await fetch(endpoint);
       const data = await res.json();
       if (data.success && data.settings) {
         setSettings(data.settings);
       } else {
-        setErrorMessage(data.error || "Failed to load store sync settings.");
+        setErrorMessage(data.error || "Failed to load sync settings.");
       }
     } catch (err: any) {
       setErrorMessage(err.message || "Failed to connect sync settings service.");
@@ -105,7 +105,11 @@ export function DarazSyncSettingsControl() {
     setErrorMessage(null);
 
     try {
-      const res = await fetch(`/api/daraz/stores/${selectedStoreId}/sync-settings`, {
+      const endpoint = selectedStoreId === "global_default"
+        ? "/api/daraz/sync-settings/global"
+        : `/api/daraz/stores/${selectedStoreId}/sync-settings`;
+
+      const res = await fetch(endpoint, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify(settings),
@@ -128,7 +132,11 @@ export function DarazSyncSettingsControl() {
   };
 
   const handleTriggerModuleSync = async (moduleName: string) => {
-    if (!selectedStoreId) return;
+    if (selectedStoreId === "global_default") {
+      setErrorMessage("Please select a specific connected store from the dropdown to run manual module sync.");
+      return;
+    }
+
     setSyncingModule(moduleName);
     setErrorMessage(null);
 
@@ -144,26 +152,12 @@ export function DarazSyncSettingsControl() {
       if (!res.ok || !data.success) {
         throw new Error(data.error || `Module sync for '${moduleName}' failed.`);
       }
-
-      // Refresh page data or notification
     } catch (err: any) {
       setErrorMessage(err.message || `Failed to run module ${moduleName}.`);
     } finally {
       setSyncingModule(null);
     }
   };
-
-  if (stores.length === 0 && !loading) {
-    return (
-      <div className="rounded-2xl border border-dashed border-slate-300 dark:border-slate-800 p-8 text-center space-y-3 bg-slate-50/50 dark:bg-slate-950/50">
-        <Store className="h-10 w-10 text-orange-500 mx-auto" />
-        <h3 className="font-bold text-slate-900 dark:text-white text-sm">No Connected Daraz Stores Found</h3>
-        <p className="text-xs text-slate-500 max-w-md mx-auto">
-          Please connect at least one official Daraz Seller account under <strong>Manage Stores</strong> before configuring synchronization settings.
-        </p>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6 text-xs select-none">
@@ -187,9 +181,10 @@ export function DarazSyncSettingsControl() {
             onChange={(e) => setSelectedStoreId(e.target.value)}
             className="w-full sm:w-auto px-3 py-2 rounded-xl border border-slate-300 dark:border-slate-700 bg-white dark:bg-slate-900 text-slate-900 dark:text-white font-bold focus:outline-none focus:ring-2 focus:ring-orange-500"
           >
+            <option value="global_default">⚙️ Global Default Settings (New Stores)</option>
             {stores.map((st) => (
               <option key={st.id} value={st.id}>
-                {st.store_name} ({st.store_code})
+                🏪 {st.store_name} ({st.store_code})
               </option>
             ))}
           </select>
@@ -347,6 +342,38 @@ export function DarazSyncSettingsControl() {
                       type="checkbox"
                       checked={settings.inventory_enabled}
                       onChange={() => handleToggleSetting("inventory_enabled")}
+                      className="sr-only peer"
+                    />
+                    <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-orange-500"></div>
+                  </label>
+                </div>
+              </div>
+
+              {/* Active Seller Center Items */}
+              <div className="p-4 rounded-2xl bg-slate-50/70 dark:bg-slate-950/60 border border-slate-200/60 dark:border-slate-800 flex items-center justify-between">
+                <div className="flex items-center space-x-3">
+                  <div className="h-9 w-9 rounded-xl bg-emerald-100 dark:bg-emerald-500/20 text-emerald-600 flex items-center justify-center shrink-0">
+                    <CheckCircle2 className="h-4 w-4" />
+                  </div>
+                  <div>
+                    <h4 className="font-bold text-slate-900 dark:text-white">Active Seller Center Items</h4>
+                    <p className="text-[10px] text-slate-500">Export & reconcile live active listings published on Daraz</p>
+                  </div>
+                </div>
+                <div className="flex items-center space-x-2">
+                  <button
+                    onClick={() => handleTriggerModuleSync("active_items")}
+                    disabled={Boolean(syncingModule)}
+                    title="Export active items only"
+                    className="p-2 rounded-xl bg-white dark:bg-slate-800 border border-slate-200 dark:border-slate-700 hover:bg-slate-100 text-slate-700 dark:text-slate-300 font-bold transition-all disabled:opacity-50"
+                  >
+                    {syncingModule === "active_items" ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : <Play className="h-3.5 w-3.5" />}
+                  </button>
+                  <label className="relative inline-flex items-center cursor-pointer">
+                    <input
+                      type="checkbox"
+                      checked={settings.active_items_enabled}
+                      onChange={() => handleToggleSetting("active_items_enabled")}
                       className="sr-only peer"
                     />
                     <div className="w-9 h-5 bg-slate-200 peer-focus:outline-none rounded-full peer dark:bg-slate-800 peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-slate-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all dark:border-slate-600 peer-checked:bg-orange-500"></div>
@@ -547,7 +574,11 @@ export function DarazSyncSettingsControl() {
             </button>
           </div>
         </div>
-      ) : null}
+      ) : (
+        <div className="p-8 text-center text-slate-500 font-semibold bg-white dark:bg-slate-900 rounded-3xl border border-slate-200 dark:border-slate-800">
+          <span>Configure sync settings above.</span>
+        </div>
+      )}
     </div>
   );
 }

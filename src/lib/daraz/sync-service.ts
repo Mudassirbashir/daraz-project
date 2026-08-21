@@ -685,56 +685,64 @@ export async function executeDarazSync(
           };
         }
 
-        // ── MODULE 4: Catalog Reconciliation (Stale marking) ─────────────────
+        // ── MODULE 4: Active Seller Center Items Reconciliation ──────────
         const recStart = Date.now();
-        if (catalogPaginationSucceeded && syncedSellerSkus.size > 0) {
-          try {
-            const { data: allStoreListings } = await supabase
-              .from("listings")
-              .select("id, seller_sku")
-              .eq("store_id", store.id);
-
-            const missingListings = (allStoreListings || []).filter(
-              (l) => !syncedSellerSkus.has(l.seller_sku)
-            );
-
-            if (missingListings.length > 0) {
-              const missingIds = missingListings.map((l) => l.id);
-              await supabase
+        if (isModuleEnabled("active_items") || isModuleEnabled("reconciliation")) {
+          if (catalogPaginationSucceeded && syncedSellerSkus.size > 0) {
+            try {
+              const { data: allStoreListings } = await supabase
                 .from("listings")
-                .update({ is_synced: false, updated_at: timestamp })
-                .in("id", missingIds);
-            }
+                .select("id, seller_sku")
+                .eq("store_id", store.id);
 
-            storeModules.reconciliation = {
-              status: "passed",
-              fetched: syncedSellerSkus.size,
-              inserted: 0,
-              updated: missingListings.length,
-              skipped: 0,
-              durationMs: Date.now() - recStart,
-            };
-          } catch (recErr: any) {
-            storeModules.reconciliation = {
-              status: "failed",
-              fetched: syncedSellerSkus.size,
+              const missingListings = (allStoreListings || []).filter(
+                (l) => !syncedSellerSkus.has(l.seller_sku)
+              );
+
+              if (missingListings.length > 0) {
+                const missingIds = missingListings.map((l) => l.id);
+                await supabase
+                  .from("listings")
+                  .update({ is_synced: false, updated_at: timestamp })
+                  .in("id", missingIds);
+              }
+
+              const recResult: ModuleResult = {
+                status: "passed",
+                fetched: syncedSellerSkus.size,
+                inserted: 0,
+                updated: missingListings.length,
+                skipped: 0,
+                durationMs: Date.now() - recStart,
+              };
+              storeModules.active_items = recResult;
+              storeModules.reconciliation = recResult;
+            } catch (recErr: any) {
+              const recResult: ModuleResult = {
+                status: "failed",
+                fetched: syncedSellerSkus.size,
+                inserted: 0,
+                updated: 0,
+                skipped: 0,
+                error: recErr.message,
+                durationMs: Date.now() - recStart,
+              };
+              storeModules.active_items = recResult;
+              storeModules.reconciliation = recResult;
+            }
+          } else {
+            const recResult: ModuleResult = {
+              status: "skipped",
+              fetched: 0,
               inserted: 0,
               updated: 0,
               skipped: 0,
-              error: recErr.message,
+              error: !catalogPaginationSucceeded ? "Skipped reconciliation due to incomplete catalog pagination" : undefined,
               durationMs: Date.now() - recStart,
             };
+            storeModules.active_items = recResult;
+            storeModules.reconciliation = recResult;
           }
-        } else {
-          storeModules.reconciliation = {
-            status: "skipped",
-            fetched: 0,
-            inserted: 0,
-            updated: 0,
-            skipped: 0,
-            error: !catalogPaginationSucceeded ? "Skipped reconciliation due to incomplete catalog pagination" : undefined,
-            durationMs: Date.now() - recStart,
-          };
         }
 
         // ── MODULE 5 & 6: Orders & Order Items Pagination ─────────────────────

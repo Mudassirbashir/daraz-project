@@ -31,10 +31,51 @@ export const DEFAULT_SYNC_SETTINGS: Omit<DarazStoreSyncSettings, "store_id"> = {
   historical_orders_enabled: false,
 };
 
+export const GLOBAL_DEFAULT_STORE_ID = "global_default";
+
 /**
- * Retrieves per-store sync settings from database or returns safe defaults.
+ * Retrieves global default sync settings for newly connected stores.
+ */
+export async function getGlobalSyncSettings(): Promise<DarazStoreSyncSettings> {
+  const supabase = createAdminClient();
+
+  try {
+    const { data } = await supabase
+      .from("daraz_sync_settings")
+      .select("*")
+      .eq("store_id", GLOBAL_DEFAULT_STORE_ID)
+      .maybeSingle();
+
+    if (data) {
+      return data as DarazStoreSyncSettings;
+    }
+  } catch (err: any) {
+    console.warn(`[Sync Settings Service] Global query notice: ${err?.message}`);
+  }
+
+  return {
+    store_id: GLOBAL_DEFAULT_STORE_ID,
+    ...DEFAULT_SYNC_SETTINGS,
+  };
+}
+
+/**
+ * Updates global default sync settings.
+ */
+export async function updateGlobalSyncSettings(
+  settings: Partial<Omit<DarazStoreSyncSettings, "store_id" | "id">>
+): Promise<DarazStoreSyncSettings> {
+  return updateStoreSyncSettings(GLOBAL_DEFAULT_STORE_ID, settings);
+}
+
+/**
+ * Retrieves per-store sync settings from database or returns inherited global defaults.
  */
 export async function getStoreSyncSettings(storeId: string): Promise<DarazStoreSyncSettings> {
+  if (storeId === GLOBAL_DEFAULT_STORE_ID) {
+    return getGlobalSyncSettings();
+  }
+
   const supabase = createAdminClient();
 
   try {
@@ -51,9 +92,12 @@ export async function getStoreSyncSettings(storeId: string): Promise<DarazStoreS
     console.warn(`[Sync Settings Service] Query notice for store_id=${storeId}: ${err?.message}`);
   }
 
+  // Fallback to global defaults if configured
+  const globalDefaults = await getGlobalSyncSettings();
+
   return {
+    ...globalDefaults,
     store_id: storeId,
-    ...DEFAULT_SYNC_SETTINGS,
   };
 }
 
