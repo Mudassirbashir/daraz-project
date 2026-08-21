@@ -61,16 +61,20 @@ export function PickingModal({ order, onClose, onPickingCompleted }: PickingModa
     e.preventDefault();
     if (!scanSkuInput.trim()) return;
 
-    const matched = items.find(
-      (item) => item.seller_sku.toLowerCase() === scanSkuInput.trim().toLowerCase()
-    );
+    const term = scanSkuInput.trim().toLowerCase();
+    const matched = items.find((item) => {
+      const sSku = (item.seller_sku || (item as any).sku || "").toLowerCase();
+      const oId = (item.order_item_id || item.id || "").toLowerCase();
+      const name = (item.name || "").toLowerCase();
+      return sSku === term || oId === term || (sSku.length > 0 && term.includes(sSku)) || name.includes(term);
+    });
 
     if (matched) {
-      handleIncrementPicked(matched.id);
+      handleIncrementPicked(matched.id || matched.order_item_id);
       setScanSkuInput("");
     } else {
-      setErrorMessage(`SKU '${scanSkuInput.trim()}' not found in order items.`);
-      setTimeout(() => setErrorMessage(""), 3000);
+      setErrorMessage(`SKU/Barcode '${scanSkuInput.trim()}' not found in this order's items.`);
+      setTimeout(() => setErrorMessage(""), 3500);
     }
   };
 

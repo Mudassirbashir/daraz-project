@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { executeDarazSync } from "@/lib/daraz/sync-service";
 import { createAdminClient } from "@/lib/supabase/admin";
+import { createClient } from "@/lib/supabase/server";
 
 export const dynamic = "force-dynamic";
 
@@ -15,15 +16,27 @@ export async function POST(
   }
 
   try {
+    const serverSupabase = createClient();
+    const { data: { user } } = await serverSupabase.auth.getUser();
+    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
+
+    if (!user && !opsUserCookie) {
+      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
+    }
+
     const supabase = createAdminClient();
     const { data: store, error } = await supabase
       .from("daraz_stores")
-      .select("id, store_name, is_active, access_token")
+      .select("id, store_name, is_active, access_token, user_id")
       .eq("id", storeId)
       .maybeSingle();
 
     if (error || !store) {
       return NextResponse.json({ success: false, error: "Store not found." }, { status: 404 });
+    }
+
+    if (user && store.user_id && store.user_id !== user.id) {
+      return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
     }
 
     if (!store.is_active || !store.access_token) {

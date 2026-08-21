@@ -2,6 +2,7 @@ import assert from "node:assert";
 import { DarazApiClient, humanizeDarazApiError, sanitizeLogPayload } from "../client.js";
 import { encryptSecret, decryptSecret, maskSecret } from "../../security/encryption.js";
 import { calculateAvailableStock } from "../../inventory/barcode-mapping.js";
+import { normalizeScanInput } from "../../inventory/product-scanner-service.js";
 import {
   SANITIZED_PASCAL_CASE_CATALOG_FIXTURE,
   SANITIZED_CAMEL_CASE_CATALOG_FIXTURE,
@@ -397,6 +398,15 @@ async function runPipelineTests() {
 
     assert.throws(() => requiresConfirmation(false), /Confirmation required/);
     assert.strictEqual(requiresConfirmation(true), true);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 19: Centralized Scanner Input Normalization and Store Resolution
+  // ---------------------------------------------------------------------------
+  await test("Test 19: Centralized Scanner normalizes raw scan strings and resolves store-isolated identifiers", () => {
+    const rawScanWithNewlines = "  SKU-WIRELESS-HEADPHONES\r\n ";
+    const normalized = normalizeScanInput(rawScanWithNewlines);
+    assert.strictEqual(normalized, "SKU-WIRELESS-HEADPHONES", "Scanner normalization must strip newlines, carriage returns, and surrounding whitespace");
   });
 
   console.log("\n==================================================================");

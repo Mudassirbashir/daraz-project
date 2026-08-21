@@ -49,6 +49,15 @@ export function StoreOnboardingModal({
   };
 
   const handleAuthorize = async () => {
+    if (!appKey.trim()) {
+      setErrorMessage("App Key is required to connect your Daraz store.");
+      return;
+    }
+    if (!appSecret.trim()) {
+      setErrorMessage("App Secret is required to connect your Daraz store.");
+      return;
+    }
+
     setIsAuthorizing(true);
     setErrorMessage(null);
 

@@ -31,8 +31,11 @@ export async function resolveMasterSkuByBarcode(
 
   let query = supabase.from('barcode_mappings').select('master_sku_id, master_skus(master_sku)').eq('barcode', barcode);
 
-  if (storeId && sellerSku) {
-    query = query.eq('store_id', storeId).eq('seller_sku', sellerSku);
+  if (storeId) {
+    query = query.eq('store_id', storeId);
+  }
+  if (sellerSku) {
+    query = query.eq('seller_sku', sellerSku);
   }
 
   const { data } = await query.maybeSingle();

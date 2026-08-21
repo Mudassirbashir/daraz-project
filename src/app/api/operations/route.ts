@@ -75,7 +75,29 @@ export async function GET(req: NextRequest) {
     const searchTerm = barcode.trim() || search.trim();
     if (searchTerm) {
       const q = `%${searchTerm}%`;
-      query = query.or(`daraz_order_id.ilike.${q},customer_name.ilike.${q},tracking_number.ilike.${q}`);
+      let skuOrderIds: string[] = [];
+
+      try {
+        const { data: itemMatches } = await supabase
+          .from("order_items")
+          .select("order_id")
+          .in("store_id", userStoreIds)
+          .or(`seller_sku.ilike.${q},name.ilike.${q}`)
+          .limit(200);
+
+        if (itemMatches && itemMatches.length > 0) {
+          skuOrderIds = itemMatches.map((i: any) => i.order_id).filter(Boolean);
+        }
+      } catch (itemErr: any) {
+        console.error("[Operations API SKU Search Notice]:", itemErr?.message);
+      }
+
+      if (skuOrderIds.length > 0) {
+        const idListStr = skuOrderIds.join(",");
+        query = query.or(`daraz_order_id.ilike.${q},customer_name.ilike.${q},tracking_number.ilike.${q},id.in.(${idListStr})`);
+      } else {
+        query = query.or(`daraz_order_id.ilike.${q},customer_name.ilike.${q},tracking_number.ilike.${q}`);
+      }
     }
 
     query = query.order("order_date", { ascending: false }).range(offset, offset + limit - 1);

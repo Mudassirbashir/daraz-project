@@ -46,15 +46,19 @@ export function PackingModal({
     if (!barcodeInput.trim()) return;
 
     const term = barcodeInput.trim().toLowerCase();
-    const matchIdx = items.findIndex((it: any) =>
-      (it.name || "").toLowerCase().includes(term) || (it.sku || "").toLowerCase().includes(term)
-    );
+    const matchIdx = items.findIndex((it: any) => {
+      const sSku = (it.seller_sku || it.sku || "").toLowerCase();
+      const oId = (it.order_item_id || it.id || "").toLowerCase();
+      const name = (it.name || "").toLowerCase();
+      return sSku === term || oId === term || (sSku.length > 0 && term.includes(sSku)) || name.includes(term);
+    });
 
     if (matchIdx !== -1) {
       setCheckedItems((prev) => ({ ...prev, [matchIdx]: true }));
       setBarcodeInput("");
     } else {
-      alert(`Barcode SKU "${barcodeInput}" not found in this package.`);
+      setErrorMessage(`Barcode/SKU "${barcodeInput.trim()}" not found in this package.`);
+      setTimeout(() => setErrorMessage(""), 3500);
     }
   };
 

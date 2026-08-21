@@ -18,6 +18,8 @@ import { SyncNowButton } from "@/components/common/SyncNowButton";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
 import { getStoreDisplayName, getStoreInitials } from "@/lib/daraz/store-utils";
 import { fetchAllStoreOrders, fetchAllStoreListings } from "@/lib/supabase/fetch-all";
+import { getCentralStoreMetrics } from "@/lib/supabase/central-data-service";
+import { StoreOnboardingClient } from "@/components/stores/StoreOnboardingClient";
 
 export const dynamic = "force-dynamic";
 
@@ -136,69 +138,20 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     .map((s) => s.id);
 
   // 2. Fetch Listings & Orders Metrics across all active stores
-  let allActiveListings: any[] = [];
-  let allActiveOrders: any[] = [];
-
-  if (supabase && activeStoreIds.length > 0) {
+  // Fetch Centralized Multi-Store Metrics
+  let centralData: Awaited<ReturnType<typeof getCentralStoreMetrics>> | null = null;
+  if (activeStoreIds.length > 0) {
     try {
-      const [listingsRes, ordersRes] = await Promise.all([
-        fetchAllStoreListings(supabase, activeStoreIds, "store_id, stock_quantity, daraz_item_id"),
-        fetchAllStoreOrders(supabase, activeStoreIds, "id, store_id, status, workflow_status, total_amount_cents, order_date, created_at"),
-      ]);
-      allActiveListings = listingsRes;
-      allActiveOrders = ordersRes;
+      centralData = await getCentralStoreMetrics(selectedStoreId, activeStoreIds);
     } catch (metricsEx: any) {
       logDashboardError("Dashboard Page Metrics Exception", metricsEx);
       if (!queryErrorNotice) queryErrorNotice = `Metrics query notice: ${metricsEx?.message || String(metricsEx)}`;
     }
   }
 
-  // Scope target store IDs for top KPI cards
-  let kpiTargetStoreIds = activeStoreIds;
-  if (!isCombinedView && selectedStoreId && selectedStoreId !== "all") {
-    kpiTargetStoreIds = activeStoreIds.includes(selectedStoreId) ? [selectedStoreId] : [];
-  }
-
-  const kpiListings = allActiveListings.filter((l: any) => kpiTargetStoreIds.includes(l.store_id));
-  const kpiOrders = allActiveOrders.filter((o: any) => kpiTargetStoreIds.includes(o.store_id));
-
-  // Build per-store metrics map in memory for store cards grid
-  const storeListingsMap: Record<string, { skusCount: number; parentCount: number; stock: number }> = {};
-  allActiveListings.forEach((l: any) => {
-    const key = String(l.store_id || "").toLowerCase();
-    if (!storeListingsMap[key]) storeListingsMap[key] = { skusCount: 0, parentCount: 0, stock: 0 };
-    storeListingsMap[key].skusCount += 1;
-    storeListingsMap[key].stock += l.stock_quantity || 0;
-  });
-
-  const storeParentMap: Record<string, Set<string>> = {};
-  allActiveListings.forEach((l: any) => {
-    const key = String(l.store_id || "").toLowerCase();
-    if (!storeParentMap[key]) storeParentMap[key] = new Set();
-    if (l.daraz_item_id) storeParentMap[key].add(l.daraz_item_id);
-  });
-  Object.keys(storeParentMap).forEach((key) => {
-    if (storeListingsMap[key]) {
-      storeListingsMap[key].parentCount = storeParentMap[key].size > 0 ? storeParentMap[key].size : storeListingsMap[key].skusCount;
-    }
-  });
-
-  const storeOrdersMap: Record<string, { total: number; inProgress: number }> = {};
-  allActiveOrders.forEach((o: any) => {
-    const key = String(o.store_id || "").toLowerCase();
-    if (!storeOrdersMap[key]) storeOrdersMap[key] = { total: 0, inProgress: 0 };
-    storeOrdersMap[key].total += 1;
-    const statusNorm = String(o.workflow_status || o.status || "").toLowerCase();
-    if (["pending", "unpaid", "ready_to_ship", "picking", "packed", "to_pack", "to_ship"].includes(statusNorm)) {
-      storeOrdersMap[key].inProgress += 1;
-    }
-  });
-
   const enrichedStores = storesList.map((st, idx) => {
     const isConnected = Boolean(st?.access_token && st?.is_active);
-    const key = String(st?.id || "").toLowerCase();
-    const storeListingStats = storeListingsMap[key] || { skusCount: 0, parentCount: 0, stock: 0 };
-    const storeOrderStats = storeOrdersMap[key] || { total: 0, inProgress: 0 };
+    const stMetrics = centralData?.perStoreMetrics[st.id];
     const displayName = getStoreDisplayName(st, idx);
 
     return {
@@ -207,28 +160,23 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
       store_code: st?.store_code || "STORE",
       seller_id: st?.seller_id || "N/A",
       isConnected,
-      productsCount: isConnected ? storeListingStats.parentCount : null,
-      skusCount: isConnected ? storeListingStats.skusCount : null,
-      stockCount: isConnected ? storeListingStats.stock : null,
-      ordersCount: isConnected ? storeOrderStats.total : null,
-      inProgressOrdersCount: isConnected ? storeOrderStats.inProgress : null,
+      productsCount: isConnected ? (stMetrics?.totalProducts ?? 0) : null,
+      stockCount: isConnected ? (stMetrics?.totalStockUnits ?? 0) : null,
+      ordersCount: isConnected ? (stMetrics?.totalOrders ?? 0) : null,
+      inProgressOrdersCount: isConnected ? (stMetrics?.inProgressOrdersCount ?? 0) : null,
     };
   });
 
   const totalStoresCount = enrichedStores.length;
   const isMaxStoresReached = totalStoresCount >= 3;
 
-  const totalDistinctParentItems = new Set(kpiListings.map((l: any) => l.daraz_item_id).filter(Boolean)).size;
-  const totalProductsCount = totalDistinctParentItems > 0 ? totalDistinctParentItems : kpiListings.length;
-  const totalStockUnits = kpiListings.reduce((sum, item) => sum + (item.stock_quantity || 0), 0);
-  const lowStockCount = kpiListings.filter((item) => (item.stock_quantity || 0) <= 10).length;
+  const totalProductsCount = centralData?.metrics.totalProductsCount ?? 0;
+  const totalStockUnits = centralData?.metrics.totalStockUnits ?? 0;
+  const lowStockCount = centralData?.metrics.lowStockCount ?? 0;
+  const totalOrdersCount = centralData?.metrics.totalOrdersCount ?? 0;
+  const inProgressOrdersCount = centralData?.metrics.inProgressOrdersCount ?? 0;
+  const totalRevenueCents = centralData?.metrics.grossRevenueCents ?? 0;
 
-  const totalOrdersCount = kpiOrders.length;
-  const inProgressOrdersCount = kpiOrders.filter((o: any) =>
-    ["pending", "unpaid", "ready_to_ship", "picking", "packed", "to_pack", "to_ship"].includes(String(o.workflow_status || o.status || "").toLowerCase())
-  ).length;
-
-  const totalRevenueCents = kpiOrders.reduce((sum: number, o: any) => sum + (o.total_amount_cents || 0), 0);
   const totalRevenueFormatted = (totalRevenueCents / 100).toLocaleString("en-PK", {
     style: "currency",
     currency: "PKR",
@@ -441,12 +389,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                       <span>Open Store</span>
                     </a>
                   ) : (
-                    <a
-                      href="/api/auth/daraz/login"
-                      className="w-full inline-flex items-center justify-center space-x-1.5 rounded-xl bg-orange-500 px-3 py-2 text-xs font-bold text-white hover:bg-orange-600 shadow-sm"
-                    >
-                      <span>Connect Store</span>
-                    </a>
+                    <StoreOnboardingClient
+                      isMaxStoresReached={isMaxStoresReached}
+                      storeId={store.id}
+                      storeName={store.store_name}
+                      isConnected={false}
+                      mode="card_actions"
+                    />
                   )}
                 </div>
               </div>
@@ -463,13 +412,13 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
                 <h3 className="font-bold text-slate-900 dark:text-white text-sm">Add Daraz Store</h3>
                 <p className="text-[11px] text-slate-500 mt-0.5">Connect up to {3 - totalStoresCount} more store account</p>
               </div>
-              <a
-                href="/api/auth/daraz/login"
-                className="inline-flex items-center space-x-1.5 rounded-xl bg-orange-500 px-4 py-2 text-xs font-bold text-white hover:bg-orange-600 shadow-sm apple-press"
-              >
-                <Plus className="h-3.5 w-3.5" />
-                <span>Connect Store</span>
-              </a>
+              <StoreOnboardingClient
+                isMaxStoresReached={isMaxStoresReached}
+                storeId=""
+                storeName=""
+                isConnected={false}
+                mode="button"
+              />
             </div>
           )}
         </div>
