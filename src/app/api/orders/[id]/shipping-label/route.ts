@@ -62,7 +62,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       .eq("store_id", store?.id || "")
       .maybeSingle();
 
-    const hasToken = Boolean(creds?.access_token || store?.authorization_status === "authorized");
+    const hasToken = Boolean(creds?.access_token && creds.access_token.trim());
 
     // 3. Verify Store Ownership & Connection Status
     if (!store || !store.is_active || !hasToken) {

@@ -45,7 +45,7 @@ export async function POST(
       .eq("store_id", storeId)
       .maybeSingle();
 
-    const hasToken = Boolean(creds?.access_token || store.authorization_status === "authorized");
+    const hasToken = Boolean(creds?.access_token && creds.access_token.trim());
 
     if (!store.is_active || !hasToken) {
       return NextResponse.json(

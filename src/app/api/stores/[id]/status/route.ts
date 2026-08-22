@@ -33,8 +33,7 @@ export async function GET(
       .maybeSingle();
 
     const isConnected = Boolean(
-      store.is_active &&
-      (creds?.access_token || store.authorization_status === "authorized")
+      store.is_active && creds?.access_token && creds.access_token.trim()
     );
 
     if (!isConnected) {

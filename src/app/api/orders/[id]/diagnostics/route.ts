@@ -88,7 +88,7 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       .eq("store_id", store?.id || "")
       .maybeSingle();
 
-    const hasToken = Boolean(creds?.access_token || store?.authorization_status === "authorized");
+    const hasToken = Boolean(creds?.access_token && creds.access_token.trim());
 
     // Step 2: Daraz Store Authorization Check
     if (!store || !store.is_active || !hasToken) {

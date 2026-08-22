@@ -21,11 +21,11 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
     .eq('store_id', storeId)
     .maybeSingle();
 
-  let appKey = (creds?.api_app_key || store.api_app_key || '').trim();
-  let rawSecret = creds?.api_app_secret || store.api_app_secret || '';
-  let accessToken = creds?.access_token || store.access_token || '';
-  let refreshToken = creds?.refresh_token || store.refresh_token || '';
-  let tokenExpiresAt = creds?.token_expires_at || store.token_expires_at || null;
+  let appKey = (creds?.api_app_key || '').trim();
+  let rawSecret = creds?.api_app_secret || '';
+  let accessToken = creds?.access_token || '';
+  let refreshToken = creds?.refresh_token || '';
+  let tokenExpiresAt = creds?.token_expires_at || null;
 
   if ((!appKey || !rawSecret) && store.daraz_app_id) {
     const { data: appData } = await supabase
