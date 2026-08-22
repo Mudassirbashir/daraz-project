@@ -58,7 +58,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   // Calculate live metrics per store
   const enrichedStores = await Promise.all(
     storesList.map(async (st) => {
-      const isConnected = Boolean(st.access_token && st.is_active);
+      const isConnected = Boolean(st.is_active && st.authorization_status !== "disconnected");
 
       if (!isConnected) {
         return {

@@ -92,13 +92,18 @@ export async function POST(req: NextRequest) {
     const sellerId = String(payload.seller_id || payload.sellerId);
     const { data: store } = await supabase
       .from("daraz_stores")
-      .select("id, api_app_secret")
+      .select("id")
       .eq("seller_id", sellerId)
       .maybeSingle();
 
     if (store) {
       storeId = store.id;
-      if (store.api_app_secret) appSecret = store.api_app_secret;
+      const { data: creds } = await supabase
+        .from("daraz_store_credentials")
+        .select("api_app_secret")
+        .eq("store_id", store.id)
+        .maybeSingle();
+      if (creds?.api_app_secret) appSecret = creds.api_app_secret;
     }
   }
 

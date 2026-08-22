@@ -58,6 +58,7 @@ export async function POST(
     }
 
     // Execute Store Disconnect and Clean Up Store Data in Supabase
+    try { await supabase.from("daraz_store_credentials").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("listings").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("orders").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("daraz_products").delete().eq("store_id", storeId); } catch (_) {}
@@ -79,9 +80,7 @@ export async function POST(
       const fallbackDisconnectData: Record<string, any> = {
         is_active: false,
         sync_status: "disconnected",
-        access_token: null,
-        refresh_token: null,
-        token_expires_at: null,
+        authorization_status: "disconnected",
         last_synced_at: null,
         updated_at: new Date().toISOString(),
       };

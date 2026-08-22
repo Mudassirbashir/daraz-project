@@ -106,7 +106,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     try {
       let storesQuery = supabase
         .from("daraz_stores")
-        .select("id, store_code, store_name, region, is_active, seller_id, access_token, sync_status, updated_at, last_sync_error")
+        .select("id, store_code, store_name, region, is_active, seller_id, authorization_status, sync_status, updated_at, last_sync_error")
         .order("created_at", { ascending: true });
 
       if (userStoreIds.length > 0) {

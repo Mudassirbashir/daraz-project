@@ -138,7 +138,7 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     }
 
     const store = product.daraz_stores;
-    if (!store || !store.access_token) {
+    if (!store) {
       return NextResponse.json(
         {
           success: false,
@@ -161,14 +161,8 @@ export async function PATCH(req: NextRequest, { params }: { params: { id: string
     // =========================================================================
     // TWO-PHASE ACTION MODEL: STEP 1 - SEND REQUEST TO DARAZ API FIRST
     // =========================================================================
-    const darazClient = new DarazApiClient({
-      storeId: store.id,
-      accessToken: store.access_token,
-      refreshToken: store.refresh_token || undefined,
-      tokenExpiresAt: store.token_expires_at || undefined,
-      appKey: store.api_app_key || undefined,
-      appSecret: store.api_app_secret || undefined,
-    });
+    const { getValidStoreAccessToken } = await import("@/lib/daraz/store-utils");
+    const { client: darazClient } = await getValidStoreAccessToken(store.id);
 
     let darazConfirmed = false;
 

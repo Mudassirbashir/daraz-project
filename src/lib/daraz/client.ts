@@ -663,7 +663,7 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
 
   const { data: store, error } = await supabase
     .from('daraz_stores')
-    .select('id, access_token, refresh_token, token_expires_at, api_app_key, api_app_secret, daraz_app_id, country_code, region')
+    .select('id, daraz_app_id, region, is_active')
     .eq('id', storeId)
     .single();
 
@@ -671,8 +671,17 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
     throw new Error(`Store ${storeId} not found in database: ${error?.message || 'unknown'}`);
   }
 
-  let resolvedAppKey = (store.api_app_key || '').trim();
-  let rawSecret = store.api_app_secret || '';
+  const { data: creds } = await supabase
+    .from('daraz_store_credentials')
+    .select('*')
+    .eq('store_id', storeId)
+    .maybeSingle();
+
+  let resolvedAppKey = (creds?.api_app_key || '').trim();
+  let rawSecret = creds?.api_app_secret || '';
+  let accessToken = creds?.access_token || undefined;
+  let refreshToken = creds?.refresh_token || undefined;
+  let tokenExpiresAt = creds?.token_expires_at || undefined;
 
   if ((!resolvedAppKey || !rawSecret) && store.daraz_app_id) {
     const { data: appData } = await supabase
@@ -699,10 +708,10 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
   return new DarazClient({
     appKey: resolvedAppKey,
     appSecret: decryptedSecret.trim(),
-    countryCode: (store.country_code || store.region || 'PK') as DarazCountryCode,
-    accessToken: store.access_token || undefined,
-    refreshToken: store.refresh_token || undefined,
-    tokenExpiresAt: store.token_expires_at || undefined,
+    countryCode: (store.region || 'PK') as DarazCountryCode,
+    accessToken,
+    refreshToken,
+    tokenExpiresAt,
   });
 }
 

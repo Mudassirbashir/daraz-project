@@ -79,7 +79,7 @@ export async function ensureUserExistsInSupabase(
       }
     }
 
-    // 2. Ensure profile exists in profiles table
+    // 2. Ensure profile & user_role exist
     if (userId) {
       await adminSupabase.from('profiles').upsert(
         {
@@ -92,6 +92,15 @@ export async function ensureUserExistsInSupabase(
           updated_at: new Date().toISOString(),
         },
         { onConflict: 'email' }
+      );
+
+      await adminSupabase.from('user_roles').upsert(
+        {
+          user_id: userId,
+          role: role as any,
+          assigned_at: new Date().toISOString(),
+        },
+        { onConflict: 'user_id,role' }
       );
     }
 

@@ -27,7 +27,7 @@ export async function POST(
     const supabase = createAdminClient();
     const { data: store, error } = await supabase
       .from("daraz_stores")
-      .select("id, store_name, is_active, access_token, user_id")
+      .select("id, store_name, is_active, authorization_status, user_id")
       .eq("id", storeId)
       .maybeSingle();
 
@@ -39,7 +39,15 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
     }
 
-    if (!store.is_active || !store.access_token) {
+    const { data: creds } = await supabase
+      .from("daraz_store_credentials")
+      .select("access_token")
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    const hasToken = Boolean(creds?.access_token || store.authorization_status === "authorized");
+
+    if (!store.is_active || !hasToken) {
       return NextResponse.json(
         { success: false, error: "Store is disconnected. Please connect the store before syncing." },
         { status: 400 }

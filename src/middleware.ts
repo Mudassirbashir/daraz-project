@@ -82,22 +82,30 @@ export async function middleware(request: NextRequest) {
     // Role-Based Access Control (RBAC) path protection
     if (user && !isAuthRoute) {
       try {
-        let userRole: AppRole = "ops_manager";
+        let userRole: AppRole | null = null;
 
         if (isFallbackUser) {
-          userRole = ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || "ops_manager";
+          userRole = ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || null;
         } else if (supabase && user?.id) {
-          const { data: profile, error: profileErr } = await (supabase as any)
-            .from("profiles")
+          // 1. Authoritative check on user_roles
+          const { data: roleRow } = await (supabase as any)
+            .from("user_roles")
             .select("role")
-            .eq("id", user.id)
+            .eq("user_id", user.id)
             .maybeSingle();
 
-          if (profileErr) {
-            console.warn("[Middleware RBAC Profile Query Warning]:", profileErr.message);
-          }
+          if (roleRow?.role) {
+            userRole = roleRow.role as AppRole;
+          } else {
+            // 2. Secondary check on profiles
+            const { data: profile } = await (supabase as any)
+              .from("profiles")
+              .select("role")
+              .eq("id", user.id)
+              .maybeSingle();
 
-          userRole = (profile?.role as AppRole) || ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || "ops_manager";
+            userRole = (profile?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || null;
+          }
         }
 
         const matchedGuard = PROTECTED_ROUTES.find((guard) =>
@@ -106,7 +114,7 @@ export async function middleware(request: NextRequest) {
 
         if (matchedGuard) {
           const hasAccess =
-            userRole === "super_admin" || matchedGuard.allowedRoles.includes(userRole);
+            userRole === "super_admin" || (userRole ? matchedGuard.allowedRoles.includes(userRole) : false);
 
           if (!hasAccess) {
             if (pathname.startsWith("/api")) {

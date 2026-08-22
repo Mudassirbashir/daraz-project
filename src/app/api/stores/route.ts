@@ -23,23 +23,22 @@ export async function GET(req: NextRequest) {
     try {
       const { data, error } = await supabase
         .from("daraz_stores")
-        .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at, slot_number, last_sync_error")
+        .select("id, store_code, store_name, region, seller_id, is_active, sync_status, last_synced_at, slot_number, last_sync_error, authorization_status, updated_at, created_at")
         .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
         .order("created_at", { ascending: true });
 
       if (error) {
-        // Multi-tier fallback 1: Exclude slot_number
+        // Fallback 1: Exclude slot_number if missing
         const { data: fb1, error: fb1Err } = await supabase
           .from("daraz_stores")
-          .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status, last_synced_at, last_sync_error")
+          .select("id, store_code, store_name, region, seller_id, is_active, sync_status, last_synced_at, last_sync_error, authorization_status, updated_at, created_at")
           .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
           .order("created_at", { ascending: true });
 
         if (fb1Err) {
-          // Multi-tier fallback 2: Base production columns baseline
           const { data: fb2, error: fb2Err } = await supabase
             .from("daraz_stores")
-            .select("id, store_code, store_name, region, seller_id, is_active, token_expires_at, updated_at, created_at, access_token, sync_status")
+            .select("id, store_code, store_name, region, seller_id, is_active, sync_status, updated_at, created_at")
             .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
             .order("created_at", { ascending: true });
 
@@ -55,10 +54,28 @@ export async function GET(req: NextRequest) {
       throw new Error(`Failed to fetch stores: ${err.message}`);
     }
 
+    // Fetch active store credentials server-side for connection state check
+    const storeIds = storesList.map((s) => s.id);
+    let activeCredMap = new Set<string>();
+    if (storeIds.length > 0) {
+      const { data: creds } = await supabase
+        .from("daraz_store_credentials")
+        .select("store_id, access_token")
+        .in("store_id", storeIds);
+      (creds || []).forEach((c) => {
+        if (c.access_token && c.access_token.trim()) {
+          activeCredMap.add(c.store_id);
+        }
+      });
+    }
+
     // Compute live metrics for connected stores
     const enrichedStores = await Promise.all(
       storesList.map(async (store) => {
-        const isConnected = Boolean(store.access_token && store.access_token.trim() && store.is_active);
+        const isConnected = Boolean(
+          store.is_active &&
+          (activeCredMap.has(store.id) || store.authorization_status === "authorized")
+        );
 
         if (!isConnected) {
           return {

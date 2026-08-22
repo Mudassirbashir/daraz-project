@@ -26,7 +26,16 @@ export async function GET(
       return NextResponse.json({ success: false, error: "Store not found." }, { status: 404 });
     }
 
-    const isConnected = Boolean(store.access_token && store.is_active);
+    const { data: creds } = await supabase
+      .from("daraz_store_credentials")
+      .select("access_token")
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    const isConnected = Boolean(
+      store.is_active &&
+      (creds?.access_token || store.authorization_status === "authorized")
+    );
 
     if (!isConnected) {
       return NextResponse.json({

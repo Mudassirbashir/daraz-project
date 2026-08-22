@@ -84,9 +84,8 @@ export default async function DashboardLayout({
     try {
       let storesQuery = (adminSupabase as any)
         .from("daraz_stores")
-        .select("id, store_code, store_name, seller_id, is_active, access_token, region, slot_number")
+        .select("id, store_code, store_name, seller_id, is_active, region, slot_number, authorization_status")
         .eq("is_active", true)
-        .not("access_token", "is", null)
         .order("created_at", { ascending: true });
 
       if (user?.id) {
@@ -113,7 +112,7 @@ export default async function DashboardLayout({
     store_name: s.store_name,
     seller_id: s.seller_id,
     is_active: s.is_active,
-    has_token: Boolean(s.access_token),
+    has_token: Boolean(s.is_active),
     slot_number: s.slot_number,
   }));
 

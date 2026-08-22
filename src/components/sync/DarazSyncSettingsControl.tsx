@@ -31,7 +31,8 @@ interface StoreItem {
   store_code: string;
   seller_id: string;
   is_active: boolean;
-  access_token?: string;
+  isConnected?: boolean;
+  authorization_status?: string;
 }
 
 export function DarazSyncSettingsControl() {
@@ -50,7 +51,7 @@ export function DarazSyncSettingsControl() {
       const res = await fetch("/api/stores");
       const data = await res.json();
       if (data.success && data.stores) {
-        const activeStores = data.stores.filter((s: any) => s.is_active && s.access_token);
+        const activeStores = data.stores.filter((s: any) => s.is_active && (s.isConnected !== false));
         setStores(activeStores);
       }
     } catch (err: any) {

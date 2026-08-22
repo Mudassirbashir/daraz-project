@@ -352,19 +352,8 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
 
         if (dbOrder?.id) {
           try {
-            const { data: storeRecord } = await supabase
-              .from("daraz_stores")
-              .select("access_token, refresh_token, api_app_key, api_app_secret")
-              .eq("id", targetStoreId)
-              .single();
-
-            if (storeRecord?.access_token) {
-              const webhookDarazClient = new DarazApiClient({
-                accessToken: storeRecord.access_token,
-                refreshToken: storeRecord.refresh_token || "",
-                appKey: storeRecord.api_app_key || process.env.DARAZ_APP_KEY || "",
-                appSecret: storeRecord.api_app_secret || process.env.DARAZ_APP_SECRET || "",
-              });
+            const { getValidStoreAccessToken } = await import("./store-utils");
+            const { client: webhookDarazClient } = await getValidStoreAccessToken(targetStoreId);
 
               const items = await webhookDarazClient.getOrderItems(darazOrderId);
               if (items && items.length > 0) {
@@ -434,7 +423,6 @@ export async function processDarazWebhookEvent(payload: any, rawBody: string): P
                   console.log(`[DARAZ WEBHOOK] Successfully synced ${items.length} order items for Order ${darazOrderId}`);
                 }
               }
-            }
           } catch (itemErr: any) {
             console.warn(`[DARAZ WEBHOOK] Notice fetching order items for Order ${darazOrderId}: ${itemErr.message}`);
           }

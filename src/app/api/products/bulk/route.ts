@@ -77,23 +77,18 @@ export async function PATCH(req: NextRequest) {
     // =========================================================================
     // TWO-PHASE ACTION MODEL: STEP 1 - CALL DARAZ API FIRST
     // =========================================================================
+    const { getValidStoreAccessToken } = await import("@/lib/daraz/store-utils");
+
     for (const prod of productsToProcess) {
       const store = prod.daraz_stores;
-      if (!store || !store.access_token) {
+      if (!store) {
         rejectedErrors.push(`SKU ${prod.seller_sku}: Store disconnected.`);
         continue;
       }
 
       if (action === "price" || action === "stock") {
         try {
-          const darazClient = new DarazApiClient({
-            storeId: store.id,
-            accessToken: store.access_token,
-            refreshToken: store.refresh_token || undefined,
-            tokenExpiresAt: store.token_expires_at || undefined,
-            appKey: store.api_app_key || undefined,
-            appSecret: store.api_app_secret || undefined,
-          });
+          const { client: darazClient } = await getValidStoreAccessToken(store.id);
 
           const darazConfirmed = await darazClient.updatePriceAndQuantity([
             {

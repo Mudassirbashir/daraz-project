@@ -33,8 +33,7 @@ export async function GET(req: NextRequest) {
     let storeQuery = supabase
       .from("daraz_stores")
       .select("id")
-      .eq("is_active", true)
-      .not("access_token", "is", null);
+      .eq("is_active", true);
 
     if (user?.id) {
       storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
@@ -203,24 +202,18 @@ export async function PATCH(req: NextRequest) {
 
     const confirmedIds: string[] = [];
     const rejectedErrors: string[] = [];
+    const { getValidStoreAccessToken } = await import("@/lib/daraz/store-utils");
 
     // Process each order through Daraz API first (Two-Phase Model)
     for (const order of ordersToProcess) {
       const store = order.daraz_stores;
-      if (!store || !store.access_token) {
+      if (!store) {
         rejectedErrors.push(`Order #${order.daraz_order_id}: Store disconnected.`);
         continue;
       }
 
       try {
-        const darazClient = new DarazApiClient({
-          storeId: store.id,
-          accessToken: store.access_token,
-          refreshToken: store.refresh_token || undefined,
-          tokenExpiresAt: store.token_expires_at || undefined,
-          appKey: store.api_app_key || undefined,
-          appSecret: store.api_app_secret || undefined,
-        });
+        const { client: darazClient } = await getValidStoreAccessToken(store.id);
 
         const itemIds = Array.isArray(order.order_items) && order.order_items.length > 0
           ? order.order_items.map((i: any) => i.order_item_id)

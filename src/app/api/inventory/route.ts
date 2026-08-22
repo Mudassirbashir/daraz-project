@@ -36,8 +36,7 @@ export async function GET(req: NextRequest) {
     let storeQuery = supabase
       .from("daraz_stores")
       .select("id")
-      .eq("is_active", true)
-      .not("access_token", "is", null);
+      .eq("is_active", true);
 
     if (user?.id) {
       storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);

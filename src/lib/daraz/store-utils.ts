@@ -4,6 +4,8 @@ import { decryptSecret } from '../security/encryption';
 
 export async function getValidStoreAccessToken(storeId: string): Promise<{ accessToken: string; client: DarazClient }> {
   const supabase = createAdminClient();
+  
+  // 1. Fetch store metadata
   const { data: store, error } = await supabase
     .from('daraz_stores')
     .select('*')
@@ -12,8 +14,18 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 
   if (error || !store) throw new Error(`Store not found: ${storeId}`);
 
-  let appKey = (store.api_app_key || '').trim();
-  let rawSecret = store.api_app_secret || '';
+  // 2. Fetch store credentials from secure daraz_store_credentials table
+  const { data: creds } = await supabase
+    .from('daraz_store_credentials')
+    .select('*')
+    .eq('store_id', storeId)
+    .maybeSingle();
+
+  let appKey = (creds?.api_app_key || store.api_app_key || '').trim();
+  let rawSecret = creds?.api_app_secret || store.api_app_secret || '';
+  let accessToken = creds?.access_token || store.access_token || '';
+  let refreshToken = creds?.refresh_token || store.refresh_token || '';
+  let tokenExpiresAt = creds?.token_expires_at || store.token_expires_at || null;
 
   if ((!appKey || !rawSecret) && store.daraz_app_id) {
     const { data: appData } = await supabase
@@ -34,17 +46,17 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
   const appSecret = (decryptSecret(rawSecret) || rawSecret).trim();
 
   const now = Date.now();
-  const expiresAt = new Date(store.token_expires_at || 0).getTime();
+  const expiresAt = new Date(tokenExpiresAt || 0).getTime();
   const bufferMs = 24 * 60 * 60 * 1000; // 24-hour buffer
 
-  if (expiresAt - now > bufferMs && store.access_token) {
+  if (expiresAt - now > bufferMs && accessToken) {
     const client = new DarazClient({
       appKey,
       appSecret,
       countryCode: store.country_code || store.region || 'PK',
-      accessToken: store.access_token,
+      accessToken,
     });
-    return { accessToken: store.access_token, client };
+    return { accessToken, client };
   }
 
   // Acquire DB Mutex Lock for 60s
@@ -59,14 +71,20 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
 
   if (!locked) {
     await new Promise((r) => setTimeout(r, 2500));
-    const { data: refreshed } = await supabase.from('daraz_stores').select('access_token').eq('id', storeId).single();
+    const { data: refreshedCreds } = await supabase
+      .from('daraz_store_credentials')
+      .select('access_token')
+      .eq('store_id', storeId)
+      .maybeSingle();
+    
+    const validToken = refreshedCreds?.access_token || accessToken;
     const client = new DarazClient({
       appKey,
       appSecret,
       countryCode: store.country_code || store.region || 'PK',
-      accessToken: refreshed!.access_token,
+      accessToken: validToken,
     });
-    return { accessToken: refreshed!.access_token, client };
+    return { accessToken: validToken, client };
   }
 
   try {
@@ -77,22 +95,34 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
     });
 
     const res: any = await tempClient.post('/auth/token/refresh', {
-      refresh_token: store.refresh_token,
+      refresh_token: refreshToken,
     });
 
     const newExpiresAt = new Date(Date.now() + res.expires_in * 1000).toISOString();
     const newRefreshExpiresAt = new Date(Date.now() + (res.refresh_expires_in || res.expires_in) * 1000).toISOString();
 
+    // Save updated tokens into daraz_store_credentials
     await supabase
-      .from('daraz_stores')
-      .update({
+      .from('daraz_store_credentials')
+      .upsert({
+        store_id: storeId,
+        api_app_key: appKey,
+        api_app_secret: appSecret,
         access_token: res.access_token,
         refresh_token: res.refresh_token,
         token_expires_at: newExpiresAt,
         refresh_expires_at: newRefreshExpiresAt,
+        updated_at: new Date().toISOString(),
+      }, { onConflict: 'store_id' });
+
+    // Update store state
+    await supabase
+      .from('daraz_stores')
+      .update({
+        authorization_status: 'authorized',
         token_refresh_locked_until: null,
         last_sync_error: null,
-        account_status: 'active',
+        is_active: true,
       })
       .eq('id', storeId);
 
@@ -109,6 +139,7 @@ export async function getValidStoreAccessToken(storeId: string): Promise<{ acces
     await supabase.from('daraz_stores').update({
       token_refresh_locked_until: null,
       sync_status: 'error',
+      authorization_status: 'expired',
       last_sync_error: userFriendlyError,
     }).eq('id', storeId);
     throw new Error(userFriendlyError);
