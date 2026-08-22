@@ -48,8 +48,13 @@ export async function POST(
       return NextResponse.json({ success: false, error: "Access denied to disconnect this store." }, { status: 403 });
     }
 
-    // Idempotency check: if store is already disconnected, return clean success
-    if (!store.is_active && !store.access_token) {
+    const { data: creds } = await supabase
+      .from("daraz_store_credentials")
+      .select("access_token")
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    if (!store.is_active && (!creds || !creds.access_token) && store.authorization_status === "disconnected") {
       return NextResponse.json({
         success: true,
         alreadyDisconnected: true,

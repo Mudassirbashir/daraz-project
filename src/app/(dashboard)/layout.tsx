@@ -49,7 +49,7 @@ export default async function DashboardLayout({
     }
   }
 
-  let userRole: AppRole = "ops_manager";
+  let userRole: AppRole = user ? "ops_manager" : "viewer";
   let userName = "Team Member";
 
   if (user && supabase) {
@@ -93,10 +93,28 @@ export default async function DashboardLayout({
       }
 
       const { data, error } = await storesQuery;
-
       if (error) {
-        storeQueryError = error.message;
-        logDashboardError("Layout Stores Query", error);
+        // Fallback: exclude authorization_status column if missing on DB
+        let fbQuery = (adminSupabase as any)
+          .from("daraz_stores")
+          .select("id, store_code, store_name, seller_id, is_active, region, slot_number")
+          .eq("is_active", true)
+          .order("created_at", { ascending: true });
+
+        if (user?.id) {
+          fbQuery = fbQuery.or(`user_id.eq.${user.id},user_id.is.null`);
+        }
+
+        const { data: fbData, error: fbErr } = await fbQuery;
+        if (fbErr) {
+          const isClockSkew = fbErr.message?.toLowerCase().includes("issued at future") || fbErr.message?.toLowerCase().includes("iat");
+          if (!isClockSkew) {
+            storeQueryError = fbErr.message;
+            logDashboardError("Layout Stores Query Fallback", fbErr);
+          }
+        } else {
+          rawStores = fbData || [];
+        }
       } else {
         rawStores = data || [];
       }

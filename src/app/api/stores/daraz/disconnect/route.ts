@@ -46,7 +46,13 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ success: false, error: "Access denied to disconnect this store." }, { status: 403 });
     }
 
-    if (!store.is_active && !store.access_token) {
+    const { data: creds } = await supabase
+      .from("daraz_store_credentials")
+      .select("access_token")
+      .eq("store_id", storeId)
+      .maybeSingle();
+
+    if (!store.is_active && (!creds || !creds.access_token) && store.authorization_status === "disconnected") {
       return NextResponse.json({
         success: true,
         alreadyDisconnected: true,
@@ -54,7 +60,8 @@ export async function POST(req: NextRequest) {
       });
     }
 
-    // Clean up store listings & related data
+    // Clean up store credentials & listings & related data
+    try { await supabase.from("daraz_store_credentials").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("listings").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("orders").delete().eq("store_id", storeId); } catch (_) {}
     try { await supabase.from("daraz_products").delete().eq("store_id", storeId); } catch (_) {}
@@ -72,9 +79,7 @@ export async function POST(req: NextRequest) {
       const fallbackDisconnectData: Record<string, any> = {
         is_active: false,
         sync_status: "disconnected",
-        access_token: null,
-        refresh_token: null,
-        token_expires_at: null,
+        authorization_status: "disconnected",
         last_synced_at: null,
         updated_at: new Date().toISOString(),
       };

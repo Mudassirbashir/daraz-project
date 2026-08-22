@@ -56,8 +56,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
 
     const store = order.daraz_stores;
 
+    const { data: creds } = await supabase
+      .from("daraz_store_credentials")
+      .select("access_token")
+      .eq("store_id", store?.id || "")
+      .maybeSingle();
+
+    const hasToken = Boolean(creds?.access_token || store?.authorization_status === "authorized");
+
     // 3. Verify Store Ownership & Connection Status
-    if (!store || !store.access_token || !store.is_active) {
+    if (!store || !store.is_active || !hasToken) {
       // Structured error log
       console.warn(
         `[GET /shipping-label] Store disconnected for Order ${order.daraz_order_id}:`,

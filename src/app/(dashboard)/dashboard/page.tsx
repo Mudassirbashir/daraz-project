@@ -115,10 +115,20 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
 
       const { data: storesData, error: storesErr } = await storesQuery;
       if (storesErr) {
-        const isClockSkew = storesErr.message?.toLowerCase().includes("issued at future") || storesErr.message?.toLowerCase().includes("iat");
-        if (!isClockSkew) {
-          queryErrorNotice = `Store query notice: ${storesErr.message}`;
-          logDashboardError("Dashboard Page Stores Query", storesErr);
+        // Fallback: exclude authorization_status if column is missing on DB
+        const { data: fbData, error: fbErr } = await supabase
+          .from("daraz_stores")
+          .select("id, store_code, store_name, region, is_active, seller_id, sync_status, updated_at, last_sync_error")
+          .order("created_at", { ascending: true });
+
+        if (fbErr) {
+          const isClockSkew = fbErr.message?.toLowerCase().includes("issued at future") || fbErr.message?.toLowerCase().includes("iat");
+          if (!isClockSkew) {
+            queryErrorNotice = `Store query notice: ${fbErr.message}`;
+            logDashboardError("Dashboard Page Stores Query Fallback", fbErr);
+          }
+        } else {
+          storesList = (fbData || []).map((s: any) => ({ ...s, authorization_status: "authorized" }));
         }
       } else {
         storesList = storesData || [];
@@ -132,9 +142,27 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
     }
   }
 
-  // Filter Active Connected Stores (is_active = true & access_token present)
+  // Fetch active store credentials server-side for connection state check
+  const storeIds = storesList.map((s) => s.id);
+  const activeCredMap = new Set<string>();
+  if (supabase && storeIds.length > 0) {
+    try {
+      const { data: credsData } = await supabase
+        .from("daraz_store_credentials")
+        .select("store_id, access_token")
+        .in("store_id", storeIds);
+
+      (credsData || []).forEach((c: any) => {
+        if (c.access_token && c.access_token.trim()) {
+          activeCredMap.add(c.store_id);
+        }
+      });
+    } catch (_) {}
+  }
+
+  // Filter Active Connected Stores (is_active = true & active credentials present or authorized status)
   const activeStoreIds = storesList
-    .filter((s) => Boolean(s.is_active && s.access_token))
+    .filter((s) => Boolean(s.is_active && (activeCredMap.has(s.id) || s.authorization_status === "authorized")))
     .map((s) => s.id);
 
   // 2. Fetch Listings & Orders Metrics across all active stores
@@ -150,7 +178,7 @@ export default async function DashboardPage({ searchParams }: DashboardPageProps
   }
 
   const enrichedStores = storesList.map((st, idx) => {
-    const isConnected = Boolean(st?.access_token && st?.is_active);
+    const isConnected = Boolean(st?.is_active && (activeCredMap.has(st.id) || st?.authorization_status === "authorized"));
     const stMetrics = centralData?.perStoreMetrics[st.id];
     const displayName = getStoreDisplayName(st, idx);
 

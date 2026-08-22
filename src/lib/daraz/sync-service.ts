@@ -162,8 +162,24 @@ export async function executeDarazSync(
       throw new Error(`Failed to query daraz_stores table: ${storesError.message}`);
     }
 
+    // Fetch active credentials from secure daraz_store_credentials table
+    const storeIds = (stores || []).map((s) => s.id);
+    const activeCredMap = new Set<string>();
+    if (storeIds.length > 0) {
+      const { data: credsList } = await supabase
+        .from("daraz_store_credentials")
+        .select("store_id, access_token")
+        .in("store_id", storeIds);
+
+      (credsList || []).forEach((c) => {
+        if (c.access_token && c.access_token.trim()) {
+          activeCredMap.add(c.store_id);
+        }
+      });
+    }
+
     const connectedStores = (stores || []).filter(
-      (s) => s.access_token && s.access_token.trim()
+      (s) => activeCredMap.has(s.id) || s.authorization_status === "authorized"
     );
 
     if (connectedStores.length === 0) {
@@ -1491,8 +1507,8 @@ export async function executeDarazSync(
     const hasCoreModuleFailed = CORE_MODULE_KEYS.some((mKey) => globalModuleResults[mKey]?.status === "failed");
     const hasAnyModuleFailed = Object.values(globalModuleResults).some((m) => m.status === "failed");
 
-    const overallSuccess = !hasCoreModuleFailed && storesSynced > 0;
-    const overallStatus = hasCoreModuleFailed
+    const overallSuccess = !hasCoreModuleFailed && storesSynced > 0 && totalFailedCount === 0;
+    const overallStatus = (hasCoreModuleFailed || totalFailedCount > 0)
       ? "completed_with_errors"
       : (hasAnyModuleFailed ? "completed_with_errors" : "completed");
 

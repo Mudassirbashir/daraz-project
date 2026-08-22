@@ -480,11 +480,6 @@ export async function GET(req: NextRequest) {
 
     const baseUpdateData: Record<string, any> = {
       seller_id: verifiedSellerId,
-      access_token,
-      refresh_token,
-      token_expires_at: tokenExpiresAt,
-      api_app_key: appKey,
-      api_app_secret: encryptedSecretForDb || appSecret,
       daraz_app_id: darazAppId || targetStore?.daraz_app_id || null,
       store_username: storeUsername || targetStore?.store_username || null,
       authorization_status: "authorized",
@@ -507,11 +502,20 @@ export async function GET(req: NextRequest) {
       const updatedStore = await safePersistStoreRecord(supabase, "update", baseUpdateData, targetStore.id);
       storeId = updatedStore.id;
     } else {
+      const { data: credsList } = await supabase
+        .from("daraz_store_credentials")
+        .select("store_id")
+        .not("access_token", "is", null);
+      const credStoreIds = (credsList || []).map((c) => c.store_id);
+
       let storeQuery = supabase
         .from("daraz_stores")
         .select("id", { count: "exact", head: true })
-        .eq("is_active", true)
-        .not("access_token", "is", null);
+        .eq("is_active", true);
+
+      if (credStoreIds.length > 0) {
+        storeQuery = storeQuery.in("id", credStoreIds);
+      }
 
       if (currentUserId) {
         storeQuery = storeQuery.or(`user_id.eq.${currentUserId},user_id.is.null`);
@@ -536,6 +540,27 @@ export async function GET(req: NextRequest) {
 
       const insertedStore = await safePersistStoreRecord(supabase, "insert", insertPayload);
       storeId = insertedStore.id;
+    }
+
+    // Persist sensitive credentials securely into daraz_store_credentials table
+    const { error: credErr } = await supabase
+      .from("daraz_store_credentials")
+      .upsert(
+        {
+          store_id: storeId,
+          api_app_key: appKey,
+          api_app_secret: appSecret,
+          access_token: access_token,
+          refresh_token: refresh_token,
+          token_expires_at: tokenExpiresAt,
+          updated_at: new Date().toISOString(),
+        },
+        { onConflict: "store_id" }
+      );
+
+    if (credErr) {
+      console.error(`[Daraz OAuth Callback] Error persisting store credentials for store ${storeId}:`, credErr.message);
+      throw new Error(`Failed to store credentials: ${credErr.message}`);
     }
 
     // 8b. Ensure default per-store sync settings exist (CORE ON, Heavy OFF)

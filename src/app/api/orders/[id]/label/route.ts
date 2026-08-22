@@ -63,8 +63,16 @@ export async function GET(req: NextRequest, { params }: { params: { id: string }
       );
     }
 
+    const { data: creds } = await supabase
+      .from("daraz_store_credentials")
+      .select("access_token")
+      .eq("store_id", store?.id || "")
+      .maybeSingle();
+
+    const hasToken = Boolean(creds?.access_token || store?.authorization_status === "authorized");
+
     // 2. Validate Store API Credentials
-    if (!store || !store.access_token || !store.is_active) {
+    if (!store || !store.is_active || !hasToken) {
       return NextResponse.json(
         {
           success: false,

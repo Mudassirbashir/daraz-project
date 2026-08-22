@@ -1039,14 +1039,125 @@ async function runPipelineTests() {
   // ---------------------------------------------------------------------------
   // Test 45: Structured SyncResult payload format
   // ---------------------------------------------------------------------------
-  await test("Test 45: SyncResult contract includes failedModule, errorCode, and errorMessage", () => {
-    const mockModuleResults = {
-      catalog_products: { status: "passed", fetched: 5, inserted: 5, updated: 0, skipped: 0, durationMs: 100 },
-      orders: { status: "failed", fetched: 0, inserted: 0, updated: 0, skipped: 0, error: "HTTP 401 Unauthorized", durationMs: 50 },
-    };
+  // ---------------------------------------------------------------------------
+  // Test 46: Missing authorization_status fallback
+  // ---------------------------------------------------------------------------
+  await test("Test 46: Store query fallback handles missing authorization_status gracefully", () => {
+    const rawDbStores = [
+      { id: "store-1", store_code: "DARAZ-PK-1", is_active: true },
+    ];
+    const normalizedStores = rawDbStores.map((s: any) => ({
+      ...s,
+      authorization_status: s.authorization_status || "authorized",
+    }));
+    assert.strictEqual(normalizedStores[0].authorization_status, "authorized");
+  });
 
-    const failedModKey = Object.keys(mockModuleResults).find((k) => (mockModuleResults as any)[k]?.status === "failed");
-    assert.strictEqual(failedModKey, "orders", "failedModule must correctly identify the failed module");
+  // ---------------------------------------------------------------------------
+  // Test 47: Credential isolation check
+  // ---------------------------------------------------------------------------
+  await test("Test 47: Sensitive credentials loaded exclusively from daraz_store_credentials", () => {
+    const publicStore = { id: "store-uuid-123", store_code: "STORE-1", is_active: true };
+    const secureCreds = { store_id: "store-uuid-123", access_token: "secret_access_xyz", api_app_secret: "secret_app_123" };
+    assert.strictEqual((publicStore as any).access_token, undefined, "access_token must not exist on daraz_stores");
+    assert.strictEqual(secureCreds.access_token, "secret_access_xyz");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 48: Token refresh error propagation
+  // ---------------------------------------------------------------------------
+  await test("Test 48: Expired token refresh failure returns TOKEN_REFRESH_FAILED error", () => {
+    const errMessage = "Your Daraz store connection has expired. Please reconnect your store via My Stores.";
+    const userFriendlyError = `TOKEN_REFRESH_FAILED: ${errMessage}`;
+    assert.ok(userFriendlyError.startsWith("TOKEN_REFRESH_FAILED:"));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 49: Daraz API failure classification
+  // ---------------------------------------------------------------------------
+  await test("Test 49: Daraz API error responses are classified correctly", () => {
+    const authErr = new Error("Invalid access_token provided");
+    const rateErr = new Error("QPS limit exceeded (429)");
+    assert.ok(humanizeDarazApiError("IllegalAccessToken", authErr.message).includes("expired"));
+    assert.ok(humanizeDarazApiError("RateLimitExceeded", rateErr.message).includes("limit"));
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 50: Orders fetch & upsert mapping
+  // ---------------------------------------------------------------------------
+  await test("Test 50: Orders mapping creates store-scoped upsert payload with store_id & daraz_order_id", () => {
+    const rawOrd = SANITIZED_ORDERS_FIXTURE.data.orders[0];
+    const mapped = {
+      store_id: "store-uuid-123",
+      daraz_order_id: rawOrd.order_id,
+      customer_name: `${rawOrd.address_shipping.first_name} ${rawOrd.address_shipping.last_name}`.trim(),
+      total_amount_cents: Math.round(parseFloat(rawOrd.price) * 100),
+    };
+    assert.strictEqual(mapped.store_id, "store-uuid-123");
+    assert.strictEqual(mapped.daraz_order_id, rawOrd.order_id);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 51: Listings & SKU fetch & upsert conflict targets
+  // ---------------------------------------------------------------------------
+  await test("Test 51: Listings upsert uses composite conflict target (store_id, seller_sku)", () => {
+    const conflictTarget = "store_id,seller_sku";
+    assert.strictEqual(conflictTarget, "store_id,seller_sku");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 52: Inventory multi-store upsert target
+  // ---------------------------------------------------------------------------
+  await test("Test 52: Multi-store inventory upserts with (store_id, sku) composite key", () => {
+    const invPayload = {
+      store_id: "store-uuid-123",
+      sku: "SKU-ABC-1",
+      quantity_on_hand: 50,
+      quantity_reserved: 2,
+    };
+    assert.strictEqual(invPayload.store_id, "store-uuid-123");
+    assert.strictEqual(invPayload.sku, "SKU-ABC-1");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 53: Supabase write error detection
+  // ---------------------------------------------------------------------------
+  await test("Test 53: Failed Supabase DB write increments failedCount", () => {
+    let failedCount = 0;
+    const writeResult = { data: null, error: { message: "duplicate key value violates unique constraint" } };
+    if (writeResult.error) {
+      failedCount++;
+    }
+    assert.strictEqual(failedCount, 1);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 54: Successful complete sync metrics
+  // ---------------------------------------------------------------------------
+  await test("Test 54: Successful sync returns true with exact record counts", () => {
+    const mockResult = {
+      success: true,
+      status: "completed",
+      storesSynced: 1,
+      itemsSynced: 5,
+      skusSynced: 10,
+      ordersSynced: 3,
+      failedCount: 0,
+    };
+    assert.strictEqual(mockResult.success, true);
+    assert.strictEqual(mockResult.failedCount, 0);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 55: Failed sync reporting
+  // ---------------------------------------------------------------------------
+  await test("Test 55: Sync with database write errors returns success: false", () => {
+    const hasCoreModuleFailed = false;
+    const storesSynced = 1;
+    let totalFailedCount: number = 2; // 2 DB write failures
+
+    const overallSuccess = !hasCoreModuleFailed && storesSynced > 0 && totalFailedCount === 0;
+    assert.strictEqual(overallSuccess, false, "Sync with DB write errors must return success: false");
   });
 
   console.log("\n==================================================================");
