@@ -35,25 +35,23 @@ function LoginForm() {
 
       const data = await res.json();
 
-      if (data.success) {
-        setSuccessMessage("Login successful! Redirecting to hub...");
-        window.location.href = "/dashboard";
+      if (!res.ok || !data.success) {
+        setErrorMessage(data.error || "Invalid login credentials. Please try again.");
+        setLoading(false);
         return;
       }
 
-      // 2. Fallback to browser client Supabase authentication
-      const supabase = createClient();
-      const { error: sbErr } = await supabase.auth.signInWithPassword({
-        email: targetEmail,
-        password: targetPass,
-      });
+      // 2. Sync browser client Supabase authentication state if available
+      try {
+        const supabase = createClient();
+        await supabase.auth.signInWithPassword({
+          email: targetEmail,
+          password: targetPass,
+        });
+      } catch (_) {}
 
-      if (sbErr) {
-        setErrorMessage(data.error || sbErr.message || "Invalid credentials.");
-      } else {
-        setSuccessMessage("Login successful! Redirecting to hub...");
-        window.location.href = "/dashboard";
-      }
+      setSuccessMessage("Login successful! Redirecting to hub...");
+      window.location.href = "/dashboard";
     } catch (err: any) {
       console.error("Login Exception:", err.message);
       setErrorMessage(err.message || "Failed to sign in.");

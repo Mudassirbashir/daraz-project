@@ -57,9 +57,21 @@ export async function requireAuthenticatedUser(
 ): Promise<AuthResult> {
   const serverSupabase = createClient();
   const { data, error } = await serverSupabase.auth.getUser();
-  const user = data?.user || null;
+  let user = data?.user || null;
 
   if (error || !user) {
+    const opsCookie = req.cookies.get("daraz_ops_user")?.value;
+    if (opsCookie) {
+      try {
+        const parsed = JSON.parse(opsCookie);
+        if (parsed?.id && parsed?.email) {
+          user = { id: parsed.id, email: parsed.email } as any;
+        }
+      } catch (_) {}
+    }
+  }
+
+  if (!user) {
     return {
       ok: false,
       response: NextResponse.json(

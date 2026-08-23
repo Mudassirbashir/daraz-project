@@ -73,6 +73,22 @@ export async function updateSession(request: NextRequest) {
       console.warn("[Middleware UpdateSession Exception]:", e?.message);
     }
 
+    if (!user) {
+      const opsCookie = request.cookies.get("daraz_ops_user")?.value;
+      if (opsCookie) {
+        try {
+          const parsed = JSON.parse(opsCookie);
+          if (parsed?.id && parsed?.email) {
+            user = {
+              id: parsed.id,
+              email: parsed.email,
+              user_metadata: { full_name: parsed.full_name, role: parsed.role },
+            } as any;
+          }
+        } catch (_) {}
+      }
+    }
+
     return { supabaseResponse, user, supabase };
   } catch (err: any) {
     console.error("[Middleware UpdateSession Exception]:", err.message);
