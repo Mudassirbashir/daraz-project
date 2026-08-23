@@ -33,23 +33,12 @@ export async function middleware(request: NextRequest) {
   const isAuthRoute = pathname === "/login" || pathname === "/unauthorized";
 
   try {
-    let isFallbackUser = false;
-
-    // 3. Refresh Supabase Auth session & extract current user
+    // 3. Refresh Supabase Auth session & extract current user.
+    // SECURITY: Only the Supabase session is trusted. The legacy
+    // `daraz_ops_user` cookie previously enabled a privilege escalation where
+    // a hand-crafted cookie payload (`{"role":"super_admin"}`) bypassed RBAC.
+    // That fallback has been removed; routes must verify identity via Supabase.
     let { supabaseResponse, user, supabase } = await updateSession(request);
-
-    // Fallback: check daraz_ops_user cookie
-    if (!user) {
-      const fallbackCookie = request.cookies.get("daraz_ops_user");
-      if (fallbackCookie?.value) {
-        try {
-          user = JSON.parse(fallbackCookie.value);
-          isFallbackUser = true;
-        } catch (e) {
-          // invalid JSON cookie
-        }
-      }
-    }
 
     // Block unauthenticated access to API routes
     if (!user && pathname.startsWith("/api")) {
@@ -79,15 +68,14 @@ export async function middleware(request: NextRequest) {
       }
     }
 
-    // Role-Based Access Control (RBAC) path protection
+    // Role-Based Access Control (RBAC) path protection.
+    // Always resolves the role from the database (user_roles -> profiles),
+    // never from user_metadata or a client-supplied cookie.
     if (user && !isAuthRoute) {
       try {
         let userRole: AppRole | null = null;
 
-        if (isFallbackUser) {
-          userRole = ((user as any)?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || null;
-        } else if (supabase && user?.id) {
-          // 1. Authoritative check on user_roles
+        if (supabase && user?.id) {
           const { data: roleRow } = await (supabase as any)
             .from("user_roles")
             .select("role")
@@ -97,14 +85,15 @@ export async function middleware(request: NextRequest) {
           if (roleRow?.role) {
             userRole = roleRow.role as AppRole;
           } else {
-            // 2. Secondary check on profiles
             const { data: profile } = await (supabase as any)
               .from("profiles")
               .select("role")
               .eq("id", user.id)
               .maybeSingle();
 
-            userRole = (profile?.role as AppRole) || ((user as any)?.user_metadata?.role as AppRole) || null;
+            if (profile?.role) {
+              userRole = profile.role as AppRole;
+            }
           }
         }
 

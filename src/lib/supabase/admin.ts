@@ -11,15 +11,14 @@ function getValidSupabaseUrl(): string {
 }
 
 function getValidServiceRoleKey(): string {
-  const envKey =
-    process.env.SUPABASE_SERVICE_ROLE_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
-    process.env.SUPABASE_ANON_KEY ||
-    process.env.NEXT_PUBLIC_SUPABASE_KEY;
+  // SECURITY: do NOT silently fall back to the anon key. If the service-role
+  // key is missing we want a hard failure so the operator notices — never
+  // run "admin" queries under the RLS-enforced anon client.
+  const envKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
 
   if (!envKey || !envKey.trim()) {
     throw new Error(
-      "Missing Environment Variable: 'SUPABASE_SERVICE_ROLE_KEY' or 'NEXT_PUBLIC_SUPABASE_ANON_KEY' is missing. Please configure Supabase keys in your environment variables."
+      "Missing Environment Variable: 'SUPABASE_SERVICE_ROLE_KEY' is required for admin operations. Configure it in your environment variables."
     );
   }
   return envKey.trim();

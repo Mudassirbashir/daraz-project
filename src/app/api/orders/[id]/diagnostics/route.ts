@@ -1,227 +1,108 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
-import { getDarazClient, sanitizeLogPayload } from "@/lib/daraz/client";
+import {
+  requireAuthenticatedUser,
+  requireAuthorizedStore,
+  safeErrorResponse,
+} from "@/lib/api/auth-guard";
 
 export const dynamic = "force-dynamic";
 
-export interface DiagnosticLogStep {
+export interface OrderDiagnosticStep {
   step_index: number;
   step_name: string;
-  endpoint: string;
-  request_purpose: string;
-  http_status: number | string;
-  daraz_code: string;
-  request_id?: string;
-  order_id: string;
-  order_item_ids: string[];
-  package_id?: string;
-  tracking_number?: string;
-  shipment_provider?: string;
-  result_summary: string;
+  status: "PASSED" | "FAILED" | "SKIPPED";
+  details: string;
   failure_reason: string | null;
 }
 
+/**
+ * GET /api/orders/[id]/diagnostics
+ *
+ * Returns a server-side diagnostic summary of the order's local fulfillment
+ * pipeline state. It is strictly read-only against the database — it does NOT
+ * call Daraz APIs, does NOT trigger syncs, and does NOT expose credentials.
+ *
+ * For deep external-API diagnostics use POST /api/sync/diagnostic.
+ */
 export async function GET(req: NextRequest, { params }: { params: { id: string } }) {
   const { id } = params;
-  const steps: DiagnosticLogStep[] = [];
 
-  try {
-    const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
-    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
-
-    if (!user && !opsUserCookie) {
-      return NextResponse.json({ success: false, error: "Unauthorized diagnostic request." }, { status: 401 });
-    }
-
-    const supabase = createAdminClient();
-
-    // Step 1: Database Order Lookup
-    let order: any = null;
-    const { data: primaryOrder } = await supabase
-      .from("orders")
-      .select("*, daraz_stores(*), order_items(*)")
-      .eq("id", id)
-      .maybeSingle();
-
-    if (primaryOrder) {
-      order = primaryOrder;
-    } else {
-      const { data: fallbackOrder } = await supabase
-        .from("orders")
-        .select("*, daraz_stores(*), order_items(*)")
-        .eq("daraz_order_id", id)
-        .maybeSingle();
-      if (fallbackOrder) order = fallbackOrder;
-    }
-
-    if (!order) {
-      return NextResponse.json(
-        {
-          success: false,
-          error: `Diagnostic target order '${id}' was not found in Supabase database.`,
-          steps,
-        },
-        { status: 404 }
-      );
-    }
-
-    const store = order.daraz_stores;
-
-    steps.push({
-      step_index: 1,
-      step_name: "Database Lookup",
-      endpoint: "supabase:orders",
-      request_purpose: "Resolve target order and associated store credentials from database",
-      http_status: 200,
-      daraz_code: "OK",
-      order_id: order.daraz_order_id,
-      order_item_ids: (order.order_items || []).map((i: any) => String(i.order_item_id)),
-      result_summary: `Order resolved (Status: ${order.status}, Workflow: ${order.workflow_status || order.status})`,
-      failure_reason: null,
-    });
-
-    const { data: creds } = await supabase
-      .from("daraz_store_credentials")
-      .select("access_token")
-      .eq("store_id", store?.id || "")
-      .maybeSingle();
-
-    const hasToken = Boolean(creds?.access_token && creds.access_token.trim());
-
-    // Step 2: Daraz Store Authorization Check
-    if (!store || !store.is_active || !hasToken) {
-      steps.push({
-        step_index: 2,
-        step_name: "Store Auth Validation",
-        endpoint: "local:daraz_stores",
-        request_purpose: "Validate store access token and active status",
-        http_status: 400,
-        daraz_code: "AUTH_ERROR",
-        order_id: order.daraz_order_id,
-        order_item_ids: [],
-        result_summary: "Store connection inactive or access token missing",
-        failure_reason: "Daraz store is not connected. Reconnect store via My Stores page.",
-      });
-
-      return NextResponse.json({
-        success: false,
-        summary: "Store connection inactive",
-        steps,
-      });
-    }
-
-    const darazClient = await getDarazClient(store.id);
-
-    steps.push({
-      step_index: 2,
-      step_name: "Store Auth Validation",
-      endpoint: "/auth/token/refresh",
-      request_purpose: "Validate/refresh Daraz Open Platform access token",
-      http_status: 200,
-      daraz_code: "0",
-      order_id: order.daraz_order_id,
-      order_item_ids: [],
-      result_summary: `Access token validated for store '${store.store_name}' (${store.store_code})`,
-      failure_reason: null,
-    });
-
-    // Step 3: Fetch Live Order Items & Map Order Item IDs
-    let liveOrderItems: any[] = [];
-    let itemFetchError: string | null = null;
-    try {
-      liveOrderItems = await darazClient.getOrderItems(order.daraz_order_id);
-    } catch (err: any) {
-      itemFetchError = err.message;
-    }
-
-    const resolvedItemIds = liveOrderItems.map((item) => String(item.order_item_id)).filter(Boolean);
-
-    steps.push({
-      step_index: 3,
-      step_name: "Get Order Items",
-      endpoint: "/order/items/get",
-      request_purpose: "Fetch live order items and identify unique Order Item IDs from Daraz API",
-      http_status: itemFetchError ? 400 : 200,
-      daraz_code: itemFetchError ? "ITEM_FETCH_FAILED" : "0",
-      order_id: order.daraz_order_id,
-      order_item_ids: resolvedItemIds,
-      result_summary: itemFetchError ? "Failed fetching live items" : `Fetched ${resolvedItemIds.length} item(s): [${resolvedItemIds.join(", ")}]`,
-      failure_reason: itemFetchError,
-    });
-
-    // Step 4: Verify Fulfillment State (Pack / RTS Check)
-    const currentStatus = (order.workflow_status || order.status || "pending").toLowerCase();
-    const isPacked = order.is_packed || ["packed", "ready_to_ship", "shipped", "delivered"].includes(currentStatus);
-
-    steps.push({
-      step_index: 4,
-      step_name: "Fulfillment State Verification",
-      endpoint: "state_machine:workflow_status",
-      request_purpose: "Verify order is packed and ready for shipping document retrieval",
-      http_status: 200,
-      daraz_code: "0",
-      order_id: order.daraz_order_id,
-      order_item_ids: resolvedItemIds,
-      package_id: order.package_id || undefined,
-      tracking_number: order.tracking_number || undefined,
-      shipment_provider: order.shipping_provider || undefined,
-      result_summary: `Current State: '${currentStatus}' (Is Packed: ${isPacked})`,
-      failure_reason: null,
-    });
-
-    // Step 5: Test Official Document Retrieval via Daraz API
-    let docResult: any = null;
-    let docError: string | null = null;
-
-    if (resolvedItemIds.length > 0) {
-      try {
-        docResult = await darazClient.getShippingDocument(resolvedItemIds, "shipping_label");
-      } catch (err: any) {
-        docError = err.message;
-      }
-    } else {
-      docError = "No valid Order Item IDs available for document retrieval.";
-    }
-
-    steps.push({
-      step_index: 5,
-      step_name: "Get Official Daraz Shipping Document",
-      endpoint: docResult?.endpoint || "/order/document/get",
-      request_purpose: "Retrieve official Daraz AWB / Shipping Label document from Seller Center API",
-      http_status: docError ? 400 : 200,
-      daraz_code: docError ? "DOC_GET_FAILED" : "0",
-      request_id: docResult?.raw?.request_id,
-      order_id: order.daraz_order_id,
-      order_item_ids: resolvedItemIds,
-      package_id: order.package_id || undefined,
-      tracking_number: order.tracking_number || undefined,
-      shipment_provider: order.shipping_provider || undefined,
-      result_summary: docError
-        ? "Daraz document retrieval failed"
-        : `Successfully retrieved official document (Mime: ${docResult.mimeType}, Size: ${docResult.file.length} chars)`,
-      failure_reason: docError,
-    });
-
-    return NextResponse.json({
-      success: !docError,
-      summary: docError ? `Diagnostic Notice: ${docError}` : "End-to-End Shipping Label Pipeline Validated Successfully",
-      orderId: order.daraz_order_id,
-      storeName: store.store_name,
-      documentRetrieved: !!docResult,
-      mimeType: docResult?.mimeType || null,
-      steps: sanitizeLogPayload(steps),
-    });
-  } catch (err: any) {
-    console.error("[GET /api/orders/[id]/diagnostics Exception]:", err.message);
-    return NextResponse.json(
-      {
-        success: false,
-        error: err.message || "Internal diagnostic execution failure.",
-        steps: sanitizeLogPayload(steps),
-      },
-      { status: 500 }
-    );
+  if (!id || typeof id !== "string") {
+    return safeErrorResponse(400, "INVALID_ID", "Order ID is required.");
   }
+
+  const auth = await requireAuthenticatedUser(req, { permission: "orders:read" });
+  if (!auth.ok) return auth.response;
+
+  const admin = createAdminClient();
+
+  let order: any = null;
+  const { data: byId } = await admin
+    .from("orders")
+    .select("id, daraz_order_id, store_id, status, workflow_status, package_id, tracking_number, shipping_provider, is_packed, packed_at, packed_by, label_printed_at, updated_at")
+    .eq("id", id)
+    .maybeSingle();
+
+  if (byId) {
+    order = byId;
+  } else {
+    const { data: byDaraz } = await admin
+      .from("orders")
+      .select("id, daraz_order_id, store_id, status, workflow_status, package_id, tracking_number, shipping_provider, is_packed, packed_at, packed_by, label_printed_at, updated_at")
+      .eq("daraz_order_id", id)
+      .maybeSingle();
+    order = byDaraz || null;
+  }
+
+  if (!order) {
+    return safeErrorResponse(404, "ORDER_NOT_FOUND", "Order not found.");
+  }
+
+  // Multi-store isolation: caller must own the parent store.
+  const storeAuth = await requireAuthorizedStore(auth.principal, order.store_id);
+  if (!storeAuth.ok) return storeAuth.response;
+
+  const steps: OrderDiagnosticStep[] = [
+    {
+      step_index: 1,
+      step_name: "Order Lookup",
+      status: "PASSED",
+      details: `Order ${order.daraz_order_id} resolved from database.`,
+      failure_reason: null,
+    },
+    {
+      step_index: 2,
+      step_name: "Fulfillment State",
+      status: order.is_packed ? "PASSED" : "SKIPPED",
+      details: `Current workflow_status='${order.workflow_status || order.status}', is_packed=${Boolean(order.is_packed)}.`,
+      failure_reason: order.is_packed ? null : "Order has not been packed yet.",
+    },
+    {
+      step_index: 3,
+      step_name: "Shipping Document Readiness",
+      status: order.package_id ? "PASSED" : "SKIPPED",
+      details: order.package_id
+        ? `Package ID present: ${order.package_id}.`
+        : "Package ID missing — call POST /api/orders/[id]/pack before retrieving a shipping label.",
+      failure_reason: order.package_id ? null : "Package ID missing.",
+    },
+    {
+      step_index: 4,
+      step_name: "Shipping Label Print Tracking",
+      status: order.label_printed_at ? "PASSED" : "SKIPPED",
+      details: order.label_printed_at
+        ? `Label printed at ${order.label_printed_at}.`
+        : "Label not yet printed.",
+      failure_reason: null,
+    },
+  ];
+
+  return NextResponse.json({
+    success: true,
+    summary: "Local order diagnostics completed (read-only).",
+    orderId: order.daraz_order_id,
+    steps,
+    timestamp: new Date().toISOString(),
+  });
 }

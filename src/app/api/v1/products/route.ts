@@ -1,19 +1,18 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import {
+  requireAuthenticatedUser,
+  getAuthorizedStoreIds,
+  safeErrorResponse,
+} from "@/lib/api/auth-guard";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuthenticatedUser(req, { permission: "listings:read" });
+  if (!auth.ok) return auth.response;
+
   try {
-    const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
-    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
-
-    if (!user && !opsUserCookie) {
-      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
-    }
-
     const requestUrl = new URL(req.url);
     const storeId = requestUrl.searchParams.get("storeId");
     const search = requestUrl.searchParams.get("search");
@@ -21,12 +20,29 @@ export async function GET(req: NextRequest) {
     const limit = Math.min(parseInt(requestUrl.searchParams.get("limit") || "50", 10), 100);
     const offset = (page - 1) * limit;
 
-    const supabase = createAdminClient();
-    let query = supabase.from("listings").select("*, daraz_stores(id, store_name, store_code)", { count: "exact" });
-
-    if (storeId && storeId !== "all") {
-      query = query.eq("store_id", storeId);
+    const authorizedStoreIds = await getAuthorizedStoreIds(auth.principal);
+    if (authorizedStoreIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        products: [],
+        page: 1,
+        limit,
+        total: 0,
+        totalPages: 0,
+      });
     }
+
+    if (storeId && storeId !== "all" && !authorizedStoreIds.includes(storeId)) {
+      return NextResponse.json({ success: false, error: "Access denied to target store." }, { status: 403 });
+    }
+
+    const targetStoreIds = (storeId && storeId !== "all") ? [storeId] : authorizedStoreIds;
+
+    const supabase = createAdminClient();
+    let query = supabase
+      .from("listings")
+      .select("*, daraz_stores(id, store_name, store_code)", { count: "exact" })
+      .in("store_id", targetStoreIds);
 
     if (search) {
       query = query.or(`seller_sku.ilike.%${search}%,title.ilike.%${search}%,daraz_item_id.eq.${search}`);

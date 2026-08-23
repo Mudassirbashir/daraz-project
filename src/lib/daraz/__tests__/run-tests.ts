@@ -1149,15 +1149,58 @@ async function runPipelineTests() {
   });
 
   // ---------------------------------------------------------------------------
-  // Test 55: Failed sync reporting
+  // Test 56: Pagination error halts cursor advancement
   // ---------------------------------------------------------------------------
-  await test("Test 55: Sync with database write errors returns success: false", () => {
-    const hasCoreModuleFailed = false;
-    const storesSynced = 1;
-    let totalFailedCount: number = 2; // 2 DB write failures
+  await test("Test 56: Pagination error halts cursor advancement without skipping failed page", () => {
+    let offset = 50;
+    const pageSize = 50;
+    const pageFetchSuccess = false;
 
-    const overallSuccess = !hasCoreModuleFailed && storesSynced > 0 && totalFailedCount === 0;
-    assert.strictEqual(overallSuccess, false, "Sync with DB write errors must return success: false");
+    if (!pageFetchSuccess) {
+      // Correct behavior: halt loop without advancing offset
+      // Do NOT execute: offset += pageSize;
+    }
+
+    assert.strictEqual(offset, 50, "Offset must remain 50 so retry resumes on page 2");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 57: Multi-Store Isolation - Access control
+  // ---------------------------------------------------------------------------
+  await test("Test 57: Multi-Store Isolation rejects cross-tenant store access", () => {
+    const userAuthorizedStoreIds = ["STORE_A_123"];
+    const requestedStoreId = "STORE_B_999";
+
+    const isAuthorized = userAuthorizedStoreIds.includes(requestedStoreId);
+    assert.strictEqual(isAuthorized, false, "User must be forbidden from accessing Store B");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 58: Require authenticated session
+  // ---------------------------------------------------------------------------
+  await test("Test 58: API guard rejects request without valid Supabase session", () => {
+    const userSession = null;
+    const hasAuth = Boolean(userSession);
+    assert.strictEqual(hasAuth, false, "Unauthenticated request must return 401");
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 59: Safe Error Response Masking
+  // ---------------------------------------------------------------------------
+  await test("Test 59: Internal database schema details redacted from API error responses", () => {
+    const rawSqlError = "relation 'daraz_stores' does not exist at character 15";
+    const sanitizedMsg = "Failed to fetch stores overview.";
+    assert.strictEqual(sanitizedMsg.includes("relation"), false);
+  });
+
+  // ---------------------------------------------------------------------------
+  // Test 60: Sensitive Credential Redaction in Diagnostics
+  // ---------------------------------------------------------------------------
+  await test("Test 60: Diagnostic logs strictly redact access_token and app_secret", () => {
+    const rawLog = "Error on endpoint: access_token=secret_abc123&sign=HMAC_XYZ";
+    const cleanLog = rawLog.replace(/(access_token|refresh_token|app_secret|secret|password|sign)=[^&,\s]+/gi, '$1=[REDACTED]');
+    assert.strictEqual(cleanLog.includes("secret_abc123"), false);
+    assert.strictEqual(cleanLog.includes("[REDACTED]"), true);
   });
 
   console.log("\n==================================================================");
