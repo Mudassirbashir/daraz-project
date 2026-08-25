@@ -1,6 +1,6 @@
 import { signDarazRequest, DarazSignParams, normalizeApiPath } from './signature';
 import { createAdminClient } from '../supabase/admin';
-import { globalDarazRateLimiter } from './rate-limiter';
+import { globalDarazRateLimiter, DarazRateLimiter } from './rate-limiter';
 
 // Endpoint-specific rate limits (requests per second)
 const DARAZ_RATE_LIMITS: Record<string, number> = {
@@ -19,6 +19,17 @@ function getRateLimiterForEndpoint(apiPath: string): DarazRateLimiter {
 }
 
 export type DarazCountryCode = 'PK' | 'BD' | 'LK' | 'NP' | 'MM';
+
+export type DarazErrorCategory =
+  | "AUTH_ERROR"
+  | "RATE_LIMIT"
+  | "TIMEOUT"
+  | "NETWORK_ERROR"
+  | "VALIDATION_ERROR"
+  | "NOT_FOUND"
+  | "PERMISSION_ERROR"
+  | "DATABASE_ERROR"
+  | "UNKNOWN";
 
 const GATEWAY_MAP: Record<DarazCountryCode, string> = {
   PK: 'https://api.daraz.pk/rest',
@@ -302,18 +313,18 @@ export class DarazClient {
     if (!this.storeId || !this.refreshToken) return;
 
     const lockKey = `refresh_${this.storeId}`;
-    if (this.refreshLocks.has(lockKey)) {
-      await this.refreshLocks.get(lockKey);
+    if (DarazClient.refreshLocks.has(lockKey)) {
+      await DarazClient.refreshLocks.get(lockKey);
       return;
     }
 
     const refreshPromise = this._performTokenRefresh();
-    this.refreshLocks.set(lockKey, refreshPromise);
+    DarazClient.refreshLocks.set(lockKey, refreshPromise);
 
     try {
       await refreshPromise;
     } finally {
-      this.refreshLocks.delete(lockKey);
+      DarazClient.refreshLocks.delete(lockKey);
     }
   }
 
@@ -409,7 +420,7 @@ export class DarazClient {
           });
 
           return res;
-        } catch (err) {
+        } catch (err: any) {
           // Log failed API call
           await this.logApiCall({
             correlationId,
@@ -451,7 +462,7 @@ export class DarazClient {
         duration_ms: params.durationMs,
         created_at: new Date().toISOString()
       });
-    } catch (e) {
+    } catch (e: any) {
       // Don't let logging errors break the main flow
       console.warn('[DarazClient] Failed to log API call:', e.message);
     }
@@ -496,7 +507,7 @@ export class DarazClient {
     };
   }
 
-  public async getCatalogItems(offset = 0, limit = 50, filter = 'all', updateAfter?: string): Promise<DarazCatalogResult> {
+  public async getCatalogItems(offset = 0, limit = 50, filter = 'all', updateAfter?: string, keyword?: string): Promise<DarazCatalogResult> {
     const params: Record<string, string> = {
       filter: filter || 'all',
       offset: String(offset),
@@ -504,6 +515,9 @@ export class DarazClient {
     };
     if (updateAfter) {
       params.update_after = updateAfter;
+    }
+    if (keyword) {
+      params.keyword = keyword;
     }
 
     const response: any = await this.get('/products/get', params);
