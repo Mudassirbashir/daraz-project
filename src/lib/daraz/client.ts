@@ -2,6 +2,22 @@ import { signDarazRequest, DarazSignParams, normalizeApiPath } from './signature
 import { createAdminClient } from '../supabase/admin';
 import { globalDarazRateLimiter } from './rate-limiter';
 
+// Endpoint-specific rate limits (requests per second)
+const DARAZ_RATE_LIMITS: Record<string, number> = {
+  '/order/get': 20,         // Orders API - conservative limit
+  '/order/items/get': 20,   // Order items API
+  '/products/get': 10,      // Product catalog API
+  '/auth/token/refresh': 2, // Token refresh - very conservative
+  // Default fallback
+  'default': 5
+};
+
+// Get rate limiter for specific endpoint
+function getRateLimiterForEndpoint(apiPath: string): DarazRateLimiter {
+  const rateLimit = DARAZ_RATE_LIMITS[apiPath] || DARAZ_RATE_LIMITS['default'];
+  return new DarazRateLimiter(1000 / rateLimit); // Convert QPS to ms interval
+}
+
 export type DarazCountryCode = 'PK' | 'BD' | 'LK' | 'NP' | 'MM';
 
 const GATEWAY_MAP: Record<DarazCountryCode, string> = {
@@ -195,6 +211,8 @@ export class DarazClient {
     return finalized;
   }
 
+  private static refreshLocks = new Map<string, Promise<void>>();
+
   private async requestWithRetry<T>(
     requestFn: () => Promise<Response>,
     apiPath: string,
@@ -202,8 +220,9 @@ export class DarazClient {
   ): Promise<T> {
     let attempt = 0;
     while (true) {
-      // Rate Throttling: respect maximum QPS limit before sending request
-      await globalDarazRateLimiter.acquire();
+      // Rate Throttling: use endpoint-specific rate limiter
+      const rateLimiter = getRateLimiterForEndpoint(apiPath);
+      await rateLimiter.acquire();
 
       try {
         const res = await requestFn();
@@ -245,14 +264,11 @@ export class DarazClient {
         if (isAuthError && this.storeId && attempt === 0) {
           try {
             console.warn(`[DarazClient] Auth error "${errMsg}" on ${apiPath}. Attempting token refresh for store ${this.storeId}...`);
-            const { getValidStoreAccessToken } = await import('./store-utils');
-            const { accessToken } = await getValidStoreAccessToken(this.storeId);
-            if (accessToken) {
-              this.accessToken = accessToken;
-              attempt++;
-              console.log(`[DarazClient] Token refreshed successfully. Retrying request on ${apiPath}...`);
-              continue;
-            }
+            await this.refreshTokenIfNeeded();
+            this.accessToken = await this.getFreshAccessToken(); // Get the updated token
+            attempt++;
+            console.log(`[DarazClient] Token refreshed successfully. Retrying request on ${apiPath}...`);
+            continue;
           } catch (refErr: any) {
             console.error(`[DarazClient] Automatic token refresh failed: ${refErr.message}`);
             throw new Error(`TOKEN_REFRESH_FAILED: ${refErr.message}`);
@@ -281,14 +297,164 @@ export class DarazClient {
     }
   }
 
+  // Improved token refresh with locking mechanism to prevent race conditions
+  private async refreshTokenIfNeeded(): Promise<void> {
+    if (!this.storeId || !this.refreshToken) return;
+
+    const lockKey = `refresh_${this.storeId}`;
+    if (this.refreshLocks.has(lockKey)) {
+      await this.refreshLocks.get(lockKey);
+      return;
+    }
+
+    const refreshPromise = this._performTokenRefresh();
+    this.refreshLocks.set(lockKey, refreshPromise);
+
+    try {
+      await refreshPromise;
+    } finally {
+      this.refreshLocks.delete(lockKey);
+    }
+  }
+
+  private async _performTokenRefresh(): Promise<void> {
+    const tempClient = new DarazClient({
+      appKey: this.appKey,
+      appSecret: this.appSecret,
+      countryCode: 'PK', // Will be overridden by store-specific config
+    });
+
+    const res: any = await tempClient.post('/auth/token/refresh', {
+      refresh_token: this.refreshToken,
+    });
+
+    this.accessToken = res.access_token;
+    this.refreshToken = res.refresh_token || this.refreshToken; // Keep old if not rotated
+    if (res.expires_in) {
+      this.tokenExpiresAt = new Date(Date.now() + res.expires_in * 1000);
+    }
+  }
+
+  private async getFreshAccessToken(): Promise<string> {
+    // Return the current access token (should be updated after refresh)
+    if (!this.accessToken) {
+      throw new Error('No access token available after refresh');
+    }
+    return this.accessToken;
+  }
+
+  private classifyDarazError(error: any): DarazErrorCategory {
+    const msg = String(error?.message || error || "").toLowerCase();
+
+    // More precise error matching to avoid false positives
+    if (/\b15\b/.test(msg) || msg.includes('inauthorized') ||
+        msg.includes('invalid_access_token') || msg.includes('illegalaccesstoken')) {
+      return "AUTH_ERROR";
+    }
+    if (msg.includes('rate limit') || msg.includes('qps') ||
+        msg.includes('too many requests') || msg.includes('429')) {
+      return "RATE_LIMIT";
+    }
+    if (msg.includes('timeout') || msg.includes('timed out') ||
+        msg.includes('etimedout')) {
+      return "TIMEOUT";
+    }
+    if (msg.includes('network') || msg.includes('econnreset') ||
+        msg.includes('fetch failed')) {
+      return "NETWORK_ERROR";
+    }
+    if (msg.includes('validation') || msg.includes('invalid') ||
+        msg.includes('bad request')) {
+      return "VALIDATION_ERROR";
+    }
+    if (msg.includes('not found') || msg.includes('404')) {
+      return "NOT_FOUND";
+    }
+    if (msg.includes('permission') || msg.includes('forbidden') ||
+        msg.includes('403')) {
+      return "PERMISSION_ERROR";
+    }
+    if (msg.includes('database') || msg.includes('supabase') ||
+        msg.includes('postgres') || msg.includes('duplicate key')) {
+      return "DATABASE_ERROR";
+    }
+    return "UNKNOWN";
+  }
+
   public async get<T = any>(apiPath: string, params: DarazSignParams = {}): Promise<T> {
     const normPath = normalizeApiPath(apiPath);
     const finalized = await this.prepareParams(normPath, params);
     const query = new URLSearchParams(finalized).toString();
     return this.requestWithRetry<T>(
-      () => fetch(`${this.baseUrl}${normPath}?${query}`, { method: 'GET', headers: { Accept: 'application/json' } }),
+      async () => {
+        // Generate correlation ID for tracing
+        const correlationId = crypto.randomUUID();
+        const startTime = Date.now();
+
+        try {
+          const res = await fetch(`${this.baseUrl}${normPath}?${query}`, {
+            method: 'GET',
+            headers: { Accept: 'application/json' }
+          });
+
+          // Log the API call (redact sensitive info)
+          await this.logApiCall({
+            correlationId,
+            storeId: this.storeId,
+            endpoint: normPath,
+            method: 'GET',
+            status: res.status,
+            durationMs: Date.now() - startTime,
+            errorCode: res.status >= 400 ? String(res.status) : undefined
+          });
+
+          return res;
+        } catch (err) {
+          // Log failed API call
+          await this.logApiCall({
+            correlationId,
+            storeId: this.storeId,
+            endpoint: normPath,
+            method: 'GET',
+            status: 0, // Network error
+            durationMs: Date.now() - startTime,
+            errorCode: 'NETWORK_ERROR',
+            errorMessage: String(err?.message || err)
+          });
+          throw err;
+        }
+      },
       normPath
     );
+  }
+
+  private async logApiCall(params: {
+    correlationId: string;
+    storeId?: string;
+    endpoint: string;
+    method: string;
+    status: number;
+    durationMs: number;
+    errorCode?: string;
+    errorMessage?: string;
+  }): Promise<void> {
+    try {
+      const supabase = createAdminClient();
+      await supabase.from('daraz_api_audit').insert({
+        correlation_id: params.correlationId,
+        store_id: params.storeId,
+        endpoint: params.endpoint,
+        method: params.method,
+        response_status: params.status,
+        error_code: params.errorCode,
+        error_message: params.errorMessage,
+        duration_ms: params.durationMs,
+        created_at: new Date().toISOString()
+      });
+    } catch (e) {
+      // Don't let logging errors break the main flow
+      console.warn('[DarazClient] Failed to log API call:', e.message);
+    }
   }
 
   public async post<T = any>(apiPath: string, params: DarazSignParams = {}): Promise<T> {

@@ -49,12 +49,24 @@ export async function pullStockForStore(storeId: string) {
     const { client } = await getValidStoreAccessToken(storeId);
     const supabase = createAdminClient();
 
+    // Get last sync timestamp for incremental updates
+    const { data: lastSyncData } = await supabase
+      .from('daraz_stores')
+      .select('last_stock_sync_at')
+      .eq('id', storeId)
+      .single();
+
+    const lastSyncTimestamp = lastSyncData?.last_stock_sync_at;
+    const updateAfter = lastSyncTimestamp
+      ? new Date(new Date(lastSyncTimestamp).getTime() - (24 * 60 * 60 * 1000)).toISOString() // 24h overlap
+      : '2020-01-01T00:00:00Z'; // Full sync if never synced before
+
     let offset = 0;
     const limit = 50;
     let hasMore = true;
 
     while (hasMore) {
-      const catalogRes = await client.getCatalogItems(offset, limit);
+      const catalogRes = await client.getCatalogItems(offset, limit, undefined, updateAfter);
       if (!catalogRes || !catalogRes.items || catalogRes.items.length === 0) {
         break;
       }
@@ -87,8 +99,16 @@ export async function pullStockForStore(storeId: string) {
       if (offset >= catalogRes.total_items || catalogRes.items.length === 0) {
         hasMore = false;
       }
-      await new Promise((r) => setTimeout(r, 100)); // Throttling delay
+
+      // Increased throttling delay to respect rate limits
+      await new Promise((r) => setTimeout(r, 300)); // 300ms between batches
     }
+
+    // Update last stock sync timestamp
+    await supabase
+      .from('daraz_stores')
+      .update({ last_stock_sync_at: timestamp })
+      .eq('id', storeId);
 
     return { success: true, storeId, skusUpdated, errors, timestamp };
   } catch (err: any) {

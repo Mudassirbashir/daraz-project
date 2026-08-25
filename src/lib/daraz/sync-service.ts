@@ -42,7 +42,8 @@ export interface SyncResult {
 
 // Database-backed sync lock threshold: if a sync row is locked for more than this duration, it is
 // assumed to be a crashed/stale process and the lock is eligible for takeover.
-const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const SYNC_LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const SYNC_LOCK_EXTENSION_MS = 2 * 60 * 1000; // 2 minutes extension if sync is progressing
 
 /**
  * Concurrency Limiter to prevent rate limiting (2-5 max concurrent requests)
@@ -283,6 +284,9 @@ export async function executeDarazSync(
         continue;
       }
 
+      // Track last lock extension time for periodic extension during long syncs
+      let lastLockExtension = Date.now();
+
       console.log(
         `[SyncEngine] ── BEGIN sync ──\n` +
         `  store_id:   ${store.id}\n` +
@@ -293,6 +297,18 @@ export async function executeDarazSync(
       );
 
       try {
+        // Periodically extend sync lock during long operations to prevent premature timeout
+        const extendLockIfNeeded = async () => {
+          const now = Date.now();
+          if (now - lastLockExtension > SYNC_LOCK_EXTENSION_MS) {
+            await supabase
+              .from("daraz_stores")
+              .update({ sync_status: "syncing", updated_at: new Date().toISOString() })
+              .eq("id", store.id);
+            lastLockExtension = now;
+          }
+        };
+
         // ── 2b. Re-link orphaned records from confirmed sister store rows ──────
         if (store.seller_id) {
           const { data: sisterStores } = await supabase
@@ -438,6 +454,9 @@ export async function executeDarazSync(
             }
           }
 
+          // Extend sync lock if needed to prevent timeout during long operations
+          await extendLockIfNeeded();
+
           if (!pageFetchSuccess || !pageItems) {
             // Save checkpoint with status 'failed' to allow resuming from this failed page
             await saveSyncCheckpoint({
@@ -476,7 +495,7 @@ export async function executeDarazSync(
           storeSkippedSkus += pageItems.skipped_skus;
           totalFetchedProducts += pageItems.items.length;
 
-          // Save checkpoint progress after fetching page
+          // Save checkpoint progress after fetching page (only after successful processing)
           await saveSyncCheckpoint({
             store_id: store.id,
             module: "catalog_products",
@@ -935,6 +954,9 @@ export async function executeDarazSync(
               }
             }
           }
+
+          // Extend sync lock if needed to prevent timeout during long operations
+          await extendLockIfNeeded();
 
           if (!ordPageSuccess || !pageOrders) {
             // Save checkpoint with status 'failed' to allow resuming from this failed page
