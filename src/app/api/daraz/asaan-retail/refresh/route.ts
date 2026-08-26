@@ -53,7 +53,7 @@ export async function POST(req: NextRequest) {
       .update({
         access_token: accessToken,
         refresh_token: refreshToken,
-        token_expires_at: tokenExpiresAt,
+        token_expires_at: darazClient.getTokenExpiresAtIso() || creds.token_expires_at,
         updated_at: new Date().toISOString(),
       })
       .eq("store_id", storeId);
