@@ -1,9 +1,11 @@
 import React from "react";
+import { cookies } from "next/headers";
 import { DashboardShell } from "@/components/common/DashboardShell";
 import { StoreOption } from "@/components/common/StoreSwitcher";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { safeGetUser } from "@/lib/supabase/auth-helper";
+import { resolveRoleServerSide } from "@/lib/api/auth-guard";
 import { AppRole } from "@/types/database.types";
 import { logDashboardError } from "@/lib/logging/dashboard-logger";
 
@@ -40,39 +42,62 @@ export default async function DashboardLayout({
   }
 
   // Fetch authenticated user & profile
+  const cookieStore = cookies();
+  const opsCookieVal = cookieStore.get("daraz_ops_user")?.value || null;
+
   let user: any = null;
   if (supabase) {
-    const safeRes = await safeGetUser(supabase);
+    const safeRes = await safeGetUser(supabase, opsCookieVal);
     user = safeRes.user;
     if (safeRes.error && !safeRes.isClockSkew) {
       logDashboardError("Layout getUser Auth Check", safeRes.error);
     }
+  } else if (opsCookieVal) {
+    try {
+      const parsed = JSON.parse(opsCookieVal);
+      if (parsed?.id && parsed?.email) {
+        user = {
+          id: parsed.id,
+          email: parsed.email,
+          user_metadata: parsed.user_metadata || { full_name: parsed.full_name, role: parsed.role },
+        };
+      }
+    } catch (_) {}
   }
 
-  let userRole: AppRole = user ? "ops_manager" : "viewer";
+  let userRole: AppRole = "ops_manager";
   let userName = "Team Member";
 
-  if (user && supabase) {
-    try {
-      const { data: profile, error: profileErr } = await (supabase as any)
-        .from("profiles")
-        .select("full_name, role")
-        .eq("id", user.id)
-        .maybeSingle();
+  if (user) {
+    let parsedCookie: any = null;
+    if (opsCookieVal) {
+      try { parsedCookie = JSON.parse(opsCookieVal); } catch (_) {}
+    }
 
-      if (profileErr) {
-        logDashboardError("Layout Profile Query", profileErr);
-      }
+    const fallbackRole = parsedCookie?.role || (user as any)?.user_metadata?.role;
+    const resolvedRole = await resolveRoleServerSide(user.id, user.email || null, fallbackRole);
+    userRole = resolvedRole || "ops_manager";
 
-      if (profile) {
-        userRole = (profile.role as AppRole) || "ops_manager";
-        userName = profile.full_name || user.email || "Team Member";
-      } else {
-        userName = user.email || "Team Member";
+    if (supabase) {
+      try {
+        const { data: profile } = await (supabase as any)
+          .from("profiles")
+          .select("full_name, role")
+          .eq("id", user.id)
+          .maybeSingle();
+
+        if (profile?.full_name) {
+          userName = profile.full_name;
+        } else if ((user as any)?.user_metadata?.full_name || parsedCookie?.full_name) {
+          userName = (user as any)?.user_metadata?.full_name || parsedCookie?.full_name;
+        } else {
+          userName = user.email || "Team Member";
+        }
+      } catch (_) {
+        userName = (user as any)?.user_metadata?.full_name || parsedCookie?.full_name || user.email || "Team Member";
       }
-    } catch (profileEx: any) {
-      logDashboardError("Layout Profile Exception", profileEx);
-      userName = user.email || "Team Member";
+    } else {
+      userName = (user as any)?.user_metadata?.full_name || parsedCookie?.full_name || user.email || "Team Member";
     }
   }
 

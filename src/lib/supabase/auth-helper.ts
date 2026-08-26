@@ -30,18 +30,33 @@ function decodeJwtPayload(token: string): any | null {
  * Resolves 'JWT issued at future' errors caused by system clock drift or stale JWT claims
  * without throwing unhandled exceptions or returning false zero metrics.
  */
-export async function safeGetUser(supabase: any): Promise<SafeUserResult> {
+export async function safeGetUser(supabase: any, fallbackCookieValue?: string | null): Promise<SafeUserResult> {
   if (!supabase) {
+    if (fallbackCookieValue) {
+      try {
+        const parsed = JSON.parse(fallbackCookieValue);
+        if (parsed?.id && parsed?.email) {
+          return {
+            user: {
+              id: parsed.id,
+              email: parsed.email,
+              user_metadata: parsed.user_metadata || { full_name: parsed.full_name, role: parsed.role },
+            },
+            error: null,
+          };
+        }
+      } catch (_) {}
+    }
     return { user: null, error: new Error("Supabase client not initialized") };
   }
 
   try {
     const { data, error } = await supabase.auth.getUser();
 
-    if (error) {
+    if (error || !data?.user) {
       const isFutureJwt =
-        error.message?.toLowerCase().includes("issued at future") ||
-        error.message?.toLowerCase().includes("iat") ||
+        error?.message?.toLowerCase().includes("issued at future") ||
+        error?.message?.toLowerCase().includes("iat") ||
         (error as any)?.code === "jwt_issued_at_future";
 
       if (isFutureJwt) {
@@ -79,20 +94,45 @@ export async function safeGetUser(supabase: any): Promise<SafeUserResult> {
         } catch (sessEx) {
           // getSession exception fallback
         }
-
-        // If user session is genuinely absent, return clean result without crashing page
-        return {
-          user: null,
-          error: null,
-          isClockSkew: true,
-        };
       }
 
-      return { user: null, error };
+      // Fallback 3: Extract from daraz_ops_user cookie fallback if available
+      if (fallbackCookieValue) {
+        try {
+          const parsed = JSON.parse(fallbackCookieValue);
+          if (parsed?.id && parsed?.email) {
+            return {
+              user: {
+                id: parsed.id,
+                email: parsed.email,
+                user_metadata: parsed.user_metadata || { full_name: parsed.full_name, role: parsed.role },
+              },
+              error: null,
+            };
+          }
+        } catch (_) {}
+      }
+
+      return { user: null, error: error || null };
     }
 
     return { user: data?.user || null, error: null };
   } catch (ex: any) {
+    if (fallbackCookieValue) {
+      try {
+        const parsed = JSON.parse(fallbackCookieValue);
+        if (parsed?.id && parsed?.email) {
+          return {
+            user: {
+              id: parsed.id,
+              email: parsed.email,
+              user_metadata: parsed.user_metadata || { full_name: parsed.full_name, role: parsed.role },
+            },
+            error: null,
+          };
+        }
+      } catch (_) {}
+    }
     logDashboardError("Supabase SafeGetUser Exception", ex);
     return { user: null, error: ex };
   }

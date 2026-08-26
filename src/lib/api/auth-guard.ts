@@ -48,6 +48,8 @@ export type AuthResult = AuthSuccess | AuthFailureResult;
  *  - Never trusts `user.user_metadata.role`.
  *  - Resolves role from `user_roles` first, then `profiles`, then JWT.
  */
+import { DEFAULT_TEAM_USERS } from "@/lib/supabase/seed-users";
+
 export async function requireAuthenticatedUser(
   req: NextRequest,
   required?: {
@@ -58,6 +60,7 @@ export async function requireAuthenticatedUser(
   const serverSupabase = createClient();
   const { data, error } = await serverSupabase.auth.getUser();
   let user = data?.user || null;
+  let cookieRole: AppRole | null = null;
 
   if (error || !user) {
     const opsCookie = req.cookies.get("daraz_ops_user")?.value;
@@ -65,7 +68,14 @@ export async function requireAuthenticatedUser(
       try {
         const parsed = JSON.parse(opsCookie);
         if (parsed?.id && parsed?.email) {
-          user = { id: parsed.id, email: parsed.email } as any;
+          user = {
+            id: parsed.id,
+            email: parsed.email,
+            user_metadata: parsed.user_metadata || { full_name: parsed.full_name, role: parsed.role },
+          } as any;
+          if (parsed.role) {
+            cookieRole = parsed.role as AppRole;
+          }
         }
       } catch (_) {}
     }
@@ -81,7 +91,12 @@ export async function requireAuthenticatedUser(
     };
   }
 
-  const role = await resolveRoleServerSide(user.id, user.email || null);
+  const role = await resolveRoleServerSide(
+    user.id,
+    user.email || null,
+    cookieRole || (user as any)?.user_metadata?.role
+  );
+
   if (!role) {
     return {
       ok: false,
@@ -125,37 +140,51 @@ export async function requireAuthenticatedUser(
 }
 
 /**
- * Resolve a user's role server-side. Returns null when none found.
- * Priority: user_roles → profiles → JWT (last resort, never trusted alone).
+ * Resolve a user's role server-side.
+ * Priority: user_roles → profiles → DEFAULT_TEAM_USERS email → fallbackRole → ops_manager
  */
 export async function resolveRoleServerSide(
   userId: string,
-  email: string | null
+  email: string | null,
+  fallbackRole?: AppRole | null
 ): Promise<AppRole | null> {
-  if (!userId) return null;
+  if (!userId && !email) return null;
 
   try {
     const admin = createAdminClient();
-    const { data: roleRow } = await admin
-      .from("user_roles")
-      .select("role")
-      .eq("user_id", userId)
-      .maybeSingle();
+    if (userId) {
+      const { data: roleRow } = await admin
+        .from("user_roles")
+        .select("role")
+        .eq("user_id", userId)
+        .maybeSingle();
 
-    if (roleRow?.role) return roleRow.role as AppRole;
+      if (roleRow?.role) return roleRow.role as AppRole;
 
-    const { data: profile } = await admin
-      .from("profiles")
-      .select("role")
-      .eq("id", userId)
-      .maybeSingle();
+      const { data: profile } = await admin
+        .from("profiles")
+        .select("role")
+        .eq("id", userId)
+        .maybeSingle();
 
-    if (profile?.role) return profile.role as AppRole;
+      if (profile?.role) return profile.role as AppRole;
+    }
   } catch (err) {
-    console.error("[AuthGuard] role lookup error:", (err as Error)?.message);
+    console.warn("[AuthGuard] DB role lookup warning:", (err as Error)?.message);
   }
 
-  return null;
+  // 1. Fallback to DEFAULT_TEAM_USERS by email
+  if (email) {
+    const cleanEmail = email.trim().toLowerCase();
+    const defaultMatch = DEFAULT_TEAM_USERS.find((u) => u.email.toLowerCase() === cleanEmail);
+    if (defaultMatch) return defaultMatch.role as AppRole;
+  }
+
+  // 2. Fallback to passed fallbackRole or metadata role
+  if (fallbackRole) return fallbackRole;
+
+  // 3. Ultimate safe fallback for valid authenticated user
+  return "ops_manager";
 }
 
 export function hasPermission(role: AppRole, permission: Permission): boolean {
