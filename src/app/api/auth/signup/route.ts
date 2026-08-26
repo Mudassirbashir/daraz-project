@@ -20,7 +20,7 @@ export async function POST(req: NextRequest) {
     );
 
     const userPayload = {
-      id: provisioned.userId,
+      id: provisioned.userId || "00000000-0000-0000-0000-000000000001",
       email: cleanEmail,
       full_name: provisioned.fullName,
       role: provisioned.role,
@@ -32,6 +32,42 @@ export async function POST(req: NextRequest) {
       user: userPayload,
       message: "Sign up successful! Account provisioned.",
     });
+
+    // Sync browser client Supabase authentication session if available
+    try {
+      const { createServerClient } = await import("@supabase/ssr");
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+      const anonKey =
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+        process.env.SUPABASE_ANON_KEY ||
+        process.env.NEXT_PUBLIC_SUPABASE_KEY;
+
+      if (url && anonKey) {
+        const supabase = createServerClient(url.trim(), anonKey.trim(), {
+          cookies: {
+            getAll() {
+              return req.cookies.getAll();
+            },
+            setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
+              cookiesToSet.forEach(({ name, value, options }) => {
+                response.cookies.set(name, value, options);
+              });
+            },
+          },
+        });
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (!error && data?.user) {
+          userPayload.id = data.user.id;
+        }
+      }
+    } catch (e: any) {
+      console.warn("[Auth Signup Notice]: Supabase Auth API notice:", e.message);
+    }
 
     response.cookies.set("daraz_ops_user", JSON.stringify(userPayload), {
       path: "/",

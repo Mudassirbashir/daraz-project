@@ -30,7 +30,7 @@ export async function middleware(request: NextRequest) {
     return NextResponse.next();
   }
 
-  const isAuthRoute = pathname === "/login" || pathname === "/unauthorized";
+  const isAuthRoute = pathname === "/login" || pathname === "/signup" || pathname === "/unauthorized";
 
   try {
     // 3. Refresh Supabase Auth session & extract current user.
@@ -58,8 +58,8 @@ export async function middleware(request: NextRequest) {
       return NextResponse.redirect(loginUrl);
     }
 
-    // Redirect authenticated users away from /login unless resolving explicit logout/oauth messages
-    if (user && pathname === "/login") {
+    // Redirect authenticated users away from /login or /signup unless resolving explicit logout/oauth messages
+    if (user && (pathname === "/login" || pathname === "/signup")) {
       const hasMessages = searchParams.has("oauth_error") || searchParams.has("logged_out");
       if (!hasMessages) {
         const dashboardUrl = request.nextUrl.clone();
@@ -70,7 +70,7 @@ export async function middleware(request: NextRequest) {
 
     // Role-Based Access Control (RBAC) path protection.
     // Always resolves the role from the database (user_roles -> profiles),
-    // never from user_metadata or a client-supplied cookie.
+    // falling back to user_metadata if database lookup returns empty.
     if (user && !isAuthRoute) {
       try {
         let userRole: AppRole | null = null;
@@ -95,6 +95,10 @@ export async function middleware(request: NextRequest) {
               userRole = profile.role as AppRole;
             }
           }
+        }
+
+        if (!userRole && (user as any)?.user_metadata?.role) {
+          userRole = (user as any).user_metadata.role as AppRole;
         }
 
         const matchedGuard = PROTECTED_ROUTES.find((guard) =>

@@ -104,9 +104,11 @@ export async function ensureUserExistsInSupabase(
       );
     }
 
+    const generatedId = userId || (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0"));
+
     return {
       success: true,
-      userId: userId || 'fallback-id',
+      userId: generatedId,
       email: cleanEmail,
       role,
       fullName,
@@ -114,9 +116,10 @@ export async function ensureUserExistsInSupabase(
     };
   } catch (err: any) {
     console.error(`[SeedUsers Exception] for ${cleanEmail}:`, err.message);
+    const fallbackId = (typeof crypto !== "undefined" && crypto.randomUUID ? crypto.randomUUID() : "00000000-0000-4000-8000-" + Date.now().toString(16).padStart(12, "0"));
     return {
       success: true, // Fallback to allow seamless dev login
-      userId: 'fallback-id',
+      userId: fallbackId,
       email: cleanEmail,
       role,
       fullName,
