@@ -82,7 +82,8 @@ export async function ensureUserExistsInSupabase(
         }
       } catch (dbError) {
         // If we can't fetch from DB, fallback to computed role
-        console.warn('[SeedUsers] Warning fetching role from DB:', dbError.message);
+        const errorMessage = dbError instanceof Error ? dbError.message : String(dbError);
+        console.warn('[SeedUsers] Warning fetching role from DB:', errorMessage);
       }
 
       // Update password & metadata to ensure login works smoothly
