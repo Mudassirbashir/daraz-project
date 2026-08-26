@@ -309,7 +309,7 @@ export class DarazClient {
   }
 
   // Improved token refresh with locking mechanism to prevent race conditions
-  private async refreshTokenIfNeeded(): Promise<void> {
+  public async refreshTokenIfNeeded(): Promise<void> {
     if (!this.storeId || !this.refreshToken) return;
 
     const lockKey = `refresh_${this.storeId}`;
