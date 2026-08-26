@@ -169,9 +169,9 @@ export class DarazClient {
   private appKey: string;
   private appSecret: string;
   private baseUrl: string;
-  private accessToken?: string;
-  private refreshToken?: string;
-  private tokenExpiresAt?: string | number | Date;
+  public accessToken?: string;
+  public refreshToken?: string;
+  public tokenExpiresAt?: Date;
 
   constructor(config: DarazClientConfig = {}) {
     const key = config.appKey || process.env.DARAZ_APP_KEY;
@@ -188,13 +188,35 @@ export class DarazClient {
     this.appSecret = secret.trim();
     this.accessToken = config.accessToken;
     this.refreshToken = config.refreshToken;
-    this.tokenExpiresAt = config.tokenExpiresAt;
+    this.tokenExpiresAt = this.toDate(config.tokenExpiresAt);
     const country = (config.countryCode || 'PK').toUpperCase() as DarazCountryCode;
     this.baseUrl = GATEWAY_MAP[country] || GATEWAY_MAP.PK;
   }
 
   public setAccessToken(token: string) {
     this.accessToken = token;
+  }
+
+  public getAccessToken(): string | undefined {
+    return this.accessToken;
+  }
+
+  public getRefreshToken(): string | undefined {
+    return this.refreshToken;
+  }
+
+  public getTokenExpiresAt(): Date | undefined {
+    return this.toDate(this.tokenExpiresAt);
+  }
+
+  public getTokenExpiresAtIso(): string | undefined {
+    return this.getTokenExpiresAt()?.toISOString();
+  }
+
+  private toDate(value?: string | number | Date): Date | undefined {
+    if (value == null) return undefined;
+    const parsed = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(parsed.getTime()) ? undefined : parsed;
   }
 
   private async prepareParams(
@@ -309,7 +331,7 @@ export class DarazClient {
   }
 
   // Improved token refresh with locking mechanism to prevent race conditions
-  private async refreshTokenIfNeeded(): Promise<void> {
+  public async refreshTokenIfNeeded(): Promise<void> {
     if (!this.storeId || !this.refreshToken) return;
 
     const lockKey = `refresh_${this.storeId}`;
@@ -343,6 +365,23 @@ export class DarazClient {
     this.refreshToken = res.refresh_token || this.refreshToken; // Keep old if not rotated
     if (res.expires_in) {
       this.tokenExpiresAt = new Date(Date.now() + res.expires_in * 1000);
+    }
+
+    if (this.storeId && this.accessToken) {
+      const supabase = createAdminClient();
+      const { error } = await supabase
+        .from('daraz_store_credentials')
+        .update({
+          access_token: this.accessToken,
+          refresh_token: this.refreshToken,
+          token_expires_at: this.getTokenExpiresAtIso() || null,
+          updated_at: new Date().toISOString(),
+        })
+        .eq('store_id', this.storeId);
+
+      if (error) {
+        console.warn(`[DarazClient] Failed to persist refreshed tokens for store ${this.storeId}: ${error.message}`);
+      }
     }
   }
 
@@ -886,6 +925,7 @@ export async function getDarazClient(storeId: string): Promise<DarazClient> {
   }
 
   return new DarazClient({
+    storeId,
     appKey: resolvedAppKey,
     appSecret: decryptedSecret.trim(),
     countryCode: (store.region || 'PK') as DarazCountryCode,
