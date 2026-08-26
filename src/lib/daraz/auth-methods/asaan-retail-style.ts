@@ -195,7 +195,7 @@ export async function validateAsaanRetailAuth(
     try {
       isValidSession = await validateDarazSellerPortalSession(req);
     } catch (sessionError) {
-      sessionValidationError = sessionError.message;
+      sessionValidationError = sessionError instanceof Error ? sessionError.message : String(sessionError);
       console.warn("[Asaan Retail Auth] Session validation error:", sessionValidationError);
     }
 
@@ -215,7 +215,7 @@ export async function validateAsaanRetailAuth(
     try {
       supabase = createAdminClient();
     } catch (dbError) {
-      console.error("[Asaan Retail Auth] Database connection error:", dbError.message);
+      console.error("[Asaan Retail Auth] Database connection error:", dbError instanceof Error ? dbError.message : String(dbError));
       return NextResponse.json(
         {
           success: false,
@@ -231,7 +231,7 @@ export async function validateAsaanRetailAuth(
     try {
       encryptedSecret = encryptSecret(sessionPayload.appSecret);
     } catch (encryptError) {
-      console.error("[Asaan Retail Auth] Encryption error:", encryptError.message);
+      console.error("[Asaan Retail Auth] Encryption error:", encryptError instanceof Error ? encryptError.message : String(encryptError));
       return NextResponse.json(
         {
           success: false,
@@ -253,7 +253,7 @@ export async function validateAsaanRetailAuth(
         .maybeSingle();
       existingApp = data;
     } catch (dbError) {
-      console.error("[Asaan Retail Auth] Error checking existing app:", dbError.message);
+      console.error("[Asaan Retail Auth] Error checking existing app:", dbError instanceof Error ? dbError.message : String(dbError));
       return NextResponse.json(
         {
           success: false,
@@ -277,7 +277,7 @@ export async function validateAsaanRetailAuth(
           })
           .eq("id", existingApp.id);
       } catch (dbError) {
-        console.error("[Asaan Retail Auth] Error updating existing app:", dbError.message);
+        console.error("[Asaan Retail Auth] Error updating existing app:", dbError instanceof Error ? dbError.message : String(dbError));
         return NextResponse.json(
           {
             success: false,
@@ -303,7 +303,7 @@ export async function validateAsaanRetailAuth(
           .single();
         newApp = data;
       } catch (dbError) {
-        console.error("[Asaan Retail Auth] Error creating new app:", dbError.message);
+        console.error("[Asaan Retail Auth] Error creating new app:", dbError instanceof Error ? dbError.message : String(dbError));
         return NextResponse.json(
           {
             success: false,
@@ -336,7 +336,7 @@ export async function validateAsaanRetailAuth(
           updated_at: new Date().toISOString(),
         }, { onConflict: "id" });
     } catch (dbError) {
-      console.error("[Asaan Retail Auth] Error creating/updating store:", dbError.message);
+      console.error("[Asaan Retail Auth] Error creating/updating store:", dbError instanceof Error ? dbError.message : String(dbError));
       return NextResponse.json(
         {
           success: false,
@@ -361,7 +361,7 @@ export async function validateAsaanRetailAuth(
           updated_at: new Date().toISOString(),
         }, { onConflict: "store_id" });
     } catch (dbError) {
-      console.error("[Asaan Retail Auth] Error creating store credentials:", dbError.message);
+      console.error("[Asaan Retail Auth] Error creating store credentials:", dbError instanceof Error ? dbError.message : String(dbError));
       return NextResponse.json(
         {
           success: false,
