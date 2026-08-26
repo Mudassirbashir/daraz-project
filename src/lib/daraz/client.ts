@@ -169,9 +169,9 @@ export class DarazClient {
   private appKey: string;
   private appSecret: string;
   private baseUrl: string;
-  private accessToken?: string;
-  private refreshToken?: string;
-  private tokenExpiresAt?: string | number | Date;
+  public accessToken?: string;
+  public refreshToken?: string;
+  public tokenExpiresAt?: string | number | Date;
 
   constructor(config: DarazClientConfig = {}) {
     const key = config.appKey || process.env.DARAZ_APP_KEY;
