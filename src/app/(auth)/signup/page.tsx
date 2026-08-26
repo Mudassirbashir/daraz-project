@@ -1,6 +1,6 @@
 "use client";
 
-import React, { useState, Suspense, useEffect } from "react";
+import React, { useState, Suspense } from "react";
 import { useRouter } from "next/navigation";
 import { UserPlus, ArrowRight, Store, AlertCircle, CheckCircle2 } from "lucide-react";
 import { createClient } from "@/lib/supabase/client";
@@ -202,14 +202,6 @@ function SignupForm() {
 }
 
 export default function SignupPage() {
-  const router = useRouter();
-
-  useEffect(() => {
-    // Redirect to dashboard since signup feature is removed
-    // The dashboard will show role selection when no authenticated user is present
-    router.replace("/dashboard");
-  }, [router]);
-
   return (
     <div className="flex min-h-screen items-center justify-center bg-slate-900 px-4 py-12 sm:px-6 lg:px-8">
       <Suspense fallback={<div className="text-white text-sm">Loading Registration Portal...</div>}>
