@@ -1,5 +1,5 @@
 import React from "react";
-import { Store, Package, ShoppingCart, Truck, AlertCircle, CheckCircle2 } from "lucide-react";
+import { Store, Package, ShoppingCart, Truck, AlertCircle, CheckCircle2, RefreshCw, MessageCircleWarning, Zap } from "lucide-react";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { createClient } from "@/lib/supabase/server";
 import { SyncNowButton } from "@/components/common/SyncNowButton";
@@ -58,6 +58,27 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   // Calculate live metrics per store
   const enrichedStores = await Promise.all(
     storesList.map(async (st) => {
+      // Fetch store credentials for token information
+      let credentials = null;
+      let tokenExpiresAt = null;
+      let accessToken = null;
+      let refreshToken = null;
+      try {
+        const { data: creds } = await supabase
+          .from("daraz_store_credentials")
+          .select("access_token, refresh_token, token_expires_at, updated_at")
+          .eq("store_id", st.id)
+          .single();
+        credentials = creds;
+        if (creds) {
+          accessToken = creds.access_token;
+          refreshToken = creds.refresh_token;
+          tokenExpiresAt = creds.token_expires_at ? new Date(creds.token_expires_at) : null;
+        }
+      } catch (credError) {
+        // Credentials might not exist yet
+      }
+
       const isConnected = Boolean(st.is_active && st.authorization_status !== "disconnected");
 
       if (!isConnected) {
@@ -69,6 +90,10 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
           ordersCount: null,
           inProgressOrdersCount: null,
           lastSyncedAt: null,
+          credentials,
+          tokenExpiresAt,
+          accessToken,
+          refreshToken,
         };
       }
 
@@ -122,6 +147,15 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
       const updatedTime = st.updated_at ? new Date(st.updated_at).getTime() : 0;
       const isSyncing = st.sync_status === "syncing" && (Date.now() - updatedTime < 10 * 60 * 1000);
 
+      // Calculate token status
+      const tokenStatus = {
+        hasAccessToken: !!accessToken,
+        hasRefreshToken: !!refreshToken,
+        isExpired: tokenExpiresAt ? tokenExpiresAt < new Date() : true,
+        expiresIn: tokenExpiresAt ? Math.max(0, Math.floor((tokenExpiresAt.getTime() - Date.now()) / 1000)) : 0,
+        expiresAt: tokenExpiresAt,
+      };
+
       return {
         ...st,
         isConnected: true,
@@ -131,6 +165,11 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
         ordersCount,
         inProgressOrdersCount,
         lastSyncedAt,
+        credentials,
+        tokenExpiresAt,
+        accessToken,
+        refreshToken,
+        tokenStatus,
       };
     })
   );
@@ -138,6 +177,22 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
   const connectedCount = enrichedStores.filter((s) => s.isConnected).length;
   const disconnectedCount = enrichedStores.filter((s) => !s.isConnected).length;
   const isMaxStoresReached = connectedCount >= 3;
+
+  // Connection type breakdown
+  const oauthCount = enrichedStores.filter(
+    (s) => s.isConnected && !(s.store_code?.startsWith("ASAAN-") || false)
+  ).length;
+  const asaanRetailCount = enrichedStores.filter(
+    (s) => s.isConnected && (s.store_code?.startsWith("ASAAN-") || false)
+  ).length;
+
+  // Token status summary
+  const validTokenCount = enrichedStores.filter(
+    (s) => s.isConnected && s.tokenStatus?.hasAccessToken && !s.tokenStatus?.isExpired
+  ).length;
+  const expiredTokenCount = enrichedStores.filter(
+    (s) => s.isConnected && s.tokenStatus?.hasAccessToken && s.tokenStatus?.isExpired
+  ).length;
 
   const syncingStore = enrichedStores.find((s) => s.sync_status === "syncing");
   const autoSyncStoreId = redirectStoreId || syncingStore?.id;
@@ -194,15 +249,41 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
       </div>
 
       {/* Overview Status Pill */}
-      <div className="flex items-center space-x-3 text-xs font-bold">
-        <span className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20">
+      <div className="flex flex-wrap items-center space-x-3 text-xs font-bold">
+        <div className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20">
           <span>🟢 Connected: {connectedCount}</span>
-        </span>
+        </div>
 
         {disconnectedCount > 0 && (
           <span className="inline-flex items-center space-x-1.5 px-3 py-1.5 rounded-xl bg-slate-100 dark:bg-slate-800 text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700">
             <span>⚪ Disconnected: {disconnectedCount}</span>
           </span>
+        )}
+
+        {/* Connection Type Breakdown */}
+        {connectedCount > 0 && (
+          <>
+            <span className="inline-flex items-center space-x-2 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2 py-1 text-[10px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20">
+              OAuth: {oauthCount}
+            </span>
+            <span className="inline-flex items-center space-x-2 rounded-xl bg-orange-50 dark:bg-orange-500/10 px-2 py-1 text-[10px] font-bold text-orange-700 dark:text-orange-300 border border-orange-200/80 dark:border-orange-500/20">
+              Asaan Retail: {asaanRetailCount}
+            </span>
+          </>
+        )}
+
+        {/* Token Status Summary */}
+        {connectedCount > 0 && (
+          <>
+            <span className="inline-flex items-center space-x-2 rounded-xl bg-indigo-50 dark:bg-indigo-500/10 px-2 py-1 text-[10px] font-bold text-indigo-700 dark:text-indigo-400 border border-indigo-200/80 dark:border-indigo-500/20">
+              Valid Tokens: {validTokenCount}
+            </span>
+            {expiredTokenCount > 0 && (
+              <span className="inline-flex items-center space-x-2 rounded-xl bg-red-50 dark:bg-red-500/10 px-2 py-1 text-[10px] font-bold text-red-700 dark:text-red-400 border border-red-200/80 dark:border-red-500/20">
+                Expired Tokens: {expiredTokenCount}
+              </span>
+            )}
+          </>
         )}
       </div>
 
@@ -213,6 +294,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
           const initials = getStoreInitials(storeName);
 
           const hasSyncError = Boolean(store.last_sync_error || store.sync_status === "error");
+          const isAsaanRetailStyle = store.store_code?.startsWith("ASAAN-") || false;
 
           return (
             <div
@@ -245,29 +327,38 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                 </div>
 
                 {/* Connection & Sync Status Badge */}
-                {store.isConnected ? (
-                  store.isSyncing ? (
-                    <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20 shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-blue-500 animate-ping"></span>
-                      <span>Syncing...</span>
-                    </span>
-                  ) : store.last_sync_error || store.sync_status === "error" ? (
-                    <span className="inline-flex items-center space-x-1 rounded-xl bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 border border-amber-200/80 dark:border-amber-500/20 shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-amber-500"></span>
-                      <span>Sync Notice</span>
-                    </span>
+                <div className="flex items-center space-x-2">
+                  {store.isConnected ? (
+                    store.isSyncing ? (
+                      <span className="inline-flex items-center space-x-1 rounded-xl bg-blue-50 dark:bg-blue-500/10 px-2.5 py-1 text-[11px] font-bold text-blue-700 dark:text-blue-400 border border-blue-200/80 dark:border-blue-500/20 shrink-0">
+                        <span className="h-2 w-2 rounded-full bg-blue-500 animate-ping"></span>
+                        <span>Syncing...</span>
+                      </span>
+                    ) : store.last_sync_error || store.sync_status === "error" ? (
+                      <span className="inline-flex items-center space-x-1 rounded-xl bg-amber-50 dark:bg-amber-500/10 px-2.5 py-1 text-[11px] font-bold text-amber-700 dark:text-amber-400 border border-amber-200/80 dark:border-amber-500/20 shrink-0">
+                        <span className="h-2 w-2 rounded-full bg-amber-500"></span>
+                        <span>Sync Notice</span>
+                      </span>
+                    ) : (
+                      <span className="inline-flex items-center space-x-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shrink-0">
+                        <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
+                        <span>Connected</span>
+                      </span>
+                    )
                   ) : (
-                    <span className="inline-flex items-center space-x-1 rounded-xl bg-emerald-50 dark:bg-emerald-500/10 px-2.5 py-1 text-[11px] font-bold text-emerald-700 dark:text-emerald-400 border border-emerald-200/80 dark:border-emerald-500/20 shrink-0">
-                      <span className="h-2 w-2 rounded-full bg-emerald-500"></span>
-                      <span>Connected</span>
+                    <span className="inline-flex items-center space-x-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">
+                      <span className="h-2 w-2 rounded-full bg-slate-400"></span>
+                      <span>Disconnected</span>
                     </span>
-                  )
-                ) : (
-                  <span className="inline-flex items-center space-x-1 rounded-xl bg-slate-100 dark:bg-slate-800 px-2.5 py-1 text-[11px] font-bold text-slate-600 dark:text-slate-400 border border-slate-200 dark:border-slate-700 shrink-0">
-                    <span className="h-2 w-2 rounded-full bg-slate-400"></span>
-                    <span>Disconnected</span>
-                  </span>
-                )}
+                  )}
+
+                  {/* Connection Type Badge */}
+                  {store.isConnected && (
+                    <span className="ml-2 inline-flex items-center space-x-1 rounded-xl bg-orange-50 dark:bg-orange-500/10 px-2 py-1 text-[10px] font-bold text-orange-700 dark:text-orange-300 border border-orange-200/80 dark:border-orange-500/20">
+                      {isAsaanRetailStyle ? "Asaan Retail" : "OAuth"}
+                    </span>
+                  )}
+                </div>
               </div>
 
               {/* Sync Error Alert Banner */}
@@ -284,7 +375,7 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
               )}
 
               {/* Metrics Grid */}
-              <div className="grid grid-cols-3 gap-3 pt-1">
+              <div className="grid grid-cols-4 gap-3 pt-1">
                 {/* 1. Products */}
                 <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 p-3 text-center border border-slate-100 dark:border-slate-800">
                   <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-center space-x-1">
@@ -323,6 +414,36 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                       : "--"}
                   </p>
                 </div>
+
+                {/* 4. Token Status */}
+                <div className="rounded-2xl bg-slate-50 dark:bg-slate-950/60 p-3 text-center border border-slate-100 dark:border-slate-800">
+                  <span className="text-[10px] font-bold uppercase tracking-wider text-slate-400 flex items-center justify-center space-x-1">
+                    <RefreshCw className="h-3 w-3 text-indigo-500" />
+                    <span>Token</span>
+                  </span>
+                  {store.isConnected ? (
+                    <>
+                      {store.tokenStatus.hasAccessToken ? (
+                        <p className="mt-1 text-lg font-bold text-slate-900 dark:text-white">
+                          {store.tokenStatus.isExpired ? "EXPIRED" : "VALID"}
+                        </p>
+                      ) : (
+                        <p className="mt-1 text-lg font-bold text-slate-500 dark:text-slate-400">
+                          MISSING
+                        </p>
+                      )}
+                      {!store.tokenStatus.hasAccessToken && store.tokenStatus.hasRefreshToken && (
+                        <p className="mt-1 text-xs text-slate-500 dark:text-slate-400">
+                          Refresh available
+                        </p>
+                      )}
+                    </>
+                  ) : (
+                    <p className="mt-1 text-lg font-bold text-slate-500 dark:text-slate-400">
+                      --
+                    </p>
+                  )}
+                </div>
               </div>
 
               {/* Orders In Progress row / Info message */}
@@ -353,12 +474,59 @@ export default async function StoresPage({ searchParams }: StoresPageProps) {
                 />
               </div>
 
-              {/* Footer Last Synced */}
-              {store.isConnected && (
-                <p className="text-[10px] text-center text-slate-400 font-medium pt-1">
-                  Last synced: {store.lastSyncedAt ? new Date(store.lastSyncedAt).toLocaleString() : "Recently"}
-                </p>
-              )}
+              {/* Footer Info */}
+              <div className="flex items-center justify-between text-xs pt-2 border-t border-slate-100 dark:border-slate-800">
+                <div className="flex items-center space-x-2">
+                  {store.isConnected ? (
+                    <>
+                      <span className="text-slate-500 dark:text-slate-400">
+                        Last synced:
+                      </span>
+                      <span className="font-medium">
+                        {store.lastSyncedAt ? new Date(store.lastSyncedAt).toLocaleString() : "Recently"}
+                      </span>
+                    </>
+                  ) : (
+                    <span className="text-slate-500 dark:text-slate-400">
+                      Not connected
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center space-x-2">
+                  {store.isConnected ? (
+                    <>
+                      {store.tokenStatus.hasAccessToken ? (
+                        <>
+                          <span className="text-slate-500 dark:text-slate-400">
+                            Token:
+                          </span>
+                          <span className="font-medium {store.tokenStatus.isExpired ? 'text-red-500' : 'text-green-500'}">
+                            {store.tokenStatus.isExpired ? 'Expired' : 'Valid'}
+                          </span>
+                          {!store.tokenStatus.isExpired && (
+                            <span className="ml-2 text-xs text-slate-500 dark:text-slate-400">
+                              ({Math.floor(store.tokenStatus.expiresIn / 3600)}h {Math.floor((store.tokenStatus.expiresIn % 3600) / 60)}m left)
+                            </span>
+                          )}
+                        </>
+                      ) : (
+                        <>
+                          <span className="text-slate-500 dark:text-slate-400">
+                            Token:
+                          </span>
+                          <span className="font-medium text-red-500">
+                            Missing
+                          </span>
+                        </>
+                      )}
+                    </>
+                  ) : (
+                    <span className="text-slate-500 dark:text-slate-400">
+                      --
+                    </span>
+                  )}
+                </div>
+              </div>
             </div>
           );
         })}
