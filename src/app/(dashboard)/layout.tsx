@@ -2,6 +2,7 @@ import React from "react";
 import { cookies } from "next/headers";
 import { DashboardShell } from "@/components/common/DashboardShell";
 import { StoreOption } from "@/components/common/StoreSwitcher";
+import { RoleSelectionGate } from "@/components/common/RoleSelectionGate";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { safeGetUser } from "@/lib/supabase/auth-helper";
@@ -63,6 +64,10 @@ export default async function DashboardLayout({
         };
       }
     } catch (_) {}
+  }
+
+  if (!user) {
+    return <RoleSelectionGate />;
   }
 
   let userRole: AppRole = "ops_manager";

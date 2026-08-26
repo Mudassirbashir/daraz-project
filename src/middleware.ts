@@ -48,13 +48,13 @@ export async function middleware(request: NextRequest) {
       );
     }
 
-    // Redirect unauthenticated users trying to access protected UI pages
+    // Allow unauthenticated users accessing / or /dashboard to view RoleSelectionGate
     if (!user && !isAuthRoute) {
+      if (pathname === "/" || pathname === "/dashboard") {
+        return supabaseResponse || NextResponse.next();
+      }
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
-      if (pathname !== "/" && pathname !== "/dashboard") {
-        loginUrl.searchParams.set("redirectTo", pathname);
-      }
       return NextResponse.redirect(loginUrl);
     }
 
