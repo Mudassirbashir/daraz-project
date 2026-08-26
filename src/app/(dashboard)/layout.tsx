@@ -1,8 +1,8 @@
 import React from "react";
 import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
 import { DashboardShell } from "@/components/common/DashboardShell";
 import { StoreOption } from "@/components/common/StoreSwitcher";
-import { RoleSelectionGate } from "@/components/common/RoleSelectionGate";
 import { createClient } from "@/lib/supabase/server";
 import { createAdminClient } from "@/lib/supabase/admin";
 import { safeGetUser } from "@/lib/supabase/auth-helper";
@@ -53,21 +53,10 @@ export default async function DashboardLayout({
     if (safeRes.error && !safeRes.isClockSkew) {
       logDashboardError("Layout getUser Auth Check", safeRes.error);
     }
-  } else if (opsCookieVal) {
-    try {
-      const parsed = JSON.parse(opsCookieVal);
-      if (parsed?.id && parsed?.email) {
-        user = {
-          id: parsed.id,
-          email: parsed.email,
-          user_metadata: parsed.user_metadata || { full_name: parsed.full_name, role: parsed.role },
-        };
-      }
-    } catch (_) {}
   }
 
   if (!user) {
-    return <RoleSelectionGate />;
+    return redirect('/login');
   }
 
   let userRole: AppRole = "ops_manager";
@@ -108,8 +97,7 @@ export default async function DashboardLayout({
 
   // Fetch active connected Daraz Stores
   let rawStores: any[] = [];
-  let storeQueryError: string | null = null;
-
+  
   if (adminSupabase) {
     try {
       let storesQuery = (adminSupabase as any)
@@ -139,7 +127,6 @@ export default async function DashboardLayout({
         if (fbErr) {
           const isClockSkew = fbErr.message?.toLowerCase().includes("issued at future") || fbErr.message?.toLowerCase().includes("iat");
           if (!isClockSkew) {
-            storeQueryError = fbErr.message;
             logDashboardError("Layout Stores Query Fallback", fbErr);
           }
         } else {
@@ -149,7 +136,6 @@ export default async function DashboardLayout({
         rawStores = data || [];
       }
     } catch (storesEx: any) {
-      storeQueryError = storesEx?.message || String(storesEx);
       logDashboardError("Layout Stores Exception", storesEx);
     }
   }
