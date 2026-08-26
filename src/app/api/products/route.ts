@@ -1,10 +1,17 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
+import {
+  requireAuthenticatedUser,
+  getAuthorizedStoreIds,
+  safeErrorResponse,
+} from "@/lib/api/auth-guard";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuthenticatedUser(req, { permission: "listings:read" });
+  if (!auth.ok) return auth.response;
+
   const { searchParams } = new URL(req.url);
 
   const pageInput = parseInt(searchParams.get("page") || "1", 10);
@@ -21,24 +28,8 @@ export async function GET(req: NextRequest) {
   const offset = (page - 1) * limit;
 
   try {
-    const serverSupabase = createClient();
-    const { data: { user } } = await serverSupabase.auth.getUser();
-    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
-
-    if (!user && !opsUserCookie) {
-      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
-    }
-
     const supabase = createAdminClient();
-
-    // Query authorized active stores
-    let storeQuery = supabase.from("daraz_stores").select("id").eq("is_active", true);
-    if (user?.id) {
-      storeQuery = storeQuery.or(`user_id.eq.${user.id},user_id.is.null`);
-    }
-
-    const { data: userStores } = await storeQuery;
-    const userStoreIds = (userStores || []).map((s) => s.id);
+    const userStoreIds = await getAuthorizedStoreIds(auth.principal);
 
     if (userStoreIds.length === 0) {
       return NextResponse.json({

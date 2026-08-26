@@ -17,41 +17,6 @@ export async function POST(req: NextRequest) {
     // 1. Auto-provision user in Supabase Auth & Profiles if deleted or missing
     const provisioned = await ensureUserExistsInSupabase(cleanEmail, password);
 
-    // 2. Authenticate with Supabase Auth
-    try {
-      const supabase = createClient();
-      const { data, error } = await supabase.auth.signInWithPassword({
-        email: cleanEmail,
-        password,
-      });
-
-      if (!error && data?.session) {
-        const response = NextResponse.json({
-          success: true,
-          session: data.session,
-          user: data.user,
-          message: "Login successful!",
-        });
-
-        // Also set fallback cookie for compatibility across middleware
-        response.cookies.set("daraz_ops_user", JSON.stringify({
-          id: data.user.id,
-          email: cleanEmail,
-          full_name: provisioned.fullName,
-          role: provisioned.role,
-        }), {
-          path: "/",
-          httpOnly: true,
-          maxAge: 60 * 60 * 24 * 7,
-        });
-
-        return response;
-      }
-    } catch (e: any) {
-      console.warn("[Auth Login Notice]: Supabase Auth API notice, using provisioned fallback session:", e.message);
-    }
-
-    // 3. Fallback response with active user session payload
     const userPayload = {
       id: provisioned.userId || "00000000-0000-0000-0000-000000000001",
       email: cleanEmail,
@@ -65,6 +30,42 @@ export async function POST(req: NextRequest) {
       user: userPayload,
       message: "Login successful!",
     });
+
+    // 2. Authenticate with Supabase Auth and bind cookies to response
+    try {
+      const { createServerClient } = await import("@supabase/ssr");
+      const url = process.env.NEXT_PUBLIC_SUPABASE_URL || process.env.SUPABASE_URL;
+      const anonKey =
+        process.env.NEXT_PUBLIC_SUPABASE_ANON_KEY ||
+        process.env.SUPABASE_ANON_KEY ||
+        process.env.NEXT_PUBLIC_SUPABASE_KEY;
+
+      if (url && anonKey) {
+        const supabase = createServerClient(url.trim(), anonKey.trim(), {
+          cookies: {
+            getAll() {
+              return req.cookies.getAll();
+            },
+            setAll(cookiesToSet: { name: string; value: string; options?: any }[]) {
+              cookiesToSet.forEach(({ name, value, options }) => {
+                response.cookies.set(name, value, options);
+              });
+            },
+          },
+        });
+
+        const { data, error } = await supabase.auth.signInWithPassword({
+          email: cleanEmail,
+          password,
+        });
+
+        if (!error && data?.user) {
+          userPayload.id = data.user.id;
+        }
+      }
+    } catch (e: any) {
+      console.warn("[Auth Login Notice]: Supabase Auth API notice:", e.message);
+    }
 
     response.cookies.set("daraz_ops_user", JSON.stringify(userPayload), {
       path: "/",

@@ -21,14 +21,15 @@ export async function GET(req: NextRequest) {
   const appKey = (customAppKey || process.env.DARAZ_APP_KEY || "").trim();
   const appSecret = (customAppSecret || process.env.DARAZ_APP_SECRET || "").trim();
 
-  if (!appKey) {
-    console.error("[Daraz Auth Error]: Missing DARAZ_APP_KEY in environment variables.");
-    return NextResponse.json(
-      {
-        success: false,
-        error: "Daraz integration is not configured — set DARAZ_APP_KEY in environment variables.",
-      },
-      { status: 500 }
+  if (!appKey || !appSecret) {
+    console.error("[Daraz Auth Error]: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET in environment variables.");
+    const protocol = req.headers.get("x-forwarded-proto") || requestUrl.protocol.replace(":", "");
+    const host = req.headers.get("x-forwarded-host") || req.headers.get("host") || requestUrl.host;
+    const baseUrl = (process.env.NEXT_PUBLIC_APP_URL || `${protocol}://${host}`).replace(/\/+$/, "");
+    return NextResponse.redirect(
+      `${baseUrl}/stores?error=missing_config&message=${encodeURIComponent(
+        "Daraz APP_KEY or APP_SECRET environment variables are missing or unconfigured. Please set DARAZ_APP_KEY and DARAZ_APP_SECRET in your environment variables."
+      )}`
     );
   }
 

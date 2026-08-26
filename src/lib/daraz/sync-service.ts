@@ -42,7 +42,8 @@ export interface SyncResult {
 
 // Database-backed sync lock threshold: if a sync row is locked for more than this duration, it is
 // assumed to be a crashed/stale process and the lock is eligible for takeover.
-const SYNC_LOCK_TIMEOUT_MS = 10 * 60 * 1000; // 10 minutes
+const SYNC_LOCK_TIMEOUT_MS = 5 * 60 * 1000; // 5 minutes
+const SYNC_LOCK_EXTENSION_MS = 2 * 60 * 1000; // 2 minutes extension if sync is progressing
 
 /**
  * Concurrency Limiter to prevent rate limiting (2-5 max concurrent requests)
@@ -283,6 +284,9 @@ export async function executeDarazSync(
         continue;
       }
 
+      // Track last lock extension time for periodic extension during long syncs
+      let lastLockExtension = Date.now();
+
       console.log(
         `[SyncEngine] ── BEGIN sync ──\n` +
         `  store_id:   ${store.id}\n` +
@@ -293,6 +297,18 @@ export async function executeDarazSync(
       );
 
       try {
+        // Periodically extend sync lock during long operations to prevent premature timeout
+        const extendLockIfNeeded = async () => {
+          const now = Date.now();
+          if (now - lastLockExtension > SYNC_LOCK_EXTENSION_MS) {
+            await supabase
+              .from("daraz_stores")
+              .update({ sync_status: "syncing", updated_at: new Date().toISOString() })
+              .eq("id", store.id);
+            lastLockExtension = now;
+          }
+        };
+
         // ── 2b. Re-link orphaned records from confirmed sister store rows ──────
         if (store.seller_id) {
           const { data: sisterStores } = await supabase
@@ -438,6 +454,9 @@ export async function executeDarazSync(
             }
           }
 
+          // Extend sync lock if needed to prevent timeout during long operations
+          await extendLockIfNeeded();
+
           if (!pageFetchSuccess || !pageItems) {
             // Save checkpoint with status 'failed' to allow resuming from this failed page
             await saveSyncCheckpoint({
@@ -466,10 +485,8 @@ export async function executeDarazSync(
               errorMessage: catalogFetchError,
             });
 
-            productOffset += catalogPageSize;
-            catalogPageNum++;
-            await new Promise((r) => setTimeout(r, 200));
-            continue;
+            // Halt pagination loop without advancing offset so retry resumes from this failed page
+            break;
           }
 
           reportedTotal = pageItems.total_items;
@@ -478,7 +495,7 @@ export async function executeDarazSync(
           storeSkippedSkus += pageItems.skipped_skus;
           totalFetchedProducts += pageItems.items.length;
 
-          // Save checkpoint progress after fetching page
+          // Save checkpoint progress after fetching page (only after successful processing)
           await saveSyncCheckpoint({
             store_id: store.id,
             module: "catalog_products",
@@ -504,6 +521,44 @@ export async function executeDarazSync(
             errorCode: null,
             errorMessage: null,
           });
+
+          // Batch pre-fetch barcode mappings and listings for all SKUs on this page to prevent N+1 queries
+          const pageSellerSkus = Array.from(
+            new Set(
+              pageItems.items
+                .flatMap((item: any) => (item.skus || []).map((s: any) => String(s.seller_sku || "").trim()))
+                .filter(Boolean)
+            )
+          );
+
+          const pageBarcodeMap = new Map<string, string>();
+          const pageExistingListingsSet = new Set<string>();
+
+          if (pageSellerSkus.length > 0) {
+            try {
+              const [{ data: bMaps }, { data: existingLists }] = await Promise.all([
+                supabase
+                  .from("barcode_mappings")
+                  .select("seller_sku, barcode")
+                  .eq("store_id", store.id)
+                  .in("seller_sku", pageSellerSkus),
+                supabase
+                  .from("listings")
+                  .select("seller_sku")
+                  .eq("store_id", store.id)
+                  .in("seller_sku", pageSellerSkus),
+              ]);
+
+              (bMaps || []).forEach((bm: any) => {
+                if (bm.seller_sku && bm.barcode) pageBarcodeMap.set(bm.seller_sku, String(bm.barcode).trim());
+              });
+              (existingLists || []).forEach((l: any) => {
+                if (l.seller_sku) pageExistingListingsSet.add(l.seller_sku);
+              });
+            } catch (batchErr: any) {
+              console.warn(`[SyncEngine] Pre-fetch batch query error: ${batchErr.message}`);
+            }
+          }
 
           // Process catalog parent products and nested SKUs
           for (const item of pageItems.items) {
@@ -568,27 +623,9 @@ export async function executeDarazSync(
                 totalFetchedSkus++;
                 syncedSellerSkus.add(sku.seller_sku);
 
-                let resolvedBarcode: string | null = sku.barcode ? String(sku.barcode).trim() : null;
-                if (!resolvedBarcode) {
-                  try {
-                    const { data: bMap } = await supabase
-                      .from("barcode_mappings")
-                      .select("barcode")
-                      .eq("store_id", store.id)
-                      .eq("seller_sku", sku.seller_sku)
-                      .maybeSingle();
-                    if (bMap?.barcode) {
-                      resolvedBarcode = String(bMap.barcode).trim();
-                    }
-                  } catch (_) {}
-                }
+                let resolvedBarcode: string | null = sku.barcode ? String(sku.barcode).trim() : (pageBarcodeMap.get(sku.seller_sku) || null);
 
-                const { data: existingListing } = await supabase
-                  .from("listings")
-                  .select("id")
-                  .eq("store_id", store.id)
-                  .eq("seller_sku", sku.seller_sku)
-                  .maybeSingle();
+                const existingListing = pageExistingListingsSet.has(sku.seller_sku);
 
                 if (existingListing) {
                   storeUpdatedCount++;
@@ -689,7 +726,8 @@ export async function executeDarazSync(
                     const { error: updateErr } = await supabase
                       .from("listings")
                       .update(listingPayload)
-                      .eq("id", existingListing.id);
+                      .eq("store_id", store.id)
+                      .eq("seller_sku", sku.seller_sku);
                     listingErr = updateErr;
                   } else {
                     const { error: insertErr } = await supabase
@@ -917,6 +955,9 @@ export async function executeDarazSync(
             }
           }
 
+          // Extend sync lock if needed to prevent timeout during long operations
+          await extendLockIfNeeded();
+
           if (!ordPageSuccess || !pageOrders) {
             // Save checkpoint with status 'failed' to allow resuming from this failed page
             await saveSyncCheckpoint({
@@ -945,10 +986,8 @@ export async function executeDarazSync(
               errorMessage: ordersFetchError,
             });
 
-            orderOffset += ordersPageSize;
-            orderPageNum++;
-            await new Promise((r) => setTimeout(r, 200));
-            continue;
+            // Halt pagination loop without advancing offset so retry resumes from this failed page
+            break;
           }
 
           totalOrdersReported = pageOrders.total;

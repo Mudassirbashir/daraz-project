@@ -1,7 +1,11 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
 import { getValidStoreAccessToken } from "@/lib/daraz/store-utils";
+import {
+  requireAuthenticatedUser,
+  requireAuthorizedStore,
+  getAuthorizedStoreIds,
+} from "@/lib/api/auth-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -34,18 +38,13 @@ export interface SyncDiagnosticReport {
 }
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuthenticatedUser(req, { permission: "sync:read" });
+  if (!auth.ok) return auth.response;
+
   const startTime = Date.now();
   const timestamp = new Date().toISOString();
   const url = new URL(req.url);
   const storeId = url.searchParams.get("store_id") || url.searchParams.get("id");
-
-  const serverSupabase = createClient();
-  const { data: { user } } = await serverSupabase.auth.getUser();
-  const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
-
-  if (!user && !opsUserCookie) {
-    return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
-  }
 
   const supabase = createAdminClient();
   const stages: DiagnosticStage[] = [];
@@ -66,20 +65,18 @@ export async function GET(req: NextRequest) {
 
     let targetStore: any = null;
     if (storeId) {
-      const { data: s, error: sErr } = await supabase
-        .from("daraz_stores")
-        .select("*")
-        .eq("id", storeId)
-        .maybeSingle();
-
-      if (sErr || !s) {
-        throw new Error(`Store not found: ${storeId}`);
-      }
-      targetStore = s;
+      const storeAuth = await requireAuthorizedStore(auth.principal, storeId);
+      if (!storeAuth.ok) return storeAuth.response;
+      targetStore = storeAuth.store;
     } else {
+      const authorizedIds = await getAuthorizedStoreIds(auth.principal);
+      if (authorizedIds.length === 0) {
+        throw new Error("No active Daraz stores authorized for user.");
+      }
       const { data: sList } = await supabase
         .from("daraz_stores")
         .select("*")
+        .in("id", authorizedIds)
         .eq("is_active", true)
         .order("created_at", { ascending: true })
         .limit(1);

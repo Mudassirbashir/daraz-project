@@ -254,7 +254,7 @@ export async function GET(req: NextRequest) {
       console.error("[Daraz OAuth Callback]: Missing DARAZ_APP_KEY or DARAZ_APP_SECRET environment variables.");
       return NextResponse.redirect(
         `${baseUrl}/stores?error=missing_config&message=${encodeURIComponent(
-          "Daraz APP_KEY or APP_SECRET environment variables are missing or unconfigured."
+          "Daraz APP_KEY or APP_SECRET environment variables are missing or unconfigured. Please set DARAZ_APP_KEY and DARAZ_APP_SECRET in your environment variables."
         )}`
       );
     }

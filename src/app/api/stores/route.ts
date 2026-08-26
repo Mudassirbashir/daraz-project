@@ -1,22 +1,29 @@
 import { NextRequest, NextResponse } from "next/server";
 import { createAdminClient } from "@/lib/supabase/admin";
-import { createClient } from "@/lib/supabase/server";
-import { safeGetUser } from "@/lib/supabase/auth-helper";
+import {
+  requireAuthenticatedUser,
+  requireAuthorizedStore,
+  getAuthorizedStoreIds,
+  safeErrorResponse,
+} from "@/lib/api/auth-guard";
 
 export const dynamic = "force-dynamic";
 
 export async function GET(req: NextRequest) {
+  const auth = await requireAuthenticatedUser(req, { permission: "stores:read" });
+  if (!auth.ok) return auth.response;
+
   try {
-    const serverSupabase = createClient();
-    const { user } = await safeGetUser(serverSupabase);
-
-    const opsUserCookie = req.cookies.get("daraz_ops_user")?.value;
-
-    if (!user && !opsUserCookie) {
-      return NextResponse.json({ success: false, error: "Unauthorized access." }, { status: 401 });
-    }
-
     const supabase = createAdminClient();
+    const authorizedIds = await getAuthorizedStoreIds(auth.principal);
+
+    if (authorizedIds.length === 0) {
+      return NextResponse.json({
+        success: true,
+        stores: [],
+        summary: { total_stores: 0, connected_stores: 0, disconnected_stores: 0 },
+      });
+    }
 
     // Fetch user-scoped configured real stores
     let storesList: any[] = [];
@@ -24,7 +31,7 @@ export async function GET(req: NextRequest) {
       const { data, error } = await supabase
         .from("daraz_stores")
         .select("id, store_code, store_name, region, seller_id, is_active, sync_status, last_synced_at, slot_number, last_sync_error, authorization_status, updated_at, created_at")
-        .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
+        .in("id", authorizedIds)
         .order("created_at", { ascending: true });
 
       if (error) {
@@ -32,14 +39,14 @@ export async function GET(req: NextRequest) {
         const { data: fb1, error: fb1Err } = await supabase
           .from("daraz_stores")
           .select("id, store_code, store_name, region, seller_id, is_active, sync_status, last_synced_at, last_sync_error, authorization_status, updated_at, created_at")
-          .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
+          .in("id", authorizedIds)
           .order("created_at", { ascending: true });
 
         if (fb1Err) {
           const { data: fb2, error: fb2Err } = await supabase
             .from("daraz_stores")
             .select("id, store_code, store_name, region, seller_id, is_active, sync_status, updated_at, created_at")
-            .or(user?.id ? `user_id.eq.${user.id},user_id.is.null` : "user_id.is.null")
+            .in("id", authorizedIds)
             .order("created_at", { ascending: true });
 
           if (fb2Err) throw new Error(`Failed to fetch stores: ${fb2Err.message}`);
@@ -198,20 +205,23 @@ export async function GET(req: NextRequest) {
     });
   } catch (err: any) {
     console.error("[GET /api/stores Exception]:", err.message);
-    return NextResponse.json(
-      { success: false, error: err.message || "Failed to fetch stores overview." },
-      { status: 500 }
-    );
+    return safeErrorResponse(500, "STORES_FETCH_FAILED", "Failed to fetch stores overview.");
   }
 }
 
 export async function POST(req: NextRequest) {
+  const auth = await requireAuthenticatedUser(req, { permission: "sync:execute" });
+  if (!auth.ok) return auth.response;
+
   try {
     const { store_id } = await req.json().catch(() => ({ store_id: null }));
 
     if (!store_id) {
       return NextResponse.json({ success: false, errorCode: "MISSING_PARAM", error: "Missing required 'store_id' parameter." }, { status: 400 });
     }
+
+    const storeAuth = await requireAuthorizedStore(auth.principal, store_id);
+    if (!storeAuth.ok) return storeAuth.response;
 
     const { executeDarazSync } = await import("@/lib/daraz/sync-service");
     const result = await executeDarazSync(store_id);
@@ -233,6 +243,6 @@ export async function POST(req: NextRequest) {
     );
   } catch (err: any) {
     console.error("[POST /api/stores Exception]:", err.message);
-    return NextResponse.json({ success: false, errorCode: "SYNC_EXCEPTION", error: err.message || "Failed to sync store." }, { status: 500 });
+    return safeErrorResponse(500, "SYNC_EXCEPTION", "Failed to sync store.");
   }
 }
