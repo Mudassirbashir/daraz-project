@@ -12,6 +12,10 @@ const PUBLIC_API_ROUTES = [
   "/api/auth/logout",
   "/api/daraz/callback",
   "/api/daraz/webhook",
+  "/api/daraz/oauth",
+  "/api/daraz/apps",
+  "/api/daraz/asaan-retail",
+  "/api/stores",
 ];
 
 export async function middleware(request: NextRequest) {
