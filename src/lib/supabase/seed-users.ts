@@ -44,7 +44,7 @@ export async function ensureUserExistsInSupabase(
 
   const defaultMatch = DEFAULT_TEAM_USERS.find((u) => u.email === cleanEmail);
   const fullName = customFullName || defaultMatch?.fullName || cleanEmail.split('@')[0];
-  const role = customRole || defaultMatch?.role || 'super_admin';
+  let role = customRole || defaultMatch?.role || 'super_admin';
   const employeeId = defaultMatch?.employeeId || `EMP-${Math.floor(100 + Math.random() * 900)}`;
 
   try {
@@ -57,12 +57,43 @@ export async function ensureUserExistsInSupabase(
 
     if (existingAuthUser) {
       userId = existingAuthUser.id;
+      // Fetch the correct role from database for existing user
+      let dbRole = role; // fallback to computed role
+      try {
+        const { data: profile } = await adminSupabase
+          .from('profiles')
+          .select('role')
+          .eq('id', userId)
+          .single();
+
+        if (profile?.role) {
+          dbRole = profile.role as SeedUserDef['role'];
+        } else {
+          // Fallback to user_roles if profile doesn't have role
+          const { data: userRoles } = await adminSupabase
+            .from('user_roles')
+            .select('role')
+            .eq('user_id', userId)
+            .single();
+
+          if (userRoles?.role) {
+            dbRole = userRoles.role as SeedUserDef['role'];
+          }
+        }
+      } catch (dbError) {
+        // If we can't fetch from DB, fallback to computed role
+        console.warn('[SeedUsers] Warning fetching role from DB:', dbError.message);
+      }
+
       // Update password & metadata to ensure login works smoothly
       await adminSupabase.auth.admin.updateUserById(userId, {
         password,
         email_confirm: true,
-        user_metadata: { full_name: fullName, role },
+        user_metadata: { full_name: fullName, role: dbRole },
       });
+
+      // Use the correct role from DB for subsequent operations
+      role = dbRole;
     } else {
       // Create user in Supabase Auth
       const { data: newAuth, error: createErr } = await adminSupabase.auth.admin.createUser({
